@@ -1,0 +1,32 @@
+[package]
+name = "aviso-server"
+version = "0.1.0"
+edition = "2024"
+authors = ["Samet Demir <samet.demir@ecmwf.int>",
+           "James Hawkes <james.hawkes@ecmwf.int>"]
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+path = "src/main.rs"
+name = "aviso_server"
+
+[dependencies]
+actix-web = "4.11.0"
+serde = { version = "1.0.219", features = ["derive"] }
+tokio = { version = "1.45.0", features = ["macros", "rt-multi-thread"] }
+config = "0.15.11"
+dirs = "6"
+serde-aux = "4.7.0" # brings extra serde traits
+tracing = "0.1.41"
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+tracing-bunyan-formatter = "0.3"
+tracing-log = "0.2.0"# forwards log crate events to tracing
+tracing-actix-web = "0.7"
+
+[dependencies.reqwest]
+version = "0.12.15"
+default-features = false
+# `json` feature flag to serialize/deserialize JSON payloads
+features = ["json", "rustls-tls"]
