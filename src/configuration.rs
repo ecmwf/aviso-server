@@ -2,9 +2,23 @@ use dirs;
 use serde::Deserialize;
 use serde_aux::field_attributes::deserialize_number_from_string;
 
+#[derive(Deserialize, Clone, Debug)]
+pub struct LoggingSettings {
+    pub level: String,  // e.g. "info", "debug", "error", "trace", etc.
+    pub format: String, // "bunyan", "json", "pretty_json", "console"
+}
+
+#[derive(Deserialize, Clone)]
+pub struct NotificationBackendSettings {
+    pub kind: String, // The type of notification_backend (e.g., "in_memory", "nats", etc.)
+    pub backend_url: Option<String>,
+}
+
 #[derive(Deserialize, Clone)]
 pub struct Settings {
     pub application: ApplicationSettings,
+    pub notification_backend: NotificationBackendSettings,
+    pub logging: Option<LoggingSettings>,
 }
 
 #[derive(Deserialize, Clone)]
