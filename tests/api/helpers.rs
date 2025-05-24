@@ -8,7 +8,7 @@ use aviso_server::{
 };
 
 static TRACING: LazyLock<()> = LazyLock::new(|| {
-    let default_filter_level = "info".to_string();
+    let default_filter_level = "warn".to_string();
     let default_format = "console".to_string();
     let logging_settings: Option<LoggingSettings> = LoggingSettings {
         level: default_filter_level.clone(),
