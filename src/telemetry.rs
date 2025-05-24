@@ -1,35 +1,60 @@
-use tracing::Subscriber;
-use tracing::subscriber::set_global_default;
+use crate::configuration::LoggingSettings;
+use tracing::level_filters::LevelFilter;
+use tracing::{Subscriber, subscriber::set_global_default};
 use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
-use tracing_subscriber::fmt::MakeWriter;
-use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt};
+use tracing_subscriber::{EnvFilter, Layer, Registry, fmt, fmt::MakeWriter, layer::SubscriberExt};
 
-/// Build a tracing subscriber that outputs Bunyan (JSON) logs, with configurable filter and sink.
+/// Build a tracing subscriber with configurable log level and output format.
 /// # Parameters
-/// - `name`: Name of the app (will appear as "name" field in logs)
-/// - `env_filter`: Logging level filter (e.g., "info")
-///     - Can be overridden at runtime by setting the `RUST_LOG` environment variable.
-/// - `sink`: Where logs should be written (stdout, file, etc.)
+/// - `name`: Name of the app (used in Bunyan logs)
+/// - `logging_config`: Optional logging settings (level, format)
+/// - `sink`: Destination for log output (e.g., stdout, file)
 pub fn get_subscriber<Sink>(
     name: String,
-    env_filter: String,
+    logging_config: Option<&LoggingSettings>,
     sink: Sink,
 ) -> impl Subscriber + Sync + Send
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
-    // Allow dynamic log level configuration via RUST_LOG environment variable.
-    // Falls back to the provided `env_filter` if not set.
-    let env_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(env_filter));
+    // Determine log level from config or default to "info"
+    let level = logging_config
+        .map(|config| config.level.clone())
+        .unwrap_or_else(|| "info".to_string());
 
-    // BunyanFormattingLayer gives structured JSON logs, suitable for log aggregation.
-    let formatting_layer = BunyanFormattingLayer::new(name, sink);
+    let level_filter = match level.to_lowercase().as_str() {
+        "trace" => LevelFilter::TRACE,
+        "debug" => LevelFilter::DEBUG,
+        "warn" => LevelFilter::WARN,
+        "error" => LevelFilter::ERROR,
+        // default to INFO
+        _ => LevelFilter::INFO,
+    };
+    // Set up filter layer for log level filtering
+    let filter_layer = EnvFilter::default().add_directive(level_filter.into());
 
-    // Registry combines all layers: filter, JSON storage (for spans), formatting.
+    // Determine log output format from config or default to "console"
+    let formatting_format = logging_config
+        .map(|config| config.format.clone())
+        .unwrap_or_else(|| "console".to_string());
+
+    // Select formatting layer based on format
+    let formatting_layer = match formatting_format.to_lowercase().as_str() {
+        "json" => Box::new(fmt::layer().json()) as Box<dyn Layer<_> + Send + Sync + 'static>,
+        "compact" => Box::new(fmt::layer().compact()) as Box<dyn Layer<_> + Send + Sync + 'static>,
+        "bunyan" => {
+            // BunyanFormattingLayer provides structured JSON logs
+            Box::new(BunyanFormattingLayer::new(name, sink))
+                as Box<dyn Layer<_> + Send + Sync + 'static>
+        }
+        // default to console
+        _ => Box::new(fmt::layer().pretty()) as Box<dyn Layer<_> + Send + Sync + 'static>,
+    };
+
+    // Combine all layers: filter, JSON storage (for spans), formatting
     Registry::default()
-        .with(env_filter)
+        .with(filter_layer)
         .with(JsonStorageLayer)
         .with(formatting_layer)
 }
