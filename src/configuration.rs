@@ -1,27 +1,82 @@
 use dirs;
 use serde::Deserialize;
 use serde_aux::field_attributes::deserialize_number_from_string;
+use std::collections::HashMap;
 
+// NOTIFICATION SETTINGS
+#[derive(Deserialize, Clone, Debug)]
+pub struct PayloadConfig {
+    pub key: String,
+    pub required: bool,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct TopicConfig {
+    pub base: String,
+    pub separator: String,
+    pub key_order: Vec<String>,
+}
+
+#[derive(Deserialize, Clone, Debug)]
+#[serde(tag = "type")]
+pub enum ValidationRules {
+    StringHandler {
+        max_length: Option<usize>,
+        required: bool,
+    },
+    DateHandler {
+        canonical_format: String,
+        required: bool,
+    },
+    EnumHandler {
+        values: Vec<String>,
+        required: bool,
+    },
+    ExpverHandler {
+        default: Option<String>,
+        required: bool,
+    },
+    IntHandler {
+        range: Option<[i64; 2]>,
+        required: bool,
+    },
+    TimeHandler {
+        required: bool,
+    },
+}
+
+#[derive(Deserialize, Clone, Debug)]
+pub struct EventSchema {
+    pub payload: Option<PayloadConfig>,
+    pub topic: Option<TopicConfig>,
+    pub endpoint: Option<TopicConfig>,
+    pub request: HashMap<String, Vec<ValidationRules>>,
+}
+
+// LOGGING SETTINGS
 #[derive(Deserialize, Clone, Debug)]
 pub struct LoggingSettings {
     pub level: String,  // e.g. "info", "debug", "error", "trace", etc.
     pub format: String, // "bunyan", "json", "pretty_json", "console"
 }
 
-#[derive(Deserialize, Clone)]
+// NOTIFICATION BACKEND SETTINGS
+#[derive(Deserialize, Clone, Debug)]
 pub struct NotificationBackendSettings {
     pub kind: String, // The type of notification_backend (e.g., "in_memory", "nats", etc.)
     pub backend_url: Option<String>,
 }
 
-#[derive(Deserialize, Clone)]
+// APPLICATION SETTINGS
+#[derive(Deserialize, Clone, Debug)]
 pub struct Settings {
     pub application: ApplicationSettings,
     pub notification_backend: NotificationBackendSettings,
     pub logging: Option<LoggingSettings>,
+    pub notification_schema: Option<HashMap<String, EventSchema>>,
 }
 
-#[derive(Deserialize, Clone)]
+#[derive(Deserialize, Clone, Debug)]
 pub struct ApplicationSettings {
     pub host: String,
     #[serde(deserialize_with = "deserialize_number_from_string")]
