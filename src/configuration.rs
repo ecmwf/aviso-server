@@ -69,21 +69,21 @@ pub struct EventSchema {
 }
 
 // LOGGING SETTINGS
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct LoggingSettings {
     pub level: String,  // e.g. "info", "debug", "error", "trace", etc.
     pub format: String, // "bunyan", "json", "pretty_json", "console"
 }
 
 // NOTIFICATION BACKEND SETTINGS
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct NotificationBackendSettings {
     pub kind: String, // The type of notification_backend (e.g., "in_memory", "nats", etc.)
     pub backend_url: Option<String>,
 }
 
 // APPLICATION SETTINGS
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ApplicationSettings {
     pub host: String,
     #[serde(deserialize_with = "deserialize_number_from_string")]
@@ -91,7 +91,7 @@ pub struct ApplicationSettings {
 }
 
 // MAIN SETTINGS STRUCT
-#[derive(Deserialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Settings {
     pub application: ApplicationSettings,
     pub notification_backend: NotificationBackendSettings,
