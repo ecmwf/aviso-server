@@ -16,7 +16,7 @@ use serde_json::Value;
 
 pub use conversion::CloudEventConverter;
 pub use defaults::apply_defaults;
-pub use validation::CloudEventValidator;
+pub use validation::{AvisoTypeValidator, CloudEventValidator};
 
 /// Main CloudEvents processor that orchestrates validation, defaults, and conversion
 pub struct CloudEventProcessor;
