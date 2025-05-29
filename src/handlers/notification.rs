@@ -1,7 +1,7 @@
 use crate::cloudevents::AvisoTypeValidator;
 use crate::cloudevents::handler::CloudEventResponse;
 use crate::cloudevents::validation::extract_and_validate_aviso_operation;
-use crate::notification::{self, OperationType, ProcessingResult};
+use crate::notification::{self, ProcessingResult};
 use actix_web::web;
 use serde_json::Value;
 use tracing::info;
@@ -20,25 +20,6 @@ pub struct NotificationResponse {
 /// of building topics and extracting relevant data.
 ///
 /// The function remains completely decoupled from infrastructure concerns.
-pub async fn process_aviso(
-    payload: &web::Json<Value>,
-    operation: OperationType,
-) -> Result<ProcessingResult, anyhow::Error> {
-    // Delegate to the notification module's pure business logic
-    let processing_result = notification::handler::extract_aviso_notification(payload, operation)?;
-
-    info!(
-        operation = ?operation,
-        event_type = %processing_result.event_type,
-        topic = %processing_result.topic,
-        param_count = processing_result.canonicalized_params.len(),
-        has_payload = processing_result.payload.is_some(),
-        "Aviso notification processed successfully"
-    );
-
-    Ok(processing_result)
-}
-
 pub async fn process_aviso_request(
     payload: &web::Json<Value>,
     cloudevent_response: &CloudEventResponse,

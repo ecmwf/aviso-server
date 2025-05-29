@@ -9,4 +9,4 @@ pub mod notification;
 
 pub use backend::save_to_backend;
 pub use cloudevent::process_cloudevent;
-pub use notification::process_aviso;
+pub use notification::process_aviso_request;
