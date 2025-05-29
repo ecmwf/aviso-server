@@ -311,7 +311,7 @@ impl NotificationBackend for JetStreamBackend {
             stream_name = %stream_name,
             sequence = ack.sequence,
             payload_size = message.payload.len(),
-            "Notification message published successfully to JetStream (latest message for subject)"
+            "Notification message published successfully to JetStream"
         );
 
         Ok(())
