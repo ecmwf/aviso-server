@@ -6,7 +6,7 @@ use std::{
     time::SystemTime,
 };
 use tokio::sync::Mutex;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 
@@ -62,38 +62,5 @@ impl NotificationBackend for InMemoryBackend {
 
         debug!(topic = %topic, msg_id = topic_state.next_id - 1, "Message stored");
         Ok(())
-    }
-
-    async fn get_messages(
-        &self,
-        topic: &str,
-        since_id: Option<u64>,
-        since_timestamp: Option<i64>,
-        limit: usize,
-    ) -> Result<Vec<NotificationMessage>> {
-        let topics = self.topics.lock().await;
-        let topic_state = match topics.get(topic) {
-            Some(state) => state,
-            None => {
-                warn!(topic = %topic, "Topic not found");
-                return Ok(vec![]);
-            }
-        };
-
-        let messages: Vec<_> = topic_state
-            .messages
-            .iter()
-            .filter(|msg| {
-                since_id.map(|id| msg.id >= id).unwrap_or(true)
-                    && since_timestamp
-                        .map(|ts| msg.timestamp >= ts)
-                        .unwrap_or(true)
-            })
-            .take(limit)
-            .cloned()
-            .collect();
-
-        debug!(topic = %topic, count = messages.len(), "Messages retrieved");
-        Ok(messages)
     }
 }
