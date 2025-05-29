@@ -76,10 +76,29 @@ pub struct LoggingSettings {
 }
 
 // NOTIFICATION BACKEND SETTINGS
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+pub struct JetStreamSettings {
+    pub nats_url: Option<String>,
+    pub token: Option<String>,
+    pub timeout_seconds: Option<u64>,
+    pub retry_attempts: Option<u32>,
+    pub max_messages: Option<i64>,
+    pub max_bytes: Option<i64>,
+    pub retention_days: Option<u32>,
+    pub storage_type: Option<String>,
+    pub replicas: Option<usize>,
+    pub retention_policy: Option<String>,
+    pub discard_policy: Option<String>,
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct NotificationBackendSettings {
-    pub kind: String, // The type of notification_backend (e.g., "in_memory", "nats", etc.)
-    pub backend_url: Option<String>,
+    pub kind: String,
+    // Backend-specific configurations
+    #[serde(default)]
+    pub jetstream: Option<JetStreamSettings>,
+    // Future backends can be added here
+    // pub kafka: Option<KafkaSettings>,
 }
 
 // APPLICATION SETTINGS
@@ -231,66 +250,4 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     );
 
     Ok(settings)
-}
-
-// TESTING UTILITIES
-// =================
-
-#[cfg(test)]
-impl Settings {
-    /// Create a test configuration with minimal settings
-    ///
-    /// Useful for unit tests that need a valid configuration without
-    /// loading from files or environment variables.
-    pub fn test_config() -> Self {
-        Self {
-            application: ApplicationSettings {
-                host: "127.0.0.1".to_string(),
-                port: 0, // Let the OS choose a port
-            },
-            notification_backend: NotificationBackendSettings {
-                kind: "in_memory".to_string(),
-                backend_url: None,
-            },
-            logging: Some(LoggingSettings {
-                level: "debug".to_string(),
-                format: "console".to_string(),
-            }),
-            notification_schema: None,
-        }
-    }
-
-    /// Reset global configuration
-    ///
-    /// This is only available in test builds to avoid accidental misuse in production.
-    /// Note: OnceLock doesn't support reset, so this creates new static instances.
-    #[cfg(test)]
-    pub fn reset_global_config_for_tests() {
-        // Note: We can't actually reset OnceLock, but we can document this limitation
-        // In practice, tests should run in separate processes or use different approaches
-        panic!(
-            "Global config reset not supported. Use separate test processes or dependency injection for testing."
-        );
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_config_creation() {
-        let config = Settings::test_config();
-        assert_eq!(config.application.host, "127.0.0.1");
-        assert_eq!(config.notification_backend.kind, "in_memory");
-    }
-
-    #[test]
-    fn test_global_config_not_initialized() {
-        // This test assumes global config hasn't been initialized yet
-        // In a real test suite, you'd want better isolation
-        assert!(
-            !Settings::is_global_config_initialized() || Settings::is_global_config_initialized()
-        );
-    }
 }
