@@ -23,6 +23,7 @@ pub struct NotificationResponse {
         event_id = tracing::field::Empty,
         event_type = tracing::field::Empty,
         topic = tracing::field::Empty,
+        request_id = %request_id,
     )
 )]
 pub async fn notify(
