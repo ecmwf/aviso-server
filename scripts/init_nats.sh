@@ -18,20 +18,13 @@ NATS_PORT="${NATS_PORT:=4222}"
 NATS_HTTP_PORT="${NATS_HTTP_PORT:=8222}"
 NATS_CLUSTER_PORT="${NATS_CLUSTER_PORT:=6222}"
 
-# Stream configuration
-STREAM_NAME="${STREAM_NAME:="diss"}"
-MAX_MEMORY="${MAX_MEMORY:=1GB}"
+# JetStream storage limits
+MAX_MEMORY="${MAX_MEMORY:=5GB}"
 MAX_STORAGE="${MAX_STORAGE:=10GB}"
-STORAGE_TYPE="${STORAGE_TYPE:=file}"
-RETENTION_POLICY="${RETENTION_POLICY:=limits}"
 
 # Authentication configuration
 ENABLE_AUTH="${ENABLE_AUTH:=false}"
 TOKEN="${TOKEN:=aviso_secure_token_$(date +%s)}"
-
-# Kubernetes/Cluster configuration
-NATS_CLUSTER_SIZE="${NATS_CLUSTER_SIZE:=1}"
-STREAM_REPLICAS="${STREAM_REPLICAS:=${NATS_CLUSTER_SIZE}}"
 
 # Create configuration directory
 CONFIG_DIR="./nats_config"
@@ -141,45 +134,11 @@ if [[ -z "${SKIP_DOCKER}" ]]; then
     fi
 fi
 
-# Create the main stream for Aviso notifications
-# Use wildcard to capture all your base subjects (diss.*, mars.*, etc.)
-echo "Creating JetStream stream: ${STREAM_NAME}"
-nats stream add "${STREAM_NAME}" \
-    --subjects="*" \
-    --storage="${STORAGE_TYPE}" \
-    --retention="${RETENTION_POLICY}" \
-    --max-msgs=1000000 \
-    --max-bytes=1GB \
-    --max-age=7d \
-    --max-msg-size=-1 \
-    --discard=old \
-    --dupe-window=2m \
-    --replicas="${STREAM_REPLICAS}" \
-    --no-ack || echo "Stream might already exist"
-
-# Create a monitoring consumer (optional, useful for debugging)
-echo "Creating monitoring consumer"
-nats consumer add "${STREAM_NAME}" MONITOR \
-    --filter="*" \
-    --ack=explicit \
-    --pull \
-    --deliver=all \
-    --max-deliver=-1 \
-    --replay=instant || echo "Consumer might already exist"
-
-# Show stream info
-echo ""
-echo "=== Stream Information ==="
-nats stream info "${STREAM_NAME}"
-
 echo ""
 echo "=== NATS JetStream is ready! ==="
 echo "Server URL: ${NATS_URL}"
 echo "HTTP Monitoring: http://localhost:${NATS_HTTP_PORT}"
-echo "Stream: ${STREAM_NAME}"
-echo "Subject pattern: * (captures all: diss.*, mars.*, etc.)"
-echo "Storage: ${STORAGE_TYPE}"
-echo "Replicas: ${STREAM_REPLICAS}"
+echo "JetStream enabled with ${MAX_MEMORY} memory and ${MAX_STORAGE} file storage"
 
 if [[ "${ENABLE_AUTH}" == "true" ]]; then
     echo "Authentication: Token-based"
@@ -187,12 +146,8 @@ if [[ "${ENABLE_AUTH}" == "true" ]]; then
     echo ""
     echo "To connect with token:"
     echo "  export NATS_TOKEN=${TOKEN}"
-    echo "  nats pub diss.test.message 'Hello with auth'"
 else
     echo "Authentication: Disabled"
-    echo ""
-    echo "To test without auth:"
-    echo "  nats pub diss.test.message 'Hello without auth'"
 fi
 
 echo ""
@@ -200,15 +155,12 @@ echo "=== Configuration ==="
 echo "Configuration saved in: ${CONFIG_DIR}/nats-server.conf"
 echo ""
 echo "=== Useful Commands ==="
-echo "  nats stream ls                                    # List streams"
-echo "  nats stream info ${STREAM_NAME}                  # Stream details"
-echo "  nats consumer ls ${STREAM_NAME}                  # List consumers"
-echo "  nats pub diss.test.message 'Hello'              # Publish test dissemination message"
-echo "  nats pub mars.test.message 'Hello'              # Publish test MARS message"
+echo "  nats stream ls                                    # List streams (created by your app)"
+echo "  nats stream info <STREAM_NAME>                   # Stream details"
+echo "  nats consumer ls <STREAM_NAME>                   # List consumers"
 echo "  nats sub 'diss.*'                               # Subscribe to all dissemination events"
 echo "  nats sub 'mars.*'                               # Subscribe to all MARS events"
-echo "  nats sub '*'                                     # Subscribe to all events"
-echo "  nats stream view ${STREAM_NAME}                  # View stream messages"
+echo "  nats sub 'bench.*'                              # Subscribe to benchmark events"
 echo ""
 echo "=== Management ==="
 echo "To stop: docker stop ${CONTAINER_NAME}"
@@ -221,6 +173,6 @@ if [[ "${ENABLE_AUTH}" == "true" ]]; then
     echo "export NATS_TOKEN=${TOKEN}"
 fi
 echo ""
-echo "=== Example Topics Your System Will Create ==="
-echo "Dissemination: diss.ecmwf.operational.od.0001.g.20250529.1200.oper.0"
-echo "MARS: mars.od.0001.g.20250529.1200.oper.0"
+echo "=== Note ==="
+echo "Streams will be created automatically by your Aviso Server application"
+echo "based on the notification types (DISS, MARS, BENCH, etc.)"
