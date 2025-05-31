@@ -28,13 +28,21 @@ async-trait = "0.1.88"
 anyhow = "1.0.98"
 cloudevents-sdk = "0.8"
 serde_json = "1.0.140"
-uuid = { version = "1.16.0", features = ["v4"] }
+uuid = { version = "1.17.0", features = ["v4"] }
 chrono = "0.4.41"
 regex = "1.11.1"
 async-nats = "0.41.0"
+futures = "0.3.31"
 
 [dependencies.reqwest]
 version = "0.12.15"
 default-features = false
 # `json` feature flag to serialize/deserialize JSON payloads
 features = ["json", "rustls-tls"]
+
+[[bench]]
+name = "notification_backend_benchmark"
+harness = false
+
+[dev-dependencies]
+criterion = { version = "0.6", features = ["html_reports", "async_tokio"] }
