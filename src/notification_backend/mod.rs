@@ -28,6 +28,14 @@ pub trait NotificationBackend: Send + Sync {
     /// The topic is built by your TopicBuilder and will be used directly
     /// as the storage key/subject. For JetStream, this becomes the NATS subject.
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()>;
+    /// Remove all notifications in a specific stream
+    /// For JetStream: purges the entire stream (e.g., "DISS", "MARS")
+    /// For in-memory: removes all subjects matching the stream pattern
+    async fn wipe_stream(&self, stream_name: &str) -> Result<()>;
+
+    /// Remove all data from all streams
+    /// This is a complete reset of the backend storage
+    async fn wipe_all(&self) -> Result<()>;
 }
 
 /// Build the appropriate notification backend based on configuration
@@ -40,25 +48,15 @@ pub async fn build_backend(
     match config.kind.as_str() {
         "in_memory" => {
             tracing::info!("Building in-memory notification backend");
-            Ok(Arc::new(in_memory::InMemoryBackend::new()))
+            let in_memory_config = in_memory::InMemoryConfig::from_backend_settings(config);
+            Ok(Arc::new(in_memory::InMemoryBackend::new(in_memory_config)))
         }
         "jetstream" => {
             tracing::info!("Building JetStream notification backend");
             let jetstream_config = jetstream::JetStreamConfig::from_backend_settings(config);
 
-            // Log token source for debugging (without revealing the token)
             if jetstream_config.token.is_some() {
-                let token_source = if config
-                    .jetstream
-                    .as_ref()
-                    .and_then(|js| js.token.as_ref())
-                    .is_some()
-                {
-                    "config.yaml"
-                } else {
-                    "environment variable"
-                };
-                tracing::info!(token_source = token_source, "NATS token configured");
+                tracing::info!("NATS token configured");
             } else {
                 tracing::info!("No NATS token configured - using unauthenticated connection");
             }
