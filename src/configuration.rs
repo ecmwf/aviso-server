@@ -91,10 +91,19 @@ pub struct JetStreamSettings {
     pub discard_policy: Option<String>,
 }
 
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+pub struct InMemorySettings {
+    pub max_history_per_topic: Option<usize>,
+    pub max_topics: Option<usize>,
+    pub enable_metrics: Option<bool>,
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct NotificationBackendSettings {
     pub kind: String,
     // Backend-specific configurations
+    #[serde(default)]
+    pub in_memory: Option<InMemorySettings>,
     #[serde(default)]
     pub jetstream: Option<JetStreamSettings>,
     // Future backends can be added here
