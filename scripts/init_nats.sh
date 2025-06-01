@@ -2,17 +2,6 @@
 set -x
 set -eo pipefail
 
-# Check if nats CLI is installed
-if ! [ -x "$(command -v nats)" ]; then
-  echo >&2 "Error: nats CLI is not installed."
-  echo >&2 "Use:"
-  echo >&2 "  curl -sf https://binaries.nats.dev/nats-io/natscli/nats@latest | sh"
-  echo >&2 "or"
-  echo >&2 "  go install github.com/nats-io/natscli/nats@latest"
-  echo >&2 "to install it."
-  exit 1
-fi
-
 # Server configuration
 NATS_PORT="${NATS_PORT:=4222}"
 NATS_HTTP_PORT="${NATS_HTTP_PORT:=8222}"
@@ -154,7 +143,7 @@ echo ""
 echo "=== Configuration ==="
 echo "Configuration saved in: ${CONFIG_DIR}/nats-server.conf"
 echo ""
-echo "=== Useful Commands ==="
+echo "=== Useful Commands (If nats cli is installed in the system) ==="
 echo "  nats stream ls                                    # List streams (created by your app)"
 echo "  nats stream info <STREAM_NAME>                   # Stream details"
 echo "  nats consumer ls <STREAM_NAME>                   # List consumers"
@@ -172,7 +161,3 @@ echo "export AVISOSERVER_NOTIFICATION_BACKEND__KIND=jetstream"
 if [[ "${ENABLE_AUTH}" == "true" ]]; then
     echo "export NATS_TOKEN=${TOKEN}"
 fi
-echo ""
-echo "=== Note ==="
-echo "Streams will be created automatically by your Aviso Server application"
-echo "based on the notification types (DISS, MARS, BENCH, etc.)"
