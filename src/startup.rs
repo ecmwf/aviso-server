@@ -5,6 +5,7 @@ use tracing_actix_web::TracingLogger;
 
 use crate::routes::admin::{wipe_all, wipe_stream};
 use crate::routes::schema::{get_event_schema, get_notification_schema};
+use crate::routes::watch::watch;
 use crate::{
     configuration::Settings,
     notification_backend::{NotificationBackend, build_backend},
@@ -58,6 +59,7 @@ fn configure_api_v1(cfg: &mut web::ServiceConfig) {
     cfg.service(
         web::scope("/api/v1")
             .route("/notification", web::post().to(notify))
+            .route("/watch", web::post().to(watch))
             .route("/schema", web::get().to(get_notification_schema))
             .route("/schema/{event_type}", web::get().to(get_event_schema))
             .service(
