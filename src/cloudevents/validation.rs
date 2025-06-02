@@ -6,6 +6,7 @@
 
 use crate::notification::types::{AvisoCloudEventTypes, OperationType};
 use anyhow::{Context, Result, bail};
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 /// CloudEvent validator implementing CloudEvents 1.0 specification checks
@@ -34,6 +35,7 @@ impl CloudEventValidator {
     /// - Checks for presence of all required CloudEvent attributes
     /// - Validates data types and non-empty values for required fields
     /// - Verifies CloudEvents specification version compatibility
+    /// - Validates Aviso-specific extension attributes if present
     pub fn validate_json_cloudevent(json_payload: &Value) -> Result<()> {
         // Ensure the payload is a JSON object, not an array or primitive value
         let obj = Self::ensure_json_object(json_payload)?;
@@ -47,8 +49,90 @@ impl CloudEventValidator {
         // Validate the CloudEvents specification version early
         Self::validate_spec_version_in_json(&obj)?;
 
+        // Validate Aviso extension attributes if present (all optional)
+        Self::validate_aviso_extension_attributes(&obj)?;
+
         // Report all validation errors at once for better user experience
         Self::report_validation_errors(missing_fields, invalid_fields)?;
+
+        Ok(())
+    }
+
+    /// Validate Aviso-specific extension attributes
+    ///
+    /// CloudEvents extension attributes must follow specific naming and format rules:
+    /// - Extension attribute names must be lowercase alphanumeric with no spaces
+    /// - Values must be strings, numbers, or booleans (not objects or arrays)
+    /// - All Aviso extension attributes are optional and can be used with any operation
+    ///
+    /// # Arguments
+    /// * `obj` - The JSON object containing CloudEvent attributes
+    ///
+    /// # Returns
+    /// * `Ok(())` - All extension attributes are valid
+    /// * `Err(anyhow::Error)` - Invalid extension attribute format or value
+    fn validate_aviso_extension_attributes(obj: &serde_json::Map<String, Value>) -> Result<()> {
+        // Validate avisoFromTime extension attribute if present
+        if let Some(aviso_from_time) = obj.get("avisoFromTime") {
+            Self::validate_aviso_from_time_extension(aviso_from_time)?;
+        }
+
+        Ok(())
+    }
+
+    /// Validate avisoFromTime extension attribute
+    ///
+    /// The avisoFromTime extension attribute specifies a timestamp for historical
+    /// operations. It is completely optional and can be used with any operation type.
+    /// When present, it must be:
+    /// - A valid ISO 8601 timestamp string
+    /// - In UTC timezone (Z suffix or +00:00 offset)
+    /// - Not in the future (historical operations only)
+    ///
+    /// # Arguments
+    /// * `value` - The avisoFromTime value to validate
+    ///
+    /// # Returns
+    /// * `Ok(())` - Valid ISO 8601 timestamp
+    /// * `Err(anyhow::Error)` - Invalid timestamp format or future timestamp
+    fn validate_aviso_from_time_extension(value: &Value) -> Result<()> {
+        // Extension attribute must be a string
+        let time_str = value.as_str().ok_or_else(|| {
+            anyhow::anyhow!(
+                "Extension attribute 'avisoFromTime' must be a string, got: {}",
+                value
+            )
+        })?;
+
+        // Parse as ISO 8601 timestamp
+        let parsed_time = DateTime::parse_from_rfc3339(time_str)
+            .context(format!(
+                "Extension attribute 'avisoFromTime' must be a valid ISO 8601 timestamp. \
+                 Got: '{}'. Expected format: '2025-06-02T22:06:00Z' or '2025-06-02T22:06:00+00:00'",
+                time_str
+            ))?;
+
+        // Convert to UTC for comparison
+        let utc_time = parsed_time.with_timezone(&Utc);
+        let now = Utc::now();
+
+        // Validate that the timestamp is not in the future
+        if utc_time > now {
+            bail!(
+                "Extension attribute 'avisoFromTime' cannot be in the future. \
+                 Got: '{}' ({}), current time: {} ({})",
+                time_str,
+                utc_time.to_rfc3339(),
+                now.to_rfc3339(),
+                now
+            );
+        }
+
+        tracing::debug!(
+            aviso_from_time = %time_str,
+            parsed_utc = %utc_time.to_rfc3339(),
+            "avisoFromTime extension attribute validated successfully"
+        );
 
         Ok(())
     }
