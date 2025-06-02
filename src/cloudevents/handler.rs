@@ -9,6 +9,8 @@ use serde_json::Value;
 use tracing::info;
 
 use super::CloudEventProcessor;
+use crate::cloudevents::validation::extract_and_validate_aviso_operation;
+use crate::notification::OperationType;
 use cloudevents::AttributesReader;
 
 /// Response from processing a CloudEvent
@@ -67,6 +69,8 @@ pub struct CloudEventResponse {
     ///
     /// Format: "2025-05-25T12:00:00.000Z" (RFC 3339)
     pub processed_at: String,
+    /// Extracted and validated operation type
+    pub operation: OperationType,
 }
 
 /// Handle CloudEvent processing from JSON payload
@@ -91,10 +95,15 @@ pub async fn validate_cloudevent(json_payload: Value) -> Result<CloudEventRespon
     let event = CloudEventProcessor::process_json_payload(json_payload)
         .context("Failed to process CloudEvent from JSON payload")?;
 
+    // Extract and validate operation type from the CloudEvent type
+    let operation = extract_and_validate_aviso_operation(event.ty())
+        .context("Failed to extract operation type from CloudEvent")?;
+
     info!(
         event_id = %event.id(),
         event_type = %event.ty(),
         event_source = %event.source(),
+        operation = ?operation,
         "Successfully processed CloudEvent"
     );
 
@@ -107,7 +116,7 @@ pub async fn validate_cloudevent(json_payload: Value) -> Result<CloudEventRespon
         "CloudEvent processed successfully"
     );
 
-    // Return structured response data
+    // Return structured response data with operation
     Ok(CloudEventResponse {
         status: "success".to_string(),
         event_id: event.id().to_string(),
@@ -115,6 +124,7 @@ pub async fn validate_cloudevent(json_payload: Value) -> Result<CloudEventRespon
         event_source: event.source().to_string(),
         message: "CloudEvent processed successfully".to_string(),
         processed_at: chrono::Utc::now().to_rfc3339(),
+        operation,
     })
 }
 

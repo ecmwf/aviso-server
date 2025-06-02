@@ -105,12 +105,11 @@ impl CloudEventValidator {
         })?;
 
         // Parse as ISO 8601 timestamp
-        let parsed_time = DateTime::parse_from_rfc3339(time_str)
-            .context(format!(
-                "Extension attribute 'avisoFromTime' must be a valid ISO 8601 timestamp. \
+        let parsed_time = DateTime::parse_from_rfc3339(time_str).context(format!(
+            "Extension attribute 'avisoFromTime' must be a valid ISO 8601 timestamp. \
                  Got: '{}'. Expected format: '2025-06-02T22:06:00Z' or '2025-06-02T22:06:00+00:00'",
-                time_str
-            ))?;
+            time_str
+        ))?;
 
         // Convert to UTC for comparison
         let utc_time = parsed_time.with_timezone(&Utc);
