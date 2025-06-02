@@ -1,3 +1,4 @@
+use serde::Serialize;
 use std::collections::HashMap;
 
 /// Operation type for different validation modes
@@ -7,7 +8,7 @@ use std::collections::HashMap;
 /// - **Watch**: Flexible validation where only required fields are validated,
 ///   missing optional fields are filled with "*" for wildcard matching
 /// - **Replay**: Similar to watch but for retrieving historical messages
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, PartialEq)]
 pub enum OperationType {
     /// All schema fields must be present and valid
     /// Used when storing notifications in the backend
