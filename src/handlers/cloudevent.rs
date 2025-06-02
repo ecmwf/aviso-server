@@ -11,12 +11,14 @@ pub async fn process_cloudevent(
 
     tracing::Span::current().record("event_id", &response.event_id);
     tracing::Span::current().record("event_type", &response.event_type);
+    tracing::Span::current().record("operation", &format!("{:?}", response.operation));
 
     info!(
         event_id = %response.event_id,
         event_type = %response.event_type,
         event_source = %response.event_source,
-        "CloudEvent successfully processed"
+        operation = ?response.operation,
+        "CloudEvent successfully processed with operation"
     );
 
     Ok(response)
