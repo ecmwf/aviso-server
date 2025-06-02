@@ -11,6 +11,6 @@ pub mod topic_builder;
 pub mod types;
 pub mod validators;
 
-pub use crate::notification::types::{OperationType, ProcessingResult};
 pub use processor::NotificationProcessor;
 pub use registry::NotificationRegistry;
+pub use types::{OperationType, ProcessingResult};

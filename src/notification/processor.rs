@@ -59,7 +59,8 @@ impl<'a> NotificationProcessor<'a> {
             let schema = self.registry.get_schema(event_type).unwrap();
             match operation {
                 OperationType::Notify => self.process_notify_request(schema, request_params)?,
-                OperationType::Listen => self.process_watch_request(schema, request_params)?,
+                OperationType::Watch => self.process_watch_request(schema, request_params)?,
+                OperationType::Replay => self.process_replay_request(schema, request_params)?,
             }
         } else {
             // Use generic validation for unknown event types
@@ -165,6 +166,41 @@ impl<'a> NotificationProcessor<'a> {
         Ok(canonicalized)
     }
 
+    /// Process request for replay operation with schema validation
+    ///
+    /// For replay operations, only fields marked as required must be present.
+    /// Missing optional fields are filled with "*" for wildcard matching.
+    /// This is similar to watch operations but intended for historical data retrieval.
+    fn process_replay_request(
+        &self,
+        schema: &EventSchema,
+        request_params: &HashMap<String, String>,
+    ) -> Result<HashMap<String, String>> {
+        let mut canonicalized = HashMap::new();
+
+        for (field_name, rules) in &schema.request {
+            let is_required = rules.iter().any(|rule| rule.is_required());
+
+            if let Some(value) = request_params.get(field_name) {
+                // Field is provided, validate and canonicalize it
+                let canonicalized_value =
+                    self.validate_and_canonicalize_field(field_name, value, rules)?;
+                canonicalized.insert(field_name.clone(), canonicalized_value);
+            } else if is_required {
+                // Required field is missing - this is an error
+                bail!(
+                    "Required field '{}' missing for replay operation",
+                    field_name
+                );
+            } else {
+                // Optional field not provided, use "*" for wildcard matching
+                canonicalized.insert(field_name.clone(), "*".to_string());
+            }
+        }
+
+        Ok(canonicalized)
+    }
+
     /// Process request without schema using generic validation
     ///
     /// Generic processing provides basic validation without schema rules:
@@ -195,8 +231,8 @@ impl<'a> NotificationProcessor<'a> {
                     canonicalized.insert(key.clone(), value.clone());
                 }
             }
-            OperationType::Listen => {
-                // For watch without schema, accept any values including empty
+            OperationType::Watch | OperationType::Replay => {
+                // For watch/replay without schema, accept any values including empty
                 for (key, value) in request_params {
                     canonicalized.insert(key.clone(), value.clone());
                 }
@@ -360,7 +396,7 @@ mod tests {
         params.insert("location".to_string(), "/path/to/file".to_string());
         // Missing optional_field should get "*"
 
-        let result = processor.process_request("test_event", &params, OperationType::Listen);
+        let result = processor.process_request("test_event", &params, OperationType::Watch);
         assert!(result.is_ok());
 
         let processing_result = result.unwrap();

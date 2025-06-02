@@ -4,7 +4,7 @@
 //! CloudEvents 1.0 specification, plus any additional application-specific
 //! validation requirements.
 
-use crate::notification::OperationType;
+use crate::notification::types::{AvisoCloudEventTypes, OperationType};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 
@@ -222,38 +222,24 @@ impl CloudEventValidator {
 ///
 /// Validates CloudEvent types that should follow the pattern:
 /// - int.ecmwf.aviso.notify (for notify operations)
-/// - int.ecmwf.aviso.listen (for listen operations)
+/// - int.ecmwf.aviso.watch (for watch operations)
+/// - int.ecmwf.aviso.replay (for replay operations)
 pub struct AvisoTypeValidator;
 
 impl AvisoTypeValidator {
-    /// Expected prefix for all Aviso CloudEvent types
-    const AVISO_TYPE_PREFIX: &'static str = "int.ecmwf.aviso";
-
-    /// Valid operation suffixes
-    const NOTIFY_SUFFIX: &'static str = "notify";
-    const LISTEN_SUFFIX: &'static str = "listen";
-
     /// Get all supported Aviso CloudEvent types
     pub fn get_supported_types() -> Vec<String> {
-        vec![
-            format!("{}.{}", Self::AVISO_TYPE_PREFIX, Self::NOTIFY_SUFFIX),
-            format!("{}.{}", Self::AVISO_TYPE_PREFIX, Self::LISTEN_SUFFIX),
-        ]
+        AvisoCloudEventTypes::get_supported_types()
     }
 
     /// Get a formatted error message for unsupported types
     pub fn get_unsupported_type_error(actual_type: &str) -> String {
-        let supported_types = Self::get_supported_types();
-        format!(
-            "Only Aviso CloudEvent types are supported. Got: '{}'. Expected one of: [{}]",
-            actual_type,
-            supported_types.join(", ")
-        )
+        AvisoCloudEventTypes::get_unsupported_type_error(actual_type)
     }
 
     /// Check if a CloudEvent type is an Aviso type with detailed error
     pub fn validate_is_aviso_type(cloudevent_type: &str) -> Result<(), anyhow::Error> {
-        if Self::is_aviso_type(cloudevent_type) {
+        if AvisoCloudEventTypes::is_aviso_type(cloudevent_type) {
             Ok(())
         } else {
             bail!("{}", Self::get_unsupported_type_error(cloudevent_type))
@@ -266,58 +252,15 @@ impl AvisoTypeValidator {
     /// * `cloudevent_type` - The CloudEvent type field to validate
     ///
     /// # Returns
-    /// * `Ok(&str)` - Valid Aviso type with extracted operation ("notify" or "listen")
+    /// * `Ok(OperationType)` - Valid Aviso type with extracted operation
     /// * `Err(anyhow::Error)` - Invalid type format or unsupported operation
-    pub fn validate_and_extract_operation(cloudevent_type: &str) -> Result<&str> {
-        // Check if the type starts with the expected Aviso prefix
-        if !cloudevent_type.starts_with(Self::AVISO_TYPE_PREFIX) {
-            bail!(
-                "Invalid Aviso CloudEvent type '{}'. Must start with '{}'",
-                cloudevent_type,
-                Self::AVISO_TYPE_PREFIX
-            );
-        }
-
-        // Extract the operation suffix after the prefix
-        let operation_part = cloudevent_type
-            .strip_prefix(Self::AVISO_TYPE_PREFIX)
-            .and_then(|s| s.strip_prefix('.'))
-            .unwrap_or("");
-
-        // Validate the operation suffix
-        match operation_part {
-            Self::NOTIFY_SUFFIX => {
-                tracing::debug!(
-                    cloudevent_type = cloudevent_type,
-                    operation = "notify",
-                    "Valid Aviso CloudEvent type with notify operation"
-                );
-                Ok("notify")
-            }
-            Self::LISTEN_SUFFIX => {
-                tracing::debug!(
-                    cloudevent_type = cloudevent_type,
-                    operation = "listen",
-                    "Valid Aviso CloudEvent type with listen operation"
-                );
-                Ok("listen")
-            }
-            _ => {
-                bail!(
-                    "Invalid Aviso CloudEvent operation '{}' in type '{}'. \
-                     Supported operations: '{}', '{}'",
-                    operation_part,
-                    cloudevent_type,
-                    Self::NOTIFY_SUFFIX,
-                    Self::LISTEN_SUFFIX
-                );
-            }
-        }
+    pub fn validate_and_extract_operation(cloudevent_type: &str) -> Result<OperationType> {
+        AvisoCloudEventTypes::validate_and_extract_operation(cloudevent_type)
     }
 
     /// Check if a CloudEvent type is an Aviso type (without validating operation)
     pub fn is_aviso_type(cloudevent_type: &str) -> bool {
-        cloudevent_type.starts_with(Self::AVISO_TYPE_PREFIX)
+        AvisoCloudEventTypes::is_aviso_type(cloudevent_type)
     }
 }
 
@@ -325,44 +268,5 @@ impl AvisoTypeValidator {
 pub fn extract_and_validate_aviso_operation(
     cloudevent_type: &str,
 ) -> std::result::Result<OperationType, anyhow::Error> {
-    let operation_str = AvisoTypeValidator::validate_and_extract_operation(cloudevent_type)?;
-    OperationType::from_str(operation_str)
-}
-
-#[cfg(test)]
-mod aviso_tests {
-    use super::*;
-
-    #[test]
-    fn test_valid_notify_type() {
-        let result = AvisoTypeValidator::validate_and_extract_operation("int.ecmwf.aviso.notify");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "notify");
-    }
-
-    #[test]
-    fn test_valid_listen_type() {
-        let result = AvisoTypeValidator::validate_and_extract_operation("int.ecmwf.aviso.listen");
-        assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "listen");
-    }
-
-    #[test]
-    fn test_invalid_prefix() {
-        let result = AvisoTypeValidator::validate_and_extract_operation("com.example.invalid");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_invalid_operation() {
-        let result = AvisoTypeValidator::validate_and_extract_operation("int.ecmwf.aviso.invalid");
-        assert!(result.is_err());
-    }
-
-    #[test]
-    fn test_is_aviso_type() {
-        assert!(AvisoTypeValidator::is_aviso_type("int.ecmwf.aviso.notify"));
-        assert!(AvisoTypeValidator::is_aviso_type("int.ecmwf.aviso.listen"));
-        assert!(!AvisoTypeValidator::is_aviso_type("com.example.other"));
-    }
+    AvisoTypeValidator::validate_and_extract_operation(cloudevent_type)
 }
