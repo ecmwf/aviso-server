@@ -85,7 +85,7 @@ pub struct CloudEventResponse {
 /// # Returns
 /// * `Ok(CloudEventResponse)` - Successfully processed CloudEvent
 /// * `Err(anyhow::Error)` - Processing failed with detailed error information
-pub async fn handle_cloudevent(json_payload: Value) -> Result<CloudEventResponse> {
+pub async fn validate_cloudevent(json_payload: Value) -> Result<CloudEventResponse> {
     // Process the CloudEvent using our dedicated processor
     // This handles parsing, default application, and validation in one step
     let event = CloudEventProcessor::process_json_payload(json_payload)
@@ -149,7 +149,7 @@ mod tests {
             "time": "2000-01-01T00:00:00.000Z"
         });
 
-        let result = handle_cloudevent(cloudevent_payload).await;
+        let result = validate_cloudevent(cloudevent_payload).await;
         assert!(result.is_ok());
 
         let response = result.unwrap();
@@ -165,7 +165,7 @@ mod tests {
             "invalid": "format"
         });
 
-        let result = handle_cloudevent(invalid_payload).await;
+        let result = validate_cloudevent(invalid_payload).await;
         assert!(result.is_err());
     }
 }

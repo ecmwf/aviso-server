@@ -3,6 +3,7 @@ use std::{net::TcpListener, sync::Arc};
 use actix_web::{App, HttpServer, dev::Server, web};
 use tracing_actix_web::TracingLogger;
 
+use crate::routes::schema::{get_event_schema, get_notification_schema};
 use crate::{
     configuration::Settings,
     notification_backend::{NotificationBackend, build_backend},
@@ -53,7 +54,12 @@ fn configure_ops_routes(cfg: &mut web::ServiceConfig) {
 
 /// Configure API v1 routes
 fn configure_api_v1(cfg: &mut web::ServiceConfig) {
-    cfg.service(web::scope("/api/v1").route("/notification", web::post().to(notify)));
+    cfg.service(
+        web::scope("/api/v1")
+            .route("/notification", web::post().to(notify))
+            .route("/schema", web::get().to(get_notification_schema))
+            .route("/schema/{event_type}", web::get().to(get_event_schema)),
+    );
 }
 
 // Run the server

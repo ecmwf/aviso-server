@@ -292,6 +292,7 @@ dependencies = [
  "cloudevents-sdk",
  "config",
  "dirs",
+ "regex",
  "reqwest",
  "serde",
  "serde-aux",

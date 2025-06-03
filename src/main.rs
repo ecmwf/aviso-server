@@ -15,12 +15,31 @@ async fn main() -> Result<(), std::io::Error> {
         }
     };
 
+    // Initialize global configuration once
+    configuration.init_global_config();
+
     let subscriber = get_subscriber(
         "aviso-server".into(),
         configuration.logging.as_ref(),
         std::io::stdout,
     );
     init_subscriber(subscriber);
+
+    // Log a simple message first
+    tracing::info!("Starting server with configuration:");
+
+    // Then output the raw JSON configuration directly to stdout
+    match serde_json::to_string_pretty(&configuration) {
+        Ok(config_json) => {
+            println!("{}", config_json);
+        }
+        Err(e) => {
+            tracing::warn!(
+                error = %e,
+                "Failed to serialize configuration to JSON"
+            );
+        }
+    }
 
     let application = match Application::build(configuration).await {
         Ok(app) => app,
