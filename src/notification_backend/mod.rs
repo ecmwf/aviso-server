@@ -12,8 +12,8 @@ use std::sync::Arc;
 /// The ID is typically assigned by the backend (e.g., JetStream sequence number).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationMessage {
-    pub id: u64,
-    pub timestamp: i64,
+    pub id: Option<u64>,        // Optional for JetStream, required for in-memory
+    pub timestamp: Option<i64>, // Optional for JetStream, required for in-memory
     pub payload: String,
 }
 
