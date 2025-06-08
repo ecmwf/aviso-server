@@ -3,12 +3,12 @@
 //! This module contains functions that orchestrate between different
 //! domain modules (cloudevents, notification) and HTTP concerns
 
-pub mod backend;
-pub mod cloudevent;
-pub mod notification;
-pub mod operation_validation;
+pub mod conversion;
+pub mod processing;
+pub mod storage;
+pub mod validation;
 
-pub use backend::save_to_backend;
-pub use cloudevent::process_cloudevent;
-pub use notification::process_aviso_request;
-pub use operation_validation::validate_operation_for_endpoint;
+pub use conversion::{convert_payload_to_string, get_payload_type_name};
+pub use processing::process_notification_request;
+pub use storage::save_to_backend;
+pub use validation::parse_and_validate_request;
