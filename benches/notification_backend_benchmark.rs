@@ -1,8 +1,8 @@
 use aviso_server::{
-    configuration::{get_configuration, Settings},
+    configuration::{Settings, get_configuration},
     startup::Application,
 };
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{BenchmarkId, Criterion, Throughput, criterion_group, criterion_main};
 use reqwest::Client;
 use serde_json::json;
 use std::time::Duration;
@@ -180,27 +180,19 @@ fn generate_notification_payload(id: usize) -> serde_json::Value {
     let events = ["dissemination", "mars"];
 
     json!({
-        "type": "int.ecmwf.aviso.notify",
-        "data": {
-            // Alternate between event types for variety
-            "event": events[id % 2],
-            "request": {
-                "target": format!("E{}", id % 10),
-                "class": "od",
-                "date": "20190810",
-                "destination": format!("DEST{}", id % 100),
-                "domain": domains[id % 5],
-                "expver": format!("{:04}", (id % 9999) + 1),
-                "step": (id % 240).to_string(),
-                "stream": streams[id % 3],
-                "time": format!("{:02}", (id % 24))
-            },
-            "location": format!("/benchmark/data/file_{}.grib", id)
+        "event_type": events[id % 2],
+        "request": {
+            "target": format!("E{}", id % 10),
+            "class": "od",
+            "date": "20190810",
+            "destination": format!("DEST{}", id % 100),
+            "domain": domains[id % 5],
+            "expver": format!("{:04}", (id % 9999) + 1),
+            "step": (id % 240).to_string(),
+            "stream": streams[id % 3],
+            "time": format!("{:02}", (id % 24))
         },
-        "datacontenttype": "application/json",
-        "id": format!("benchmark-event-{}", id),
-        "source": "/benchmark/client",
-        "specversion": "1.0"
+        "payload": format!("/benchmark/data/file_{}.grib", id)
     })
 }
 
