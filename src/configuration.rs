@@ -5,9 +5,12 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 // NOTIFICATION SETTINGS
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
 pub struct PayloadConfig {
-    pub key: String,
+    /// Allowed payload types for this event type
+    #[serde(rename = "type")]
+    pub allowed_types: Vec<String>,
+    /// Whether payload is required
     pub required: bool,
 }
 
