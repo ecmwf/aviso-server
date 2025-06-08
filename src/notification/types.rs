@@ -139,7 +139,6 @@ impl AvisoCloudEventTypes {
 ///
 /// Contains all the information needed to store or route a notification:
 /// - **topic**: The routing topic for the backend (e.g., "diss.FOO.E1.od.0001")
-/// - **payload**: Optional payload data extracted from the request
 /// - **canonicalized_params**: All request parameters in their canonical form
 #[derive(Debug, Clone)]
 pub struct ProcessingResult {
@@ -147,8 +146,6 @@ pub struct ProcessingResult {
     pub event_type: String,
     /// The topic string used for routing in the notification backend
     pub topic: String,
-    /// Optional payload data if configured in the schema
-    pub payload: Option<String>,
     /// All request parameters after validation and canonicalization
     pub canonicalized_params: HashMap<String, String>,
 }
