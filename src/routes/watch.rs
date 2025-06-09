@@ -2,21 +2,24 @@ use crate::configuration::Settings;
 use crate::error::validation_error_response;
 use crate::notification::{NotificationHandler, OperationType};
 use crate::notification_backend::NotificationBackend;
+use crate::sse::create_watch_sse_stream;
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
 use tracing::info;
 use tracing_actix_web::RequestId;
 
-/// Watch endpoint handler
+/// Watch endpoint handler with SSE streaming
 ///
-/// Processes watch requests with only required schema fields mandatory.
-/// Validates request parameters and prepares for future streaming implementation.
+/// Processes watch requests and establishes SSE streaming for real-time notifications.
+/// Validates request parameters and sets up live notification streaming.
 #[tracing::instrument(
     skip(payload, notification_backend),
     fields(
         event_type = tracing::field::Empty,
         request_id = %request_id,
+        from_id = tracing::field::Empty,
+        from_date = tracing::field::Empty,
     )
 )]
 pub async fn watch(
@@ -31,11 +34,31 @@ pub async fn watch(
     // Update tracing context with event type
     tracing::Span::current().record("event_type", event_type);
 
-    // Process watch request with only required fields (listen operation)
+    // Validate watch-specific parameters (from_id and from_date)
+    let (from_id, from_date) = match payload.validate_watch_parameters() {
+        Ok(params) => params,
+        Err(e) => {
+            return HttpResponse::BadRequest().json(serde_json::json!({
+                "error": "Invalid Watch Parameters",
+                "message": e,
+                "details": "Watch parameter validation failed"
+            }));
+        }
+    };
+
+    // Update tracing context with validated parameters
+    if let Some(id) = from_id {
+        tracing::Span::current().record("from_id", id);
+    }
+    if let Some(date) = &from_date {
+        tracing::Span::current().record("from_date", date.to_rfc3339());
+    }
+
+    // Process watch request with only required fields (watch operation)
     let notification_handler =
         NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
 
-    let _notification_result = match notification_handler.process_request(
+    let notification_result = match notification_handler.process_request(
         event_type,
         request_params,
         OperationType::Watch,
@@ -46,17 +69,47 @@ pub async fn watch(
 
     info!(
         event_type = %event_type,
+        topic = %notification_result.topic,
         param_count = request_params.len(),
-        from_id = ?payload.from_id,
-        from_date = ?payload.from_date,
-        "Watch request validated successfully"
+        from_id = ?from_id,
+        from_date = ?from_date,
+        "Starting SSE stream for watch request"
     );
 
-    // TODO: Implement actual watch/streaming functionality
-    // For now, return a simple acknowledgment
-    HttpResponse::Ok().json(serde_json::json!({
-        "status": "watch_registered",
-        "request_id": request_id.to_string(),
-        "message": "Watch functionality not yet implemented"
-    }))
+    // TODO: Handle historical replay (from_id/from_date) in future implementation
+    if from_id.is_some() || from_date.is_some() {
+        tracing::warn!(
+            topic = %notification_result.topic,
+            "Historical replay not yet implemented, starting with live notifications only"
+        );
+    }
+
+    // Create SSE stream for real-time notifications
+    match create_watch_sse_stream(
+        notification_result.topic.clone(),
+        notification_backend.get_ref().clone(),
+    )
+    .await
+    {
+        Ok(sse_response) => {
+            info!(
+                topic = %notification_result.topic,
+                "SSE stream established successfully"
+            );
+            sse_response
+        }
+        Err(e) => {
+            tracing::error!(
+                error = %e,
+                topic = %notification_result.topic,
+                "Failed to create SSE stream"
+            );
+
+            HttpResponse::InternalServerError().json(serde_json::json!({
+                "error": "SSE Stream Creation Failed",
+                "message": e.to_string(),
+                "topic": notification_result.topic
+            }))
+        }
+    }
 }
