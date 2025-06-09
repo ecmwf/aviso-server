@@ -3,6 +3,8 @@ pub mod jetstream;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use futures_util::Stream;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -12,9 +14,14 @@ use std::sync::Arc;
 /// The ID is typically assigned by the backend (e.g., JetStream sequence number).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationMessage {
-    pub id: Option<u64>,        // Optional for JetStream, required for in-memory
-    pub timestamp: Option<i64>, // Optional for JetStream, required for in-memory
+    /// Backend-specific sequence number (JetStream sequence, InMemory counter)
+    pub sequence: u64,
+    /// Full topic string for the message
+    pub topic: String,
+    /// Message payload as stored in backend
     pub payload: String,
+    /// Message timestamp from backend
+    pub timestamp: Option<DateTime<Utc>>,
 }
 
 /// Trait defining the interface for notification backends
@@ -36,6 +43,30 @@ pub trait NotificationBackend: Send + Sync {
     /// Remove all data from all streams
     /// This is a complete reset of the backend storage
     async fn wipe_all(&self) -> Result<()>;
+
+    /// Retrieve a batch of messages for historical replay
+    async fn get_messages_batch(
+        &self,
+        topic: &str,
+        from_sequence: Option<u64>,
+        from_date: Option<DateTime<Utc>>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<NotificationMessage>, bool)>;
+
+    /// Count total messages matching the criteria for replay limit validation
+    async fn count_messages(
+        &self,
+        topic: &str,
+        from_sequence: Option<u64>,
+        from_date: Option<DateTime<Utc>>,
+    ) -> Result<usize>;
+
+    /// Subscribe to real-time notifications for a specific topic
+    async fn subscribe_to_topic(
+        &self,
+        topic: &str,
+    ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>>;
 }
 
 /// Build the appropriate notification backend based on configuration
