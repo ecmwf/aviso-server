@@ -52,29 +52,11 @@ impl EnumHandler {
 
             Ok(lowercase_value)
         } else {
-            // Provide helpful error message with all allowed values
-            let allowed_display = if allowed_values.len() <= 10 {
-                // Show all values if the list is short
-                format!("[{}]", allowed_values.join(", "))
-            } else {
-                // Show first few values if the list is long
-                format!(
-                    "[{}, ... and {} more]",
-                    allowed_values
-                        .iter()
-                        .take(5)
-                        .cloned()
-                        .collect::<Vec<_>>()
-                        .join(", "),
-                    allowed_values.len() - 5
-                )
-            };
-
             bail!(
-                "Field '{}' has invalid value '{}'. Allowed values: {}",
+                "Field '{}' has invalid value '{}'. Allowed: [{}]",
                 field_name,
                 value,
-                allowed_display
+                allowed_values.join(", ")
             );
         }
     }

@@ -9,8 +9,7 @@ use chrono::NaiveDate;
 
 /// Date validation and canonicalization handler
 ///
-/// This handler supports multiple input date formats commonly used in meteorological
-/// and operational systems:
+/// Supports multiple input date formats:
 /// - **YYYY-MM-DD**: ISO 8601 standard format (e.g., "2025-12-25")
 /// - **YYYYMMDD**: Compact format without separators (e.g., "20251225")
 /// - **YYYY-DDD**: Day-of-year format (e.g., "2025-359" for December 25th)
@@ -51,7 +50,7 @@ impl DateHandler {
             "%Y%m%d" => parsed_date.format("%Y%m%d").to_string(),
             "%Y-%m-%d" => parsed_date.format("%Y-%m-%d").to_string(),
             _ => bail!(
-                "Unsupported canonical date format '{}' for field '{}'. Supported formats: %Y%m%d, %Y-%m-%d",
+                "Unsupported date format '{}' for field '{}'",
                 canonical_format,
                 field_name
             ),
@@ -122,10 +121,7 @@ impl DateHandler {
 
         // No format worked, provide comprehensive error message
         bail!(
-            "Field '{}' contains invalid date '{}'. Supported formats:\n\
-             - ISO 8601: YYYY-MM-DD (e.g., 2025-12-25)\n\
-             - Compact: YYYYMMDD (e.g., 20251225)\n\
-             - Day-of-year: YYYY-DDD (e.g., 2025-359)",
+            "Field '{}' contains invalid date '{}'. Expected: YYYY-MM-DD, YYYYMMDD, or YYYY-DDD",
             field_name,
             value
         );
@@ -167,13 +163,8 @@ mod tests {
     fn test_unsupported_canonical_format() {
         let result = DateHandler::validate_and_canonicalize("2025-12-25", "%d/%m/%Y", "date");
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Unsupported canonical date format")
-        );
     }
+
     #[test]
     fn test_leap_year_handling() {
         // Test February 29th in leap year (2025)

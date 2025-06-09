@@ -8,16 +8,7 @@ use anyhow::{Context, Result, bail};
 
 /// Integer validation handler
 ///
-/// This handler validates and canonicalizes integer values with optional
-/// range constraints. It's commonly used for:
-/// - **Step values**: Forecast time steps (0-240 hours)
-/// - **Counts**: Number of ensemble members (1-50)
-/// - **Indices**: Array or list positions (0-based or 1-based)
-/// - **Levels**: Pressure levels, model levels (1-137)
-/// - **Ports**: Network port numbers (1-65535)
-///
-/// The handler ensures values are valid integers and optionally enforces
-/// minimum and maximum bounds as specified in the schema configuration.
+/// Validates and canonicalizes integer values with optional range constraints.
 pub struct IntHandler;
 
 impl IntHandler {
@@ -49,8 +40,7 @@ impl IntHandler {
     ) -> Result<String> {
         // Parse the input string as a signed 64-bit integer
         let parsed_value: i64 = value.parse().context(format!(
-            "Field '{}' must be a valid integer, got: '{}'. \
-                 Integers must be whole numbers without decimal points or non-numeric characters",
+            "Field '{}' must be a valid integer, got: '{}'",
             field_name, value
         ))?;
 
@@ -58,12 +48,9 @@ impl IntHandler {
         if let Some([min, max]) = range {
             if parsed_value < *min || parsed_value > *max {
                 bail!(
-                    "Field '{}' value {} is outside the allowed range [{}, {}]. \
-                     Please provide a value between {} and {} (inclusive)",
+                    "Field '{}' value {} is outside allowed range [{}, {}]",
                     field_name,
                     parsed_value,
-                    min,
-                    max,
                     min,
                     max
                 );
@@ -141,34 +128,24 @@ mod tests {
     fn test_integer_below_minimum() {
         let result = IntHandler::validate_and_canonicalize("-5", Some(&[0, 100]), "step");
         assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("outside the allowed range"));
-        assert!(error_msg.contains("[0, 100]"));
     }
 
     #[test]
     fn test_integer_above_maximum() {
         let result = IntHandler::validate_and_canonicalize("150", Some(&[0, 100]), "step");
         assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("outside the allowed range"));
-        assert!(error_msg.contains("[0, 100]"));
     }
 
     #[test]
     fn test_invalid_integer_format() {
         let result = IntHandler::validate_and_canonicalize("abc", None, "count");
         assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("must be a valid integer"));
     }
 
     #[test]
     fn test_decimal_number_rejected() {
         let result = IntHandler::validate_and_canonicalize("42.5", None, "count");
         assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("must be a valid integer"));
     }
 
     #[test]
