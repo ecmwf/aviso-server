@@ -4,6 +4,42 @@ use serde_aux::field_attributes::deserialize_number_from_string;
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+// WATCH RELATED SETTINGS
+/// Configuration for the watch endpoint SSE streaming functionality
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct WatchEndpointSettings {
+    /// Interval between SSE heartbeat messages in seconds
+    pub sse_heartbeat_interval_sec: u64,
+
+    /// Maximum duration to keep SSE connections alive in seconds
+    pub connection_max_duration_sec: u64,
+
+    /// Number of historical notifications to send per batch during replay
+    pub replay_batch_size: usize,
+
+    /// Maximum total number of historical notifications allowed for replay
+    pub max_historical_notifications: usize,
+
+    /// Delay between replay batches in milliseconds to prevent client overwhelming
+    pub replay_batch_delay_ms: u64,
+
+    /// Number of notifications to process concurrently for CloudEvent creation
+    pub concurrent_notification_processing: usize,
+}
+
+impl Default for WatchEndpointSettings {
+    fn default() -> Self {
+        Self {
+            sse_heartbeat_interval_sec: 30,
+            connection_max_duration_sec: 3600,
+            replay_batch_size: 100,
+            max_historical_notifications: 10000,
+            replay_batch_delay_ms: 100,
+            concurrent_notification_processing: 15,
+        }
+    }
+}
+
 // NOTIFICATION SETTINGS
 #[derive(serde::Deserialize, Serialize, Clone, Debug)]
 pub struct PayloadConfig {
@@ -119,6 +155,12 @@ pub struct ApplicationSettings {
     pub host: String,
     #[serde(deserialize_with = "deserialize_number_from_string")]
     pub port: u16,
+    #[serde(default = "default_base_url")]
+    pub base_url: String,
+}
+
+fn default_base_url() -> String {
+    "http://localhost".to_string()
 }
 
 // MAIN SETTINGS STRUCT
@@ -128,6 +170,8 @@ pub struct Settings {
     pub notification_backend: NotificationBackendSettings,
     pub logging: Option<LoggingSettings>,
     pub notification_schema: Option<HashMap<String, EventSchema>>,
+    #[serde(default)]
+    pub watch_endpoint: WatchEndpointSettings,
 }
 
 // GLOBAL CONFIGURATION MANAGEMENT
@@ -144,6 +188,9 @@ static GLOBAL_NOTIFICATION_SCHEMA: OnceLock<Option<HashMap<String, EventSchema>>
 /// Global logging settings storage
 static GLOBAL_LOGGING_SETTINGS: OnceLock<Option<LoggingSettings>> = OnceLock::new();
 
+static GLOBAL_APPLICATION_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::new();
+static GLOBAL_WATCH_SETTINGS: OnceLock<WatchEndpointSettings> = OnceLock::new();
+
 impl Settings {
     /// Initialize global configuration components
     ///
@@ -159,9 +206,16 @@ impl Settings {
         // Logging configuration is accessed frequently by the tracing system
         let _ = GLOBAL_LOGGING_SETTINGS.set(self.logging.clone());
 
+        // Initialize application settings globally
+        let _ = GLOBAL_APPLICATION_SETTINGS.set(self.application.clone());
+
+        // Initialize watch settings globally
+        let _ = GLOBAL_WATCH_SETTINGS.set(self.watch_endpoint.clone());
+
         tracing::info!(
             has_notification_schema = self.notification_schema.is_some(),
             has_logging_config = self.logging.is_some(),
+            base_url = %self.application.base_url,
             "Global configuration initialized successfully"
         );
     }
@@ -193,11 +247,26 @@ impl Settings {
         )
     }
 
+    pub fn get_global_watch_settings() -> &'static WatchEndpointSettings {
+        GLOBAL_WATCH_SETTINGS.get().expect(
+            "Global watch settings not initialized. Call Settings::init_global_config() first.",
+        )
+    }
+
+    /// Get reference to the global application settings
+    pub fn get_global_application_settings() -> &'static ApplicationSettings {
+        GLOBAL_APPLICATION_SETTINGS
+            .get()
+            .expect("Global application settings not initialized. Call Settings::init_global_config() first.")
+    }
+
     /// Check if global configuration has been initialized
     ///
     /// Useful for testing or conditional initialization logic.
     pub fn is_global_config_initialized() -> bool {
-        GLOBAL_NOTIFICATION_SCHEMA.get().is_some() && GLOBAL_LOGGING_SETTINGS.get().is_some()
+        GLOBAL_NOTIFICATION_SCHEMA.get().is_some()
+            && GLOBAL_LOGGING_SETTINGS.get().is_some()
+            && GLOBAL_APPLICATION_SETTINGS.get().is_some()
     }
 }
 
