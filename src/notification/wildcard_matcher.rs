@@ -19,18 +19,6 @@ use tracing::debug;
 ///
 /// # Returns
 /// * `(String, Vec<String>)` - (backend subscription pattern, full watch pattern as Vec)
-///
-/// # Examples
-/// ```
-/// // Watch: "diss.FOO.*.od.*.*.*.*.*.*"
-/// // Returns: ("diss.FOO.*", ["diss", "FOO", "*", "od", "*", "*", "*", "*", "*", "*"])
-///
-/// // Watch: "diss.FOO.E1.od.*.*.*.*.*.*"
-/// // Returns: ("diss.FOO.E1.od.*", ["diss", "FOO", "E1", "od", "*", "*", "*", "*", "*", "*"])
-///
-/// // Watch: "diss.*.*.*.*.*.*.*.*.*"
-/// // Returns: ("diss.*", ["diss", "*", "*", "*", "*", "*", "*", "*", "*", "*"])
-/// ```
 pub fn analyze_watch_pattern(watch_topic: &str) -> (String, Vec<String>) {
     let parts: Vec<&str> = watch_topic.split('.').collect();
 
