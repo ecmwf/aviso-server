@@ -29,7 +29,7 @@ pub struct JetStreamConfig {
     /// Maximum bytes per stream
     pub max_bytes: Option<i64>,
     /// Maximum age of messages in seconds
-    pub max_age_seconds: Option<i64>,
+    pub retention_days: Option<u32>,
     /// Storage type: "file" or "memory"
     pub storage_type: String,
     /// Number of replicas for high availability
@@ -59,9 +59,7 @@ impl JetStreamConfig {
                 .or_else(|| std::env::var("NATS_TOKEN").ok()),
             max_messages: js_settings.and_then(|js| js.max_messages),
             max_bytes: js_settings.and_then(|js| js.max_bytes),
-            max_age_seconds: js_settings
-                .and_then(|js| js.retention_days)
-                .map(|days| days as i64 * 24 * 3600),
+            retention_days: js_settings.and_then(|js| js.retention_days),
             storage_type: js_settings
                 .and_then(|js| js.storage_type.clone())
                 .unwrap_or_else(|| "file".to_string()),
@@ -266,8 +264,8 @@ impl JetStreamBackend {
         if let Some(max_bytes) = self.config.max_bytes {
             config.max_bytes = max_bytes;
         }
-        if let Some(max_age_seconds) = self.config.max_age_seconds {
-            config.max_age = std::time::Duration::from_secs(max_age_seconds as u64);
+        if let Some(retention_days) = self.config.retention_days {
+            config.max_age = std::time::Duration::from_secs(retention_days as u64 * 24 * 3600);
         }
         if let Some(replicas) = self.config.replicas {
             config.num_replicas = replicas;
