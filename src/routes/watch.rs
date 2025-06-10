@@ -14,7 +14,7 @@ use tracing_actix_web::RequestId;
 /// Processes watch requests and establishes SSE streaming for real-time notifications.
 /// Validates request parameters and sets up live notification streaming.
 #[tracing::instrument(
-    skip(payload, notification_backend),
+    skip(notification_request, notification_backend),
     fields(
         event_type = tracing::field::Empty,
         request_id = %request_id,
@@ -23,26 +23,22 @@ use tracing_actix_web::RequestId;
     )
 )]
 pub async fn watch(
-    payload: web::Json<NotificationRequest>,
+    notification_request: web::Json<NotificationRequest>,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     request_id: RequestId,
 ) -> HttpResponse {
-    // Extract event type and request parameters from payload
-    let event_type = &payload.event_type;
-    let request_params = &payload.request;
+    // Extract event type and request parameters from notification_request
+    let event_type = &notification_request.event_type;
+    let request_params = &notification_request.request;
 
     // Update tracing context with event type
     tracing::Span::current().record("event_type", event_type);
 
     // Validate watch-specific parameters (from_id and from_date)
-    let (from_id, from_date) = match payload.validate_watch_parameters() {
+    let (from_id, from_date) = match notification_request.validate_watch_parameters() {
         Ok(params) => params,
         Err(e) => {
-            return HttpResponse::BadRequest().json(serde_json::json!({
-                "error": "Invalid Watch Parameters",
-                "message": e,
-                "details": "Watch parameter validation failed"
-            }));
+            return validation_error_response("Watch Parameters", e);
         }
     };
 
@@ -88,12 +84,14 @@ pub async fn watch(
     match create_watch_sse_stream(
         notification_result.topic.clone(),
         notification_backend.get_ref().clone(),
-    ).await {
+    )
+    .await
+    {
         Ok(sse_response) => {
             info!(
-            topic = %notification_result.topic,
-            "SSE stream established successfully"
-        );
+                topic = %notification_result.topic,
+                "SSE stream established successfully"
+            );
             sse_response
         }
         Err(e) => {

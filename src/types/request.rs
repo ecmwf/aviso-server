@@ -1,3 +1,4 @@
+use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use cloudevents::Event;
 use serde::{Deserialize, Serialize};
@@ -57,15 +58,15 @@ impl NotificationRequest {
     }
 
     /// Validate that the request contains only known fields
-    pub fn validate_known_fields(value: &serde_json::Value) -> Result<(), String> {
+    pub fn validate_known_fields(value: &serde_json::Value) -> Result<()> {
         if let Some(obj) = value.as_object() {
             for key in obj.keys() {
                 if !Self::is_valid_field(key) {
-                    return Err(format!(
+                    bail!(
                         "Unknown field '{}' in request. Allowed fields: {:?}",
                         key,
                         Self::all_field_names()
-                    ));
+                    );
                 }
             }
         }
@@ -80,16 +81,16 @@ impl NotificationRequest {
     ///
     /// # Returns
     /// * `Ok(Option<u64>)` - Parsed sequence number or None if not provided
-    /// * `Err(String)` - Invalid format or out of range
-    pub fn validate_from_id(&self) -> Result<Option<u64>, String> {
+    /// * `Err(anyhow::Error)` - Invalid sequence number format
+    pub fn validate_from_id(&self) -> Result<Option<u64>> {
         match &self.from_id {
             Some(id_str) => {
-                // Check for empty string
                 if id_str.trim().is_empty() {
-                    return Err("from_id cannot be empty. Provide a valid sequence number or omit the field".to_string());
+                    bail!(
+                        "from_id cannot be empty. Provide a valid sequence number or omit the field"
+                    );
                 }
 
-                // Parse as unsigned 64-bit integer
                 match id_str.parse::<u64>() {
                     Ok(id) => {
                         tracing::debug!(
@@ -99,11 +100,11 @@ impl NotificationRequest {
                         );
                         Ok(Some(id))
                     }
-                    Err(_) => Err(format!(
+                    Err(_) => bail!(
                         "from_id must be a valid positive integer. Got: '{}'. \
-                             Valid examples: '1', '123', '9999'",
+                         Valid examples: '1', '123', '9999'",
                         id_str
-                    )),
+                    ),
                 }
             }
             None => {
@@ -121,16 +122,16 @@ impl NotificationRequest {
     ///
     /// # Returns
     /// * `Ok(Option<DateTime<Utc>>)` - Parsed datetime or None if not provided
-    /// * `Err(String)` - Invalid datetime format
-    pub fn validate_from_date(&self) -> Result<Option<DateTime<Utc>>, String> {
+    /// * `Err(anyhow::Error)` - Invalid datetime format
+    pub fn validate_from_date(&self) -> Result<Option<DateTime<Utc>>> {
         match &self.from_date {
             Some(date_str) => {
-                // Check for empty string
                 if date_str.trim().is_empty() {
-                    return Err("from_date cannot be empty. Provide a valid RFC3339 datetime or omit the field".to_string());
+                    bail!(
+                        "from_date cannot be empty. Provide a valid RFC3339 datetime or omit the field"
+                    );
                 }
 
-                // Parse as RFC3339 datetime with timezone conversion to UTC
                 match DateTime::parse_from_rfc3339(date_str) {
                     Ok(parsed_date) => {
                         let utc_date = parsed_date.with_timezone(&Utc);
@@ -143,12 +144,13 @@ impl NotificationRequest {
 
                         Ok(Some(utc_date))
                     }
-                    Err(parse_error) => Err(format!(
+                    Err(parse_error) => bail!(
                         "from_date must be a valid RFC3339 datetime string. Got: '{}'. \
-                             Error: {}. \
-                             Valid examples: '2025-06-09T13:15:00Z', '2025-06-09T13:15:00+02:00'",
-                        date_str, parse_error
-                    )),
+                         Error: {}. \
+                         Valid examples: '2025-06-09T13:15:00Z', '2025-06-09T13:15:00+02:00'",
+                        date_str,
+                        parse_error
+                    ),
                 }
             }
             None => {
@@ -168,14 +170,11 @@ impl NotificationRequest {
     ///
     /// # Returns
     /// * `Ok((Option<u64>, Option<DateTime<Utc>>))` - Parsed values
-    /// * `Err(String)` - Validation failed for either parameter
-    pub fn validate_watch_parameters(
-        &self,
-    ) -> Result<(Option<u64>, Option<DateTime<Utc>>), String> {
+    /// * `Err(anyhow::Error)` - If any parameter is invalid
+    pub fn validate_watch_parameters(&self) -> Result<(Option<u64>, Option<DateTime<Utc>>)> {
         let parsed_id = self.validate_from_id()?;
         let parsed_date = self.validate_from_date()?;
 
-        // Log the combination for debugging
         match (&parsed_id, &parsed_date) {
             (Some(id), Some(date)) => {
                 tracing::debug!(
