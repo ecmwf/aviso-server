@@ -117,3 +117,34 @@ pub fn processing_error_response(process_type: &str, error: anyhow::Error) -> Ht
         "error_chain": error_chain
     }))
 }
+
+/// Create a standardized SSE error response
+///
+/// This is a convenience function for SSE-specific errors.
+///
+/// # Arguments
+/// * `error` - The SSE error
+/// * `topic` - The topic that failed
+/// * `request_id` - The request ID for tracking
+///
+/// # Returns
+/// * `HttpResponse` - InternalServerError response formatted for SSE errors
+pub fn sse_error_response(error: anyhow::Error, topic: &str, request_id: &str) -> HttpResponse {
+    let error_chain = extract_error_chain(&error);
+
+    error!(
+        error_chain = ?error_chain,
+        topic = topic,
+        request_id = request_id,
+        "SSE stream creation failed"
+    );
+
+    HttpResponse::InternalServerError().json(json!({
+        "error": "SSE stream creation failed",
+        "message": error_chain.first().unwrap_or(&error.to_string()),
+        "details": error_chain.last().unwrap_or(&error.to_string()),
+        "topic": topic,
+        "request_id": request_id,
+        "error_chain": error_chain
+    }))
+}

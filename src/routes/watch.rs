@@ -1,5 +1,5 @@
 use crate::configuration::Settings;
-use crate::error::validation_error_response;
+use crate::error::{sse_error_response, validation_error_response};
 use crate::notification::{NotificationHandler, OperationType};
 use crate::notification_backend::NotificationBackend;
 use crate::sse::create_watch_sse_stream;
@@ -88,28 +88,17 @@ pub async fn watch(
     match create_watch_sse_stream(
         notification_result.topic.clone(),
         notification_backend.get_ref().clone(),
-    )
-    .await
-    {
+    ).await {
         Ok(sse_response) => {
             info!(
-                topic = %notification_result.topic,
-                "SSE stream established successfully"
-            );
+            topic = %notification_result.topic,
+            "SSE stream established successfully"
+        );
             sse_response
         }
         Err(e) => {
-            tracing::error!(
-                error = %e,
-                topic = %notification_result.topic,
-                "Failed to create SSE stream"
-            );
-
-            HttpResponse::InternalServerError().json(serde_json::json!({
-                "error": "SSE Stream Creation Failed",
-                "message": e.to_string(),
-                "topic": notification_result.topic
-            }))
+            // Use consistent error helper
+            sse_error_response(e, &notification_result.topic, &request_id.to_string())
         }
     }
 }
