@@ -7,7 +7,3 @@ pub struct NotificationResponse {
     pub request_id: String,
     pub processed_at: String,
 }
-
-/// Response structure for watch endpoint
-#[derive(Debug, Clone, Serialize)]
-pub struct WatchResponse {}
