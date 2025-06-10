@@ -4,7 +4,7 @@
 //! back to CloudEvent format for SSE streaming. It uses the topic parser to
 //! reconstruct request parameters and formats them according to CloudEvent spec.
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use chrono::Utc;
 use cloudevents::{EventBuilder, EventBuilderV10};
 use serde_json::json;
@@ -14,6 +14,7 @@ use crate::configuration::Settings;
 use crate::notification::topic_parser::{derive_event_type_from_topic, topic_to_request};
 use crate::notification_backend::NotificationMessage;
 use cloudevents::AttributesReader;
+use tracing::debug;
 
 /// CloudEvent creator for watch endpoint streaming
 ///
@@ -45,10 +46,12 @@ impl CloudEventCreator {
         &self,
         notification: &NotificationMessage,
     ) -> Result<cloudevents::Event> {
-        let topic_base = derive_event_type_from_topic(&notification.topic);
+        let topic_base = derive_event_type_from_topic(&notification.topic)
+            .context("Failed to extract topic base from notification topic")?;
 
         // Map topic base to full event type name
-        let event_type = map_topic_base_to_event_type(&topic_base);
+        let event_type = find_event_type_from_topic_base(&topic_base)
+            .context("Failed to determine event type from topic")?;
 
         // Convert topic back to request parameters using schema
         let request_params = topic_to_request(&notification.topic, &event_type)
@@ -72,7 +75,7 @@ impl CloudEventCreator {
             .build()
             .context("Failed to build CloudEvent")?;
 
-        tracing::debug!(
+        debug!(
             event_id = cloud_event.id(),
             event_type = %event_type,
             topic = %notification.topic,
@@ -136,11 +139,11 @@ impl CloudEventCreator {
 
         let schema_map = schema
             .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("No notification schema configured"))?;
+            .ok_or_else(|| anyhow!("No notification schema configured"))?;
 
         let event_schema = schema_map
             .get(event_type)
-            .ok_or_else(|| anyhow::anyhow!("Unknown event type: {}", event_type))?;
+            .ok_or_else(|| anyhow!("Unknown event type: {}", event_type))?;
 
         // Check if payload is configured and required
         let payload_required = event_schema
@@ -149,7 +152,7 @@ impl CloudEventCreator {
             .map(|payload_config| payload_config.required)
             .unwrap_or(false);
 
-        tracing::debug!(
+        debug!(
             event_type = %event_type,
             payload_required = payload_required,
             "Checked payload requirement from schema"
@@ -180,7 +183,7 @@ impl CloudEventCreator {
             Ok(json_value) => Ok(json_value),
             Err(_) => {
                 // If it's not valid JSON, treat it as a string value
-                tracing::debug!(
+                debug!(
                     payload_preview = &payload[..payload.len().min(100)],
                     "Payload is not valid JSON, treating as string"
                 );
@@ -222,22 +225,32 @@ pub fn create_cloud_event_from_notification(
     creator.create_cloud_event(notification)
 }
 
-/// Map topic base to full event type name
+/// Find event type from topic base using schema configuration
 ///
-/// This function maps the topic base (first part of topic) back to the
-/// full event type name used in the schema configuration.
-///
-/// # Arguments
-/// * `topic_base` - The base part of the topic (e.g., "diss", "mars")
-///
-/// # Returns
-/// * `String` - The full event type name (e.g., "dissemination", "mars")
-fn map_topic_base_to_event_type(topic_base: &str) -> String {
-    match topic_base {
-        "diss" => "dissemination".to_string(),
-        "mars" => "mars".to_string(),
-        _ => topic_base.to_string(), // Fallback to base if no mapping found
+/// This function searches through all configured schemas to find which
+/// event type has a topic base matching the given topic base.
+fn find_event_type_from_topic_base(topic_base: &str) -> Result<String> {
+    let schema = Settings::get_global_notification_schema();
+
+    let schema_map = schema
+        .as_ref()
+        .ok_or_else(|| anyhow!("No notification schema configured"))?;
+
+    // Search through all schemas to find matching topic base
+    for (event_type, event_schema) in schema_map {
+        if let Some(topic_config) = &event_schema.topic {
+            if topic_config.base == topic_base {
+                debug!(
+                    topic_base = %topic_base,
+                    event_type = %event_type,
+                    "Found event type for topic base using schema"
+                );
+                return Ok(event_type.clone());
+            }
+        }
     }
+
+    bail!("No event type found for topic base: {}", topic_base)
 }
 
 #[cfg(test)]
