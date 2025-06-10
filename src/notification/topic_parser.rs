@@ -4,7 +4,7 @@
 //! original request parameters using the schema configuration. The conversion
 //! is straightforward since topic values are already in their canonical form.
 
-use anyhow::{Result, bail};
+use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 
 use crate::configuration::{EventSchema, Settings};
@@ -98,13 +98,13 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
 /// * `topic` - The topic string to analyze
 ///
 /// # Returns
-/// * `String` - The event type derived from topic base
-pub fn derive_event_type_from_topic(topic: &str) -> String {
+/// * `Result<String>` - The event type derived from topic base or error
+pub fn derive_event_type_from_topic(topic: &str) -> Result<String> {
     let first_part = topic.split('.').next().unwrap_or("");
     if first_part.is_empty() {
-        "unknown".to_string()
+        anyhow::bail!("Topic cannot be empty or malformed: '{}'", topic);
     } else {
-        first_part.to_string()
+        Ok(first_part.to_string())
     }
 }
 
@@ -117,14 +117,12 @@ pub fn derive_event_type_from_topic(topic: &str) -> String {
 /// * `topic` - The topic string to analyze
 ///
 /// # Returns
-/// * `String` - The stream name in uppercase format
-pub fn derive_stream_name_from_topic(topic: &str) -> String {
-    let first_part = topic.split('.').next().unwrap_or("");
-    if first_part.is_empty() {
-        "UNKNOWN".to_string()
-    } else {
-        first_part.to_uppercase()
-    }
+/// *  `Result<String>` - The stream type derived from topic base or error
+/// Derive stream name from topic string
+pub fn derive_stream_name_from_topic(topic: &str) -> Result<String> {
+    let event_type = derive_event_type_from_topic(topic)
+        .context("Failed to derive event type for stream name")?;
+    Ok(event_type.to_uppercase())
 }
 
 #[cfg(test)]
@@ -133,17 +131,26 @@ mod tests {
 
     #[test]
     fn test_derive_event_type_from_topic() {
-        assert_eq!(derive_event_type_from_topic("diss.FOO.E1"), "diss");
-        assert_eq!(derive_event_type_from_topic("mars.od.0001"), "mars");
-        assert_eq!(derive_event_type_from_topic(""), "unknown");
-        assert_eq!(derive_event_type_from_topic("single"), "single");
+        assert_eq!(derive_event_type_from_topic("diss.FOO.E1").unwrap(), "diss");
+        assert_eq!(
+            derive_event_type_from_topic("mars.od.0001").unwrap(),
+            "mars"
+        );
+        assert_eq!(derive_event_type_from_topic("single").unwrap(), "single");
+        assert!(derive_event_type_from_topic("").is_err());
     }
 
     #[test]
     fn test_derive_stream_name_from_topic() {
-        assert_eq!(derive_stream_name_from_topic("diss.FOO.E1"), "DISS");
-        assert_eq!(derive_stream_name_from_topic("mars.od.0001"), "MARS");
-        assert_eq!(derive_stream_name_from_topic(""), "UNKNOWN");
-        assert_eq!(derive_stream_name_from_topic("test"), "TEST");
+        assert_eq!(
+            derive_stream_name_from_topic("diss.FOO.E1").unwrap(),
+            "DISS"
+        );
+        assert_eq!(
+            derive_stream_name_from_topic("mars.od.0001").unwrap(),
+            "MARS"
+        );
+        assert_eq!(derive_stream_name_from_topic("test").unwrap(), "TEST");
+        assert!(derive_stream_name_from_topic("").is_err());
     }
 }
