@@ -1,3 +1,4 @@
+use crate::notification::topic_parser::derive_event_type_from_topic;
 use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use anyhow::{Context, Result, bail};
@@ -144,10 +145,8 @@ impl JetStreamBackend {
     /// * `Result<String>` - Stream name that handles this topic or error if creation fails
     async fn ensure_stream_for_topic(&self, topic: &str) -> Result<String> {
         // Extract base from topic (first part before '.')
-        let base = topic
-            .split('.')
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("Invalid topic format: {}", topic))?;
+        let base = derive_event_type_from_topic(topic)
+            .context("Failed to extract event type from topic")?;
 
         // Create stream name by uppercasing the base
         let stream_name = base.to_uppercase();
@@ -469,15 +468,8 @@ impl NotificationBackend for JetStreamBackend {
         );
 
         // Extract base from backend pattern for stream name
-        let base = backend_subscription_pattern
-            .split('.')
-            .next()
-            .ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Invalid backend pattern format: {}",
-                    backend_subscription_pattern
-                )
-            })?;
+        let base = derive_event_type_from_topic(&backend_subscription_pattern)
+            .context("Failed to extract base from backend subscription pattern")?;
 
         // Create stream name by uppercasing the base
         let stream_name = base.to_uppercase();
