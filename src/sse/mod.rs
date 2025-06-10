@@ -14,6 +14,7 @@ use tokio_stream::wrappers::IntervalStream;
 use crate::cloudevents::create_cloud_event_from_notification;
 use crate::configuration::Settings;
 use crate::notification_backend::NotificationBackend;
+use anyhow::Result;
 
 /// SSE event types for different message categories
 #[derive(Debug, Clone)]
@@ -54,7 +55,7 @@ pub fn format_sse_event(event_type: SseEventType, data: serde_json::Value) -> St
 pub async fn create_watch_sse_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
-) -> Result<HttpResponse, Box<dyn std::error::Error + Send + Sync>> {
+) -> Result<HttpResponse> {
     let app_settings = Settings::get_global_application_settings();
     let watch_config = Settings::get_global_watch_settings();
 
