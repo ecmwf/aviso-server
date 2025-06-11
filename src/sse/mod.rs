@@ -15,6 +15,7 @@ use crate::cloudevents::create_cloud_event_from_notification;
 use crate::configuration::Settings;
 use crate::notification_backend::NotificationBackend;
 use anyhow::Result;
+use tokio_util::sync::CancellationToken;
 
 /// SSE event types for different message categories
 #[derive(Debug, Clone)]
@@ -55,6 +56,7 @@ pub fn format_sse_event(event_type: SseEventType, data: serde_json::Value) -> St
 pub async fn create_watch_sse_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
+    shutdown: web::Data<CancellationToken>,
 ) -> Result<HttpResponse> {
     let app_settings = Settings::get_global_application_settings();
     let watch_config = Settings::get_global_watch_settings();
@@ -62,11 +64,11 @@ pub async fn create_watch_sse_stream(
     // Subscribe to the topic for real-time notifications
     let notification_stream = backend.subscribe_to_topic(&topic).await?;
 
-    // Create heartbeat timer (skip first immediate tick)
+    // Heartbeat timer (skip first immediate tick)
     let heartbeat_interval = Duration::from_secs(watch_config.sse_heartbeat_interval_sec);
     let topic_clone = topic.clone();
     let mut heartbeat_interval_timer = tokio::time::interval(heartbeat_interval);
-    heartbeat_interval_timer.tick().await; // Skip the immediate first tick
+    heartbeat_interval_timer.tick().await;
 
     let heartbeat_stream =
         FuturesStreamExt::map(IntervalStream::new(heartbeat_interval_timer), move |_| {
@@ -147,28 +149,39 @@ pub async fn create_watch_sse_stream(
         heartbeat_stream,
     );
 
-    // Create a stream that sends a closing message before terminating
-    let stream_with_closing = FuturesStreamExt::chain(
-        FuturesStreamExt::take_until(merged_stream, tokio::time::sleep(connection_timeout)),
-        // Send final closing message
-        tokio_stream::once({
-            let closing_event = format_sse_event(
-                SseEventType::ConnectionClosing,
-                json!({
-                    "reason": "timeout_reached",
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                    "message": "Connection is closing due to timeout"
-                }),
-            );
-            Ok::<_, actix_web::Error>(web::Bytes::from(closing_event))
-        }),
-    );
+    let shutdown_token = shutdown.get_ref().clone();
+
+    let stream_with_closing = {
+        let shutdown_future = {
+            let token = shutdown_token.clone();
+            async move {
+                token.cancelled().await;
+                tracing::debug!("SSE stream received shutdown signal");
+            }
+        };
+
+        let graceful = FuturesStreamExt::take_until(merged_stream, shutdown_future);
+
+        FuturesStreamExt::chain(
+            graceful,
+            tokio_stream::once({
+                let closing_event = format_sse_event(
+                    SseEventType::ConnectionClosing,
+                    json!({
+                        "reason": "server_shutdown",
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                        "message": "Server is shutting down gracefully"
+                    }),
+                );
+                Ok::<_, actix_web::Error>(web::Bytes::from(closing_event))
+            }),
+        )
+    };
 
     tracing::info!(
-        topic = %topic,
         timeout_seconds = connection_timeout.as_secs(),
         concurrent_limit = concurrent_limit,
-        "SSE stream created with closing message support"
+        "SSE stream created with graceful-shutdown support"
     );
 
     Ok(HttpResponse::Ok()
