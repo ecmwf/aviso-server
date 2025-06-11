@@ -9,8 +9,7 @@ use regex::Regex;
 
 /// Time validation handler
 ///
-/// This handler validates and canonicalizes time values commonly used in
-/// operational meteorological systems. It supports multiple input formats:
+/// Validates and canonicalizes time values. Supports multiple input formats:
 ///
 /// - **Single or double-digit hours**: 0, 1, 01, 23 (converted to HH00 format)
 /// - **HH:MM format**: Standard time with colon separator (e.g., "14:30")
@@ -68,10 +67,7 @@ impl TimeHandler {
 
         // No supported format matched
         bail!(
-            "Field '{}' has invalid time format '{}'. Supported formats:\n\
-             - Hour only: 0, 1, 01, 23 (becomes HH00)\n\
-             - HH:MM format: 14:30, 9:05\n\
-             - HHMM format: 1430, 0905",
+            "Field '{}' has invalid time format '{}'. Expected: H, HH, HH:MM, or HHMM",
             field_name,
             value
         );
@@ -110,7 +106,7 @@ impl TimeHandler {
             // Validate hour range (0-23)
             if hour > 23 {
                 bail!(
-                    "Field '{}' has invalid hour: {}. Hours must be 0-23 in 24-hour format",
+                    "Field '{}' has invalid hours: {}. Hours must be 0-23 in 24-hour format",
                     field_name,
                     hour
                 );

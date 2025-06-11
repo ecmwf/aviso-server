@@ -2,9 +2,8 @@ use anyhow::{Result, bail};
 
 /// Experiment version validation handler
 ///
-/// Experiment versions (expver) are identifiers used to distinguish between
-/// different experimental runs, model versions, or operational cycles in
-/// meteorological systems. This handler supports two formats:
+/// Handles experiment version identifiers for different runs and model versions.
+
 ///
 /// - **Numeric versions**: Integers that are zero-padded to 4 digits (e.g., 1 → "0001")
 /// - **String versions**: Alphanumeric identifiers converted to lowercase (e.g., "PROD" → "prod")
@@ -47,10 +46,7 @@ impl ExpverHandler {
                 );
                 return Ok(canonicalized_default);
             } else {
-                bail!(
-                    "Field '{}' cannot be empty and no default value is configured",
-                    field_name
-                );
+                bail!("Field '{}' cannot be empty", field_name);
             }
         }
 

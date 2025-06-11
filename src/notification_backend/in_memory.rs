@@ -1,10 +1,11 @@
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
+use futures_util::Stream;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
-    time::SystemTime,
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
@@ -149,12 +150,12 @@ impl InMemoryBackend {
                 .iter()
                 .min_by_key(|(_, state)| {
                     // Use the timestamp of the most recent message, or 0 if no messages
-                    // Fixed: Handle Option<i64> timestamp properly
+                    // Handle Option<i64> timestamp
                     state
                         .messages
                         .back()
                         .and_then(|msg| msg.timestamp) // Extract Option<i64>
-                        .unwrap_or(0) // Convert to i64 with default 0
+                        .unwrap_or_else(|| Utc::now()) // Convert to i64 with default 0
                 })
                 .map(|(topic, _)| topic.clone());
 
@@ -221,13 +222,10 @@ impl NotificationBackend for InMemoryBackend {
 
         // Create message with optional fields populated for in-memory backend
         let msg = NotificationMessage {
-            id: Some(topic_state.next_id), // Populate ID for in-memory tracking
-            timestamp: Some(
-                SystemTime::now()
-                    .duration_since(SystemTime::UNIX_EPOCH)?
-                    .as_millis() as i64,
-            ), // Populate timestamp for in-memory tracking
-            payload,
+            sequence: topic_state.next_id, // Remove Some(), it's already u64
+            topic: topic.to_string(),      // Add missing topic field
+            payload: payload.to_string(),  // Keep as String
+            timestamp: Some(Utc::now()),   // Use DateTime<Utc>, not i64
         };
 
         // Update topic state counters
@@ -239,7 +237,7 @@ impl NotificationBackend for InMemoryBackend {
             let removed_msg = topic_state.messages.pop_front();
             debug!(
                 topic = %topic,
-                removed_msg_id = removed_msg.as_ref().and_then(|m| m.id),
+                removed_msg_id = removed_msg.as_ref().map(|m| m.sequence),
                 max_history = self.config.max_history_per_topic,
                 "Pruned oldest message due to history limit"
             );
@@ -338,5 +336,38 @@ impl NotificationBackend for InMemoryBackend {
         );
 
         Ok(())
+    }
+
+    #[allow(unused_variables)]
+    async fn get_messages_batch(
+        &self,
+        topic: &str,
+        from_sequence: Option<u64>,
+        from_date: Option<DateTime<Utc>>,
+        limit: usize,
+        offset: usize,
+    ) -> anyhow::Result<(Vec<NotificationMessage>, bool)> {
+        // TODO: Implement InMemory message retrieval
+        todo!("InMemory get_messages_batch not yet implemented")
+    }
+
+    #[allow(unused_variables)]
+    async fn count_messages(
+        &self,
+        topic: &str,
+        from_sequence: Option<u64>,
+        from_date: Option<DateTime<Utc>>,
+    ) -> anyhow::Result<usize> {
+        // TODO: Implement InMemory message counting
+        todo!("InMemory count_messages not yet implemented")
+    }
+
+    #[allow(unused_variables)]
+    async fn subscribe_to_topic(
+        &self,
+        topic: &str,
+    ) -> anyhow::Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
+        // TODO: Implement InMemory real-time subscription
+        todo!("InMemory subscribe_to_topic not yet implemented")
     }
 }

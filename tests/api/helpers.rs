@@ -1,11 +1,11 @@
-use std::sync::LazyLock;
-
 use aviso_server::{
     configuration::LoggingSettings,
     configuration::get_configuration,
     startup::Application,
     telemetry::{get_subscriber, init_subscriber},
 };
+use std::sync::LazyLock;
+use tokio_util::sync::CancellationToken;
 
 static TRACING: LazyLock<()> = LazyLock::new(|| {
     let default_filter_level = "warn".to_string();
@@ -38,7 +38,9 @@ pub async fn spawn_app() -> TestApp {
         c
     };
 
-    let application = Application::build(configuration.clone())
+    let shutdown_token = CancellationToken::new();
+
+    let application = Application::build(configuration.clone(), shutdown_token.clone())
         .await
         .expect("Failed to build server");
     let address = format!("http://127.0.0.1:{}", application.port());

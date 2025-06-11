@@ -36,7 +36,7 @@ jetstream {
 }
 
 # Logging
-debug: false
+debug: true
 trace: false
 logtime: true
 

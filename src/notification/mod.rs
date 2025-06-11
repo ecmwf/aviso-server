@@ -8,10 +8,13 @@ pub mod handler;
 pub mod processor;
 pub mod registry;
 pub mod topic_builder;
+pub mod topic_parser;
 pub mod types;
 pub mod validators;
+pub mod wildcard_matcher;
 
 pub use handler::NotificationHandler;
 pub use processor::NotificationProcessor;
 pub use registry::NotificationRegistry;
 pub use types::{OperationType, ProcessingResult};
+pub use wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};

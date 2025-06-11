@@ -1,12 +1,16 @@
-use crate::notification_backend::NotificationBackend;
+use crate::notification::topic_parser::derive_event_type_from_topic;
+use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
+use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use anyhow::{Context, Result, bail};
 use async_nats::jetstream::{
     self,
     stream::{Config as StreamConfig, DiscardPolicy, RetentionPolicy, StorageType},
 };
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use futures::StreamExt;
-use tracing::{debug, info, warn};
+use futures_util::Stream;
+use tracing::{debug, error, info, warn};
 
 /// Configuration for JetStream backend
 /// Contains all necessary settings for connecting to NATS and configuring streams
@@ -25,7 +29,7 @@ pub struct JetStreamConfig {
     /// Maximum bytes per stream
     pub max_bytes: Option<i64>,
     /// Maximum age of messages in seconds
-    pub max_age_seconds: Option<i64>,
+    pub retention_days: Option<u32>,
     /// Storage type: "file" or "memory"
     pub storage_type: String,
     /// Number of replicas for high availability
@@ -55,9 +59,7 @@ impl JetStreamConfig {
                 .or_else(|| std::env::var("NATS_TOKEN").ok()),
             max_messages: js_settings.and_then(|js| js.max_messages),
             max_bytes: js_settings.and_then(|js| js.max_bytes),
-            max_age_seconds: js_settings
-                .and_then(|js| js.retention_days)
-                .map(|days| days as i64 * 24 * 3600),
+            retention_days: js_settings.and_then(|js| js.retention_days),
             storage_type: js_settings
                 .and_then(|js| js.storage_type.clone())
                 .unwrap_or_else(|| "file".to_string()),
@@ -141,10 +143,8 @@ impl JetStreamBackend {
     /// * `Result<String>` - Stream name that handles this topic or error if creation fails
     async fn ensure_stream_for_topic(&self, topic: &str) -> Result<String> {
         // Extract base from topic (first part before '.')
-        let base = topic
-            .split('.')
-            .next()
-            .ok_or_else(|| anyhow::anyhow!("Invalid topic format: {}", topic))?;
+        let base = derive_event_type_from_topic(topic)
+            .context("Failed to extract event type from topic")?;
 
         // Create stream name by uppercasing the base
         let stream_name = base.to_uppercase();
@@ -264,8 +264,8 @@ impl JetStreamBackend {
         if let Some(max_bytes) = self.config.max_bytes {
             config.max_bytes = max_bytes;
         }
-        if let Some(max_age_seconds) = self.config.max_age_seconds {
-            config.max_age = std::time::Duration::from_secs(max_age_seconds as u64);
+        if let Some(retention_days) = self.config.retention_days {
+            config.max_age = std::time::Duration::from_secs(retention_days as u64 * 24 * 3600);
         }
         if let Some(replicas) = self.config.replicas {
             config.num_replicas = replicas;
@@ -424,6 +424,177 @@ impl NotificationBackend for JetStreamBackend {
             "Completed wipe_all operation - all JetStream data removed"
         );
 
+        Ok(())
+    }
+
+    #[allow(unused_variables)]
+    async fn get_messages_batch(
+        &self,
+        topic: &str,
+        from_sequence: Option<u64>,
+        from_date: Option<DateTime<Utc>>,
+        limit: usize,
+        offset: usize,
+    ) -> Result<(Vec<NotificationMessage>, bool)> {
+        // TODO: Implement JetStream message retrieval
+        todo!("JetStream get_messages_batch not yet implemented")
+    }
+
+    #[allow(unused_variables)]
+    async fn count_messages(
+        &self,
+        topic: &str,
+        from_sequence: Option<u64>,
+        from_date: Option<DateTime<Utc>>,
+    ) -> Result<usize> {
+        // TODO: Implement JetStream message counting
+        todo!("JetStream count_messages not yet implemented")
+    }
+
+    async fn subscribe_to_topic(
+        &self,
+        topic: &str,
+    ) -> anyhow::Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
+        // Analyze the watch pattern for hybrid filtering
+        let (backend_subscription_pattern, app_filter_pattern) = analyze_watch_pattern(topic);
+
+        info!(
+            watch_topic = %topic,
+            backend_pattern = %backend_subscription_pattern,
+            app_filter_parts = app_filter_pattern.len(),
+            "Setting up hybrid wildcard subscription"
+        );
+
+        // Extract base from backend pattern for stream name
+        let base = derive_event_type_from_topic(&backend_subscription_pattern)
+            .context("Failed to extract base from backend subscription pattern")?;
+
+        // Create stream name by uppercasing the base
+        let stream_name = base.to_uppercase();
+
+        // Ensure the stream exists before subscribing
+        self.ensure_stream_for_topic(&backend_subscription_pattern)
+            .await
+            .context("Failed to ensure stream exists for subscription")?;
+
+        // Get JetStream context
+        let jetstream = async_nats::jetstream::new(self.client.clone());
+
+        // Create consumer configuration using the backend subscription pattern
+        let consumer_config = async_nats::jetstream::consumer::pull::Config {
+            name: Some(format!(
+                "watch_consumer_{}_{}",
+                stream_name,
+                chrono::Utc::now().timestamp_millis()
+            )),
+            durable_name: None, // Ephemeral consumer for watch connections
+            description: Some(format!(
+                "Watch consumer for pattern: {}",
+                backend_subscription_pattern
+            )),
+            // Use the backend subscription pattern for JetStream filtering
+            filter_subject: backend_subscription_pattern.clone(),
+            deliver_policy: async_nats::jetstream::consumer::DeliverPolicy::New, // Only new messages
+            ack_policy: async_nats::jetstream::consumer::AckPolicy::None, // No ack needed for watch
+            replay_policy: async_nats::jetstream::consumer::ReplayPolicy::Instant,
+            max_deliver: 1,
+            ..Default::default()
+        };
+
+        // Create the pull consumer
+        let consumer = jetstream
+            .create_consumer_on_stream(consumer_config, &stream_name)
+            .await
+            .context("Failed to create JetStream consumer for topic subscription")?;
+
+        info!(
+            backend_pattern = %backend_subscription_pattern, // Now this works
+            stream_name = %stream_name,
+            consumer_name = consumer.cached_info().name,
+            "Created JetStream consumer with backend pattern filtering"
+        );
+
+        // Get the JetStream message stream
+        let message_stream = consumer
+            .messages()
+            .await
+            .context("Failed to get message stream from JetStream consumer")?;
+
+        // Transform JetStream messages with application-level filtering
+        let notification_stream = StreamExt::filter_map(message_stream, move |msg_result| {
+            let app_filter = app_filter_pattern.clone();
+            async move {
+                match msg_result {
+                    Ok(msg) => {
+                        // Extract message metadata
+                        let sequence = msg.info().unwrap().stream_sequence;
+                        let jetstream_timestamp = msg.info().unwrap().published;
+                        let subject = msg.subject.to_string();
+
+                        // Convert OffsetDateTime to chrono::DateTime<Utc>
+                        let timestamp = chrono::DateTime::<chrono::Utc>::from_timestamp(
+                            jetstream_timestamp.unix_timestamp(),
+                            jetstream_timestamp.nanosecond(),
+                        )
+                        .unwrap_or_else(chrono::Utc::now);
+
+                        // Apply application-level wildcard filtering
+                        if matches_watch_pattern(&subject, &app_filter) {
+                            // Convert payload bytes to string
+                            let payload = String::from_utf8_lossy(&msg.payload).to_string();
+
+                            // Create NotificationMessage
+                            let notification_msg = NotificationMessage {
+                                sequence,
+                                topic: subject.clone(),
+                                payload,
+                                timestamp: Some(timestamp),
+                            };
+
+                            debug!(
+                                topic = %subject,
+                                sequence = sequence,
+                                timestamp = ?timestamp,
+                                "Message passed wildcard filter, delivering to client"
+                            );
+
+                            Some(notification_msg)
+                        } else {
+                            debug!(
+                                topic = %subject,
+                                sequence = sequence,
+                                "Message filtered out by application-level wildcard matching"
+                            );
+                            None
+                        }
+                    }
+                    Err(e) => {
+                        error!(
+                            error = %e,
+                            "Error receiving message from JetStream subscription"
+                        );
+                        // Filter out errors, continue with other messages
+                        None
+                    }
+                }
+            }
+        })
+        .boxed();
+
+        debug!(
+            watch_topic = %topic,
+            backend_pattern = %backend_subscription_pattern,
+            stream_name = %stream_name,
+            "JetStream subscription stream created with hybrid wildcard filtering"
+        );
+
+        Ok(Box::new(notification_stream))
+    }
+
+    async fn shutdown(&self) -> Result<()> {
+        let conn = self.client.clone();
+        conn.flush().await?;
+        conn.drain().await?;
         Ok(())
     }
 }
