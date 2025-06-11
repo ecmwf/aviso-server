@@ -136,7 +136,7 @@ impl InMemoryBackend {
         }
     }
 
-    /// Enforce topic limit by removing oldest topics when necessary
+    /// Enforce topic limit by removing the oldest topics when necessary
     /// Uses LRU strategy based on the timestamp of the most recent message per topic
     /// This prevents unbounded memory growth when many topics are created
     ///
@@ -149,7 +149,12 @@ impl InMemoryBackend {
                 .iter()
                 .min_by_key(|(_, state)| {
                     // Use the timestamp of the most recent message, or 0 if no messages
-                    state.messages.back().map(|msg| msg.timestamp).unwrap_or(0)
+                    // Fixed: Handle Option<i64> timestamp properly
+                    state
+                        .messages
+                        .back()
+                        .and_then(|msg| msg.timestamp) // Extract Option<i64>
+                        .unwrap_or(0) // Convert to i64 with default 0
                 })
                 .map(|(topic, _)| topic.clone());
 
@@ -214,12 +219,14 @@ impl NotificationBackend for InMemoryBackend {
             TopicState::new(self.config.max_history_per_topic)
         });
 
-        // Create message with unique ID and current timestamp
+        // Create message with optional fields populated for in-memory backend
         let msg = NotificationMessage {
-            id: topic_state.next_id,
-            timestamp: SystemTime::now()
-                .duration_since(SystemTime::UNIX_EPOCH)?
-                .as_millis() as i64,
+            id: Some(topic_state.next_id), // Populate ID for in-memory tracking
+            timestamp: Some(
+                SystemTime::now()
+                    .duration_since(SystemTime::UNIX_EPOCH)?
+                    .as_millis() as i64,
+            ), // Populate timestamp for in-memory tracking
             payload,
         };
 
@@ -232,7 +239,7 @@ impl NotificationBackend for InMemoryBackend {
             let removed_msg = topic_state.messages.pop_front();
             debug!(
                 topic = %topic,
-                removed_msg_id = removed_msg.map(|m| m.id),
+                removed_msg_id = removed_msg.as_ref().and_then(|m| m.id),
                 max_history = self.config.max_history_per_topic,
                 "Pruned oldest message due to history limit"
             );

@@ -45,7 +45,7 @@ impl<'a> NotificationProcessor<'a> {
     /// * `operation` - Whether this is a notify or watch operation
     ///
     /// # Returns
-    /// * `Ok(ProcessingResult)` - Successfully processed with topic and payload
+    /// * `Ok(ProcessingResult)` - Successfully processed with topic
     /// * `Err(anyhow::Error)` - Validation or processing failed
     pub fn process_request(
         &self,
@@ -59,7 +59,8 @@ impl<'a> NotificationProcessor<'a> {
             let schema = self.registry.get_schema(event_type).unwrap();
             match operation {
                 OperationType::Notify => self.process_notify_request(schema, request_params)?,
-                OperationType::Listen => self.process_watch_request(schema, request_params)?,
+                OperationType::Watch => self.process_watch_request(schema, request_params)?,
+                OperationType::Replay => self.process_replay_request(schema, request_params)?,
             }
         } else {
             // Use generic validation for unknown event types
@@ -73,17 +74,9 @@ impl<'a> NotificationProcessor<'a> {
             TopicBuilder::build_generic_topic(event_type, &canonicalized_params)
         };
 
-        // Extract payload if schema defines payload configuration
-        let payload = if let Some(schema) = self.registry.get_schema(event_type) {
-            self.extract_payload(schema, request_params)?
-        } else {
-            None
-        };
-
         Ok(ProcessingResult {
             event_type: event_type.to_string(),
             topic,
-            payload,
             canonicalized_params,
         })
     }
@@ -165,6 +158,41 @@ impl<'a> NotificationProcessor<'a> {
         Ok(canonicalized)
     }
 
+    /// Process request for replay operation with schema validation
+    ///
+    /// For replay operations, only fields marked as required must be present.
+    /// Missing optional fields are filled with "*" for wildcard matching.
+    /// This is similar to watch operations but intended for historical data retrieval.
+    fn process_replay_request(
+        &self,
+        schema: &EventSchema,
+        request_params: &HashMap<String, String>,
+    ) -> Result<HashMap<String, String>> {
+        let mut canonicalized = HashMap::new();
+
+        for (field_name, rules) in &schema.request {
+            let is_required = rules.iter().any(|rule| rule.is_required());
+
+            if let Some(value) = request_params.get(field_name) {
+                // Field is provided, validate and canonicalize it
+                let canonicalized_value =
+                    self.validate_and_canonicalize_field(field_name, value, rules)?;
+                canonicalized.insert(field_name.clone(), canonicalized_value);
+            } else if is_required {
+                // Required field is missing - this is an error
+                bail!(
+                    "Required field '{}' missing for replay operation",
+                    field_name
+                );
+            } else {
+                // Optional field not provided, use "*" for wildcard matching
+                canonicalized.insert(field_name.clone(), "*".to_string());
+            }
+        }
+
+        Ok(canonicalized)
+    }
+
     /// Process request without schema using generic validation
     ///
     /// Generic processing provides basic validation without schema rules:
@@ -195,8 +223,8 @@ impl<'a> NotificationProcessor<'a> {
                     canonicalized.insert(key.clone(), value.clone());
                 }
             }
-            OperationType::Listen => {
-                // For watch without schema, accept any values including empty
+            OperationType::Watch | OperationType::Replay => {
+                // For watch/replay without schema, accept any values including empty
                 for (key, value) in request_params {
                     canonicalized.insert(key.clone(), value.clone());
                 }
@@ -253,37 +281,6 @@ impl<'a> NotificationProcessor<'a> {
             }
         }
     }
-
-    /// Extract payload data based on schema configuration
-    ///
-    /// If the schema defines a payload configuration, this method extracts
-    /// the specified field value from the request parameters.
-    ///
-    /// # Arguments
-    /// * `schema` - The schema definition
-    /// * `request_params` - The request parameters
-    ///
-    /// # Returns
-    /// * `Ok(Some(String))` - Payload extracted successfully
-    /// * `Ok(None)` - No payload configured or not required
-    /// * `Err(anyhow::Error)` - Required payload missing
-    fn extract_payload(
-        &self,
-        schema: &EventSchema,
-        request_params: &HashMap<String, String>,
-    ) -> Result<Option<String>> {
-        if let Some(payload_config) = &schema.payload {
-            if let Some(payload_value) = request_params.get(&payload_config.key) {
-                Ok(Some(payload_value.clone()))
-            } else if payload_config.required {
-                bail!("Required payload field '{}' is missing", payload_config.key);
-            } else {
-                Ok(None)
-            }
-        } else {
-            Ok(None)
-        }
-    }
 }
 
 #[cfg(test)]
@@ -318,7 +315,7 @@ mod tests {
 
         EventSchema {
             payload: Some(PayloadConfig {
-                key: "location".to_string(),
+                allowed_types: vec!["String".to_string()],
                 required: true,
             }),
             topic: Some(TopicConfig {
@@ -360,7 +357,7 @@ mod tests {
         params.insert("location".to_string(), "/path/to/file".to_string());
         // Missing optional_field should get "*"
 
-        let result = processor.process_request("test_event", &params, OperationType::Listen);
+        let result = processor.process_request("test_event", &params, OperationType::Watch);
         assert!(result.is_ok());
 
         let processing_result = result.unwrap();
@@ -380,10 +377,9 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("class".to_string(), "od".to_string());
         params.insert("destination".to_string(), "SCL".to_string());
-        // Missing required "location" payload field
 
-        let result = processor.process_request("test_event", &params, OperationType::Notify);
-        assert!(result.is_err());
+        let result = processor.process_request("test_event", &params, OperationType::Watch);
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -407,8 +403,8 @@ mod tests {
 
         let schema = EventSchema {
             payload: Some(PayloadConfig {
-                key: "optional_payload".to_string(),
-                required: false, // This is the key - payload is optional
+                allowed_types: vec!["String".to_string()],
+                required: false, // Payload is optional
             }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
@@ -427,13 +423,10 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("class".to_string(), "od".to_string());
         params.insert("destination".to_string(), "SCL".to_string());
-        // Missing optional payload field "optional_payload"
+        // Missing optional payload field
 
         let result = processor.process_request("test_event", &params, OperationType::Notify);
         assert!(result.is_ok());
-
-        let processing_result = result.unwrap();
-        assert!(processing_result.payload.is_none());
     }
 
     #[test]
@@ -453,7 +446,7 @@ mod tests {
     #[test]
     fn test_validation_rule_not_found() {
         let mut request = HashMap::new();
-        request.insert("field".to_string(), vec![]); // No validation rules
+        request.insert("field".to_string(), vec![]);
 
         let schema = EventSchema {
             payload: None,

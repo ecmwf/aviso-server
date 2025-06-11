@@ -1,51 +1,69 @@
-use crate::error::{processing_error_response, validation_error_response};
-use crate::handlers;
-use crate::handlers::save_to_backend;
+use crate::error::processing_error_response;
+use crate::error::validation_error_response;
+use crate::handlers::{
+    convert_payload_to_string, get_payload_type_name, parse_and_validate_request,
+    process_notification_request, save_to_backend,
+};
+use crate::notification::OperationType;
 use crate::notification_backend::NotificationBackend;
+use crate::types::NotificationResponse;
 use actix_web::{HttpResponse, web};
-use serde_json::Value;
 use std::sync::Arc;
 use tracing::{error, info};
 use tracing_actix_web::RequestId;
 
-// Simple response structure
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct NotificationResponse {
-    pub status: String,
-    pub request_id: String,
-    pub processed_at: String,
-}
-
-/// Simple notification endpoint handler that orchestrates the processing flow
+/// Notification endpoint handler
+///
+/// Processes notification requests with all schema fields required.
+/// Validates request format, payload type, processes notification, and saves to backend.
 #[tracing::instrument(
-    skip(payload, notification_backend),
+    skip(body, notification_backend),
     fields(
-        event_id = tracing::field::Empty,
         event_type = tracing::field::Empty,
         topic = tracing::field::Empty,
         request_id = %request_id,
     )
 )]
 pub async fn notify(
-    payload: web::Json<Value>,
+    body: web::Bytes,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     request_id: RequestId,
 ) -> HttpResponse {
-    // Process CloudEvent
-    let cloudevent_response = match handlers::cloudevent::process_cloudevent(&payload).await {
-        Ok(response) => response,
-        Err(e) => return validation_error_response("CloudEvent", e),
+    // Parse and validate request structure
+    let payload = match parse_and_validate_request(&body) {
+        Ok(p) => p,
+        Err(e) => return validation_error_response("Request Validation", e),
     };
 
-    // Process Aviso notification
-    let notification_result =
-        match handlers::notification::process_aviso_request(&payload, &cloudevent_response).await {
-            Ok(result) => result,
-            Err(e) => return validation_error_response("Aviso Notification", e),
-        };
+    let event_type = &payload.event_type;
+    let request_params = &payload.request;
 
-    // Save to backend
-    if let Err(e) = save_to_backend(&notification_result, notification_backend.get_ref()).await {
+    tracing::Span::current().record("event_type", event_type);
+
+    // Process notification request with payload validation
+    let notification_result = match process_notification_request(
+        event_type,
+        request_params,
+        &payload.payload,
+        OperationType::Notify,
+    ) {
+        Ok(result) => result,
+        Err(response) => return response,
+    };
+
+    tracing::Span::current().record("topic", &notification_result.topic);
+
+    // Convert payload for backend storage
+    let payload_string = convert_payload_to_string(&payload.payload);
+
+    // Save to backend storage
+    if let Err(e) = save_to_backend(
+        &notification_result,
+        payload_string.as_deref(),
+        notification_backend.get_ref().as_ref(),
+    )
+    .await
+    {
         error!(
             error = %e,
             topic = %notification_result.topic,
@@ -54,7 +72,7 @@ pub async fn notify(
         return processing_error_response("Notification Storage", e);
     }
 
-    // Build response
+    // Build success response
     let response = NotificationResponse {
         status: "success".to_string(),
         request_id: request_id.to_string(),
@@ -64,6 +82,8 @@ pub async fn notify(
     info!(
         topic = %notification_result.topic,
         event_type = %notification_result.event_type,
+        param_count = notification_result.canonicalized_params.len(),
+        payload_type = ?get_payload_type_name(&payload.payload),
         "Notification processed and saved successfully"
     );
 

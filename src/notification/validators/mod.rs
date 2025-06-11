@@ -8,6 +8,7 @@ pub mod date_handler;
 pub mod enum_handler;
 pub mod expver_handler;
 pub mod int_handler;
+pub mod payload_validator;
 pub mod string_handler;
 pub mod time_handler;
 
@@ -16,5 +17,6 @@ pub use date_handler::DateHandler;
 pub use enum_handler::EnumHandler;
 pub use expver_handler::ExpverHandler;
 pub use int_handler::IntHandler;
+pub use payload_validator::validate_payload_type;
 pub use string_handler::StringHandler;
 pub use time_handler::TimeHandler;

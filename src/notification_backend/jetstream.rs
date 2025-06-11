@@ -1,4 +1,4 @@
-use crate::notification_backend::{NotificationBackend, NotificationMessage};
+use crate::notification_backend::NotificationBackend;
 use anyhow::{Context, Result, bail};
 use async_nats::jetstream::{
     self,
@@ -6,7 +6,6 @@ use async_nats::jetstream::{
 };
 use async_trait::async_trait;
 use futures::StreamExt;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tracing::{debug, info, warn};
 
 /// Configuration for JetStream backend
@@ -311,25 +310,11 @@ impl NotificationBackend for JetStreamBackend {
             "Publishing notification message to JetStream"
         );
 
-        // Create notification message with metadata
-        let message = NotificationMessage {
-            id: 0, // Will be assigned by JetStream
-            timestamp: SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .context("Failed to get current timestamp")?
-                .as_millis() as i64,
-            payload,
-        };
-
-        // Serialize message to JSON for storage
-        let message_json = serde_json::to_string(&message)
-            .context("Failed to serialize notification message to JSON")?;
-
-        // Publish message to JetStream - no headers needed!
-        // JetStream will automatically discard old messages for this subject
+        // Publish raw payload directly to JetStream - no JSON wrapper
+        // JetStream will provide its own sequence numbers and timestamps
         let publish_ack = self
             .jetstream
-            .publish(topic.to_string(), message_json.into())
+            .publish(topic.to_string(), payload.clone().into())
             .await
             .context("Failed to publish notification message to JetStream")?;
 
@@ -342,7 +327,7 @@ impl NotificationBackend for JetStreamBackend {
             topic = %topic,
             stream_name = %stream_name,
             sequence = ack.sequence,
-            payload_size = message.payload.len(),
+            payload_size = payload.len(),
             "Notification message published successfully to JetStream"
         );
 
