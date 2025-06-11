@@ -67,6 +67,10 @@ pub trait NotificationBackend: Send + Sync {
         &self,
         topic: &str,
     ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>>;
+
+    async fn shutdown(&self) -> Result<()> {
+        Ok(())
+    }
 }
 
 /// Build the appropriate notification backend based on configuration

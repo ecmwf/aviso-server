@@ -590,4 +590,11 @@ impl NotificationBackend for JetStreamBackend {
 
         Ok(Box::new(notification_stream))
     }
+
+    async fn shutdown(&self) -> Result<()> {
+        let conn = self.client.clone();
+        conn.flush().await?;
+        conn.drain().await?;
+        Ok(())
+    }
 }
