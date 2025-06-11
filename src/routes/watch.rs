@@ -6,6 +6,7 @@ use crate::sse::create_watch_sse_stream;
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
+use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_actix_web::RequestId;
 
@@ -25,6 +26,7 @@ use tracing_actix_web::RequestId;
 pub async fn watch(
     notification_request: web::Json<NotificationRequest>,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
+    shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
 ) -> HttpResponse {
     // Extract event type and request parameters from notification_request
@@ -84,6 +86,7 @@ pub async fn watch(
     match create_watch_sse_stream(
         notification_result.topic.clone(),
         notification_backend.get_ref().clone(),
+        shutdown.clone(),
     )
     .await
     {
