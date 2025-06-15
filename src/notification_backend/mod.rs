@@ -1,6 +1,9 @@
 pub mod in_memory;
 pub mod jetstream;
 
+pub use jetstream::backend::JetStreamBackend;
+pub use jetstream::config::JetStreamConfig;
+
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -30,21 +33,9 @@ pub struct NotificationMessage {
 /// to be used interchangeably while maintaining the same interface.
 #[async_trait]
 pub trait NotificationBackend: Send + Sync {
-    /// Store a notification message for a given topic
-    ///
-    /// The topic is built by your TopicBuilder and will be used directly
-    /// as the storage key/subject. For JetStream, this becomes the NATS subject.
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()>;
-    /// Remove all notifications in a specific stream
-    /// For JetStream: purges the entire stream (e.g., "DISS", "MARS")
-    /// For in-memory: removes all subjects matching the stream pattern
     async fn wipe_stream(&self, stream_name: &str) -> Result<()>;
-
-    /// Remove all data from all streams
-    /// This is a complete reset of the backend storage
     async fn wipe_all(&self) -> Result<()>;
-
-    /// Retrieve a batch of messages for historical replay
     async fn get_messages_batch(
         &self,
         topic: &str,
@@ -53,16 +44,12 @@ pub trait NotificationBackend: Send + Sync {
         limit: usize,
         offset: usize,
     ) -> Result<(Vec<NotificationMessage>, bool)>;
-
-    /// Count total messages matching the criteria for replay limit validation
     async fn count_messages(
         &self,
         topic: &str,
         from_sequence: Option<u64>,
         from_date: Option<DateTime<Utc>>,
     ) -> Result<usize>;
-
-    /// Subscribe to real-time notifications for a specific topic
     async fn subscribe_to_topic(
         &self,
         topic: &str,
@@ -83,21 +70,18 @@ pub async fn build_backend(
     match config.kind.as_str() {
         "in_memory" => {
             tracing::info!("Building in-memory notification backend");
-            let in_memory_config = in_memory::InMemoryConfig::from_backend_settings(config);
-            Ok(Arc::new(in_memory::InMemoryBackend::new(in_memory_config)))
+            let cfg = in_memory::InMemoryConfig::from_backend_settings(config);
+            Ok(Arc::new(in_memory::InMemoryBackend::new(cfg)))
         }
         "jetstream" => {
             tracing::info!("Building JetStream notification backend");
-            let jetstream_config = jetstream::JetStreamConfig::from_backend_settings(config);
-
-            if jetstream_config.token.is_some() {
+            let cfg = JetStreamConfig::from_backend_settings(config);
+            if cfg.token.is_some() {
                 tracing::info!("NATS token configured");
             } else {
                 tracing::info!("No NATS token configured - using unauthenticated connection");
             }
-
-            let backend = jetstream::JetStreamBackend::new(jetstream_config).await?;
-            Ok(Arc::new(backend))
+            Ok(Arc::new(JetStreamBackend::new(cfg).await?))
         }
         kind => Err(anyhow::anyhow!("Unknown notification_backend kind: {kind}")),
     }
