@@ -1,5 +1,7 @@
 use serde::Serialize;
 use std::collections::HashMap;
+use std::str::FromStr;
+
 
 /// Operation type for different validation modes
 ///
@@ -25,17 +27,21 @@ pub enum OperationType {
     Replay,
 }
 
-impl OperationType {
-    /// Convert string operation to OperationType
-    pub fn from_str(operation: &str) -> Result<Self, anyhow::Error> {
-        match operation {
+impl FromStr for OperationType {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
             "notify" => Ok(OperationType::Notify),
             "watch" => Ok(OperationType::Watch),
             "replay" => Ok(OperationType::Replay),
-            _ => anyhow::bail!("Invalid operation type: {}", operation),
+            _ => anyhow::bail!("Invalid operation type: {}", s),
         }
     }
+}
 
+
+impl OperationType {
     /// Convert OperationType to string
     pub fn as_str(&self) -> &'static str {
         match self {
