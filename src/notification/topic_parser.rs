@@ -118,7 +118,6 @@ pub fn derive_event_type_from_topic(topic: &str) -> Result<String> {
 ///
 /// # Returns
 /// *  `Result<String>` - The stream type derived from topic base or error
-/// Derive stream name from topic string
 pub fn derive_stream_name_from_topic(topic: &str) -> Result<String> {
     let event_type = derive_event_type_from_topic(topic)
         .context("Failed to derive event type for stream name")?;
