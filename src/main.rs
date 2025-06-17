@@ -13,7 +13,7 @@ async fn main() -> Result<(), std::io::Error> {
         Ok(cfg) => cfg,
         Err(e) => {
             error!("Failed to load configuration: {e}");
-            return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+            return Err(std::io::Error::other(e));
         }
     };
 
