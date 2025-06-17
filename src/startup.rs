@@ -41,7 +41,7 @@ impl Application {
             Ok(backend) => backend,
             Err(e) => {
                 error!("Failed to initialize notification backend: {e}");
-                return Err(std::io::Error::new(std::io::ErrorKind::Other, e));
+                return Err(std::io::Error::other(e));
             }
         };
 
