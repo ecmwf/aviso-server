@@ -26,6 +26,12 @@ pub struct JetStreamConfig {
     pub retention_policy: String,
     /// Discard policy when limits are reached: "old" or "new"
     pub discard_policy: String,
+    /// Enable automatic reconnection on failures
+    pub enable_auto_reconnect: bool,
+    /// Maximum reconnection attempts before giving up temporarily
+    pub max_reconnect_attempts: u32,
+    /// Base delay between reconnection attempts in milliseconds
+    pub reconnect_delay_ms: u64,
 }
 
 impl JetStreamConfig {
@@ -56,6 +62,15 @@ impl JetStreamConfig {
             discard_policy: js_settings
                 .and_then(|js| js.discard_policy.clone())
                 .unwrap_or_else(|| "old".to_string()),
+            enable_auto_reconnect: js_settings
+                .and_then(|js| js.enable_auto_reconnect)
+                .unwrap_or(true),
+            max_reconnect_attempts: js_settings
+                .and_then(|js| js.max_reconnect_attempts)
+                .unwrap_or(5),
+            reconnect_delay_ms: js_settings
+                .and_then(|js| js.reconnect_delay_ms)
+                .unwrap_or(2000),
         }
     }
 }
