@@ -4,7 +4,6 @@ use tracing::info;
 
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
 
-
 pub async fn connect(config: JetStreamConfig) -> Result<JetStreamBackend> {
     info!(url = %config.nats_url, "Connecting to NATS");
     let client = if let Some(token) = &config.token {

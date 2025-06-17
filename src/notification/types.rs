@@ -2,7 +2,6 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-
 /// Operation type for different validation modes
 ///
 /// The notification system supports three distinct operation modes:
@@ -39,7 +38,6 @@ impl FromStr for OperationType {
         }
     }
 }
-
 
 impl OperationType {
     /// Convert OperationType to string
