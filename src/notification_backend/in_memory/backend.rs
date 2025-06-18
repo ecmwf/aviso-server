@@ -3,7 +3,7 @@ use crate::notification_backend::in_memory::InMemoryStats;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use futures_util::Stream;
 use std::{
     collections::{HashMap, VecDeque},
@@ -282,25 +282,10 @@ impl NotificationBackend for InMemoryBackend {
     #[allow(unused_variables)]
     async fn get_messages_batch(
         &self,
-        topic: &str,
-        from_sequence: Option<u64>,
-        from_date: Option<DateTime<Utc>>,
-        limit: usize,
-        offset: usize,
-    ) -> anyhow::Result<(Vec<NotificationMessage>, bool)> {
+        params: crate::notification_backend::replay::BatchParams,
+    ) -> Result<crate::types::BatchResult> {
         // TODO: Implement InMemory message retrieval
         todo!("InMemory get_messages_batch not yet implemented")
-    }
-
-    #[allow(unused_variables)]
-    async fn count_messages(
-        &self,
-        topic: &str,
-        from_sequence: Option<u64>,
-        from_date: Option<DateTime<Utc>>,
-    ) -> anyhow::Result<usize> {
-        // TODO: Implement InMemory message counting
-        todo!("InMemory count_messages not yet implemented")
     }
 
     #[allow(unused_variables)]
