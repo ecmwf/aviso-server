@@ -128,6 +128,12 @@ pub struct JetStreamSettings {
     pub replicas: Option<usize>,
     pub retention_policy: Option<String>,
     pub discard_policy: Option<String>,
+    /// Enable automatic reconnection on failures
+    pub enable_auto_reconnect: Option<bool>,
+    /// Maximum reconnection attempts before giving up temporarily
+    pub max_reconnect_attempts: Option<u32>,
+    /// Base delay between reconnection attempts in milliseconds
+    pub reconnect_delay_ms: Option<u64>,
 }
 
 #[derive(serde::Deserialize, Serialize, Clone, Debug)]

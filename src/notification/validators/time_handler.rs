@@ -97,7 +97,7 @@ impl TimeHandler {
     /// - "24" → Error (invalid hour)
     fn handle_hour_only_format(value: &str, field_name: &str) -> Result<Option<String>> {
         // Check if the value is 1-2 digits and all numeric
-        if value.len() >= 1 && value.len() <= 2 && value.chars().all(|c| c.is_ascii_digit()) {
+        if !value.is_empty() && value.len() <= 2 && value.chars().all(|c| c.is_ascii_digit()) {
             let hour: u32 = value.parse().context(format!(
                 "Invalid hour value '{}' in field '{}'",
                 value, field_name

@@ -1,3 +1,5 @@
+use crate::notification_backend::in_memory::InMemoryConfig;
+use crate::notification_backend::in_memory::InMemoryStats;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use anyhow::Result;
 use async_trait::async_trait;
@@ -9,46 +11,6 @@ use std::{
 };
 use tokio::sync::Mutex;
 use tracing::{debug, info, warn};
-
-/// Configuration for in-memory backend
-/// Contains all settings for memory limits, topic management, and monitoring
-#[derive(Debug, Clone)]
-pub struct InMemoryConfig {
-    /// Maximum number of messages to keep per topic (older messages are discarded)
-    pub max_history_per_topic: usize,
-    /// Maximum number of topics to track (oldest topics are removed when limit is reached)
-    pub max_topics: usize,
-    /// Whether to enable detailed metrics logging for performance monitoring
-    pub enable_metrics: bool,
-}
-
-impl InMemoryConfig {
-    /// Create InMemoryConfig from application configuration
-    /// Merges configuration file settings with sensible defaults
-    /// All limits are designed to prevent unbounded memory growth
-    ///
-    /// # Arguments
-    /// * `settings` - Application notification backend settings
-    ///
-    /// # Returns
-    /// * `Self` - Configured in-memory backend settings with defaults applied
-    pub fn from_backend_settings(
-        settings: &crate::configuration::NotificationBackendSettings,
-    ) -> Self {
-        let in_memory_settings = settings.in_memory.as_ref();
-        Self {
-            max_history_per_topic: in_memory_settings
-                .and_then(|im| im.max_history_per_topic)
-                .unwrap_or(1), // Default to 1 message per topic (latest only)
-            max_topics: in_memory_settings
-                .and_then(|im| im.max_topics)
-                .unwrap_or(10000), // Default to 10,000 topics maximum
-            enable_metrics: in_memory_settings
-                .and_then(|im| im.enable_metrics)
-                .unwrap_or(false), // Default metrics disabled for performance
-        }
-    }
-}
 
 /// Internal state tracking for each topic
 /// Maintains message history with automatic pruning and statistics
@@ -149,13 +111,11 @@ impl InMemoryBackend {
             let oldest_topic = topics
                 .iter()
                 .min_by_key(|(_, state)| {
-                    // Use the timestamp of the most recent message, or 0 if no messages
-                    // Handle Option<i64> timestamp
                     state
                         .messages
                         .back()
-                        .and_then(|msg| msg.timestamp) // Extract Option<i64>
-                        .unwrap_or_else(|| Utc::now()) // Convert to i64 with default 0
+                        .and_then(|msg| msg.timestamp)
+                        .unwrap_or_else(Utc::now)
                 })
                 .map(|(topic, _)| topic.clone());
 
@@ -171,25 +131,6 @@ impl InMemoryBackend {
     }
 }
 
-/// Statistics about in-memory backend state
-/// Provides visibility into current usage and configured limits
-#[derive(Debug, Clone)]
-pub struct InMemoryStats {
-    /// Current number of active topics
-    pub total_topics: usize,
-    /// Current number of stored messages across all topics
-    pub total_messages: usize,
-    /// Total number of messages received since backend creation
-    pub total_messages_received: u64,
-    /// Configured maximum messages per topic
-    pub max_history_per_topic: usize,
-    /// Configured maximum number of topics
-    pub max_topics: usize,
-}
-
-/// Implementation of NotificationBackend trait for in-memory storage
-/// Provides fast, volatile notification storage with automatic memory management
-/// All operations are lock-protected for thread safety
 #[async_trait]
 impl NotificationBackend for InMemoryBackend {
     /// Store a notification message for the specified topic
@@ -222,10 +163,10 @@ impl NotificationBackend for InMemoryBackend {
 
         // Create message with optional fields populated for in-memory backend
         let msg = NotificationMessage {
-            sequence: topic_state.next_id, // Remove Some(), it's already u64
-            topic: topic.to_string(),      // Add missing topic field
-            payload: payload.to_string(),  // Keep as String
-            timestamp: Some(Utc::now()),   // Use DateTime<Utc>, not i64
+            sequence: topic_state.next_id,
+            topic: topic.to_string(),
+            payload: payload.to_string(),
+            timestamp: Some(Utc::now()),
         };
 
         // Update topic state counters

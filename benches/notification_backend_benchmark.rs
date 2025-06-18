@@ -7,7 +7,7 @@ use reqwest::Client;
 use serde_json::json;
 use std::time::Duration;
 use tokio::runtime::Runtime;
-
+use tokio_util::sync::CancellationToken;
 // ============================================================================
 // BENCHMARK CONFIGURATION
 // ============================================================================
@@ -34,11 +34,11 @@ const SERVER_STARTUP_DELAY_MS: u64 = 500;
 
 /// Whether to run in-memory backend tests
 /// Set to false to skip in-memory tests (useful for JetStream-only testing)
-const ENABLE_IN_MEMORY_TESTS: bool = false;
+const ENABLE_IN_MEMORY_TESTS: bool = true;
 
 /// Whether to run JetStream tests (requires NATS server running)
 /// Set to false to skip JetStream tests (useful for in-memory-only testing)
-const ENABLE_JETSTREAM_TESTS: bool = true;
+const ENABLE_JETSTREAM_TESTS: bool = false;
 
 /// Whether to run latency comparison tests
 /// Set to false to skip single-notification latency tests
@@ -107,8 +107,9 @@ impl BenchmarkApp {
         // Initialize global configuration with patched settings
         Settings::init_global_config(&configuration);
 
+        let shutdown_token = CancellationToken::new();
         // Build and start the application
-        let application = Application::build(configuration)
+        let application = Application::build(configuration, shutdown_token.clone())
             .await
             .expect("Failed to build application");
 

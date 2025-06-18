@@ -8,7 +8,7 @@ use std::collections::HashMap;
 #[serde(untagged)]
 pub enum PayloadType {
     String(String),
-    CloudEvent(Event),
+    CloudEvent(Box<Event>),
     HashMap(HashMap<String, String>),
 }
 

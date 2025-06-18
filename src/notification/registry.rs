@@ -19,6 +19,12 @@ pub struct NotificationRegistry {
     schemas: HashMap<String, EventSchema>,
 }
 
+impl Default for NotificationRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl NotificationRegistry {
     /// Create a new empty registry
     ///
