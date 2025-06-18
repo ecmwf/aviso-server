@@ -1,5 +1,6 @@
 pub mod in_memory;
 pub mod jetstream;
+pub mod replay;
 
 pub use jetstream::backend::JetStreamBackend;
 pub use jetstream::config::JetStreamConfig;
@@ -38,18 +39,8 @@ pub trait NotificationBackend: Send + Sync {
     async fn wipe_all(&self) -> Result<()>;
     async fn get_messages_batch(
         &self,
-        topic: &str,
-        from_sequence: Option<u64>,
-        from_date: Option<DateTime<Utc>>,
-        limit: usize,
-        offset: usize,
-    ) -> Result<(Vec<NotificationMessage>, bool)>;
-    async fn count_messages(
-        &self,
-        topic: &str,
-        from_sequence: Option<u64>,
-        from_date: Option<DateTime<Utc>>,
-    ) -> Result<usize>;
+        params: replay::BatchParams,
+    ) -> Result<crate::types::BatchResult>;
     async fn subscribe_to_topic(
         &self,
         topic: &str,
