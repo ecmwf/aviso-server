@@ -11,5 +11,7 @@ pub mod types;
 // Re-export the main public API
 pub use helpers::{create_sse_response, notification_to_sse_event};
 pub use live::create_watch_sse_stream;
-pub use replay::{create_historical_replay_stream, create_historical_then_live_stream};
+pub use replay::{
+    create_historical_replay_stream, create_historical_then_live_stream, create_replay_only_stream,
+};
 pub use types::{SseEventType, format_sse_event};

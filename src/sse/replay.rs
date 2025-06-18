@@ -228,3 +228,76 @@ pub async fn create_historical_then_live_stream(
 
     Ok(create_sse_response(stream_with_closing))
 }
+
+/// Create a replay-only stream (historical messages then close)
+///
+/// This function creates a stream that replays historical messages and then
+/// terminates the connection, unlike the watch endpoint which transitions to live streaming.
+pub async fn create_replay_only_stream(
+    topic: String,
+    backend: Arc<dyn NotificationBackend>,
+    from_sequence: Option<u64>,
+    from_date: Option<DateTime<Utc>>,
+    shutdown: web::Data<CancellationToken>,
+) -> Result<HttpResponse> {
+    let watch_config = Settings::get_global_watch_settings();
+    let app_settings = Settings::get_global_application_settings();
+
+    // Create historical replay stream
+    let historical_stream = create_historical_replay_stream(
+        topic.clone(),
+        backend.clone(),
+        from_sequence,
+        from_date,
+        watch_config.replay_batch_size,
+        watch_config.replay_batch_delay_ms,
+        app_settings.base_url.clone(),
+    );
+
+    // Create control events for replay lifecycle
+    let start_event = format_sse_event(
+        SseEventType::ReplayControl,
+        json!({
+            "type": "replay_started",
+            "topic": topic,
+            "from_sequence": from_sequence,
+            "from_date": from_date,
+            "batch_size": watch_config.replay_batch_size,
+            "timestamp": Utc::now().to_rfc3339()
+        }),
+    );
+
+    let completion_event = format_sse_event(
+        SseEventType::ReplayControl,
+        json!({
+            "type": "replay_completed",
+            "topic": topic,
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }),
+    );
+
+    // Chain: start -> historical -> completion
+    let replay_stream = FuturesStreamExt::chain(
+        FuturesStreamExt::chain(
+            tokio_stream::once(Ok::<_, actix_web::Error>(web::Bytes::from(start_event))),
+            historical_stream,
+        ),
+        tokio_stream::once(Ok::<_, actix_web::Error>(web::Bytes::from(
+            completion_event,
+        ))),
+    );
+
+    // Apply shutdown handling
+    let stream_with_closing = apply_graceful_shutdown(replay_stream, shutdown.get_ref().clone());
+
+    tracing::info!(
+        topic = %topic,
+        from_sequence = ?from_sequence,
+        from_date = ?from_date,
+        batch_size = watch_config.replay_batch_size,
+        "Created replay-only SSE stream"
+    );
+
+    // Use existing helper for response creation
+    Ok(create_sse_response(stream_with_closing))
+}
