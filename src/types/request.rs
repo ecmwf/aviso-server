@@ -176,11 +176,10 @@ impl NotificationRequest {
         let parsed_date = self.validate_from_date()?;
 
         match (&parsed_id, &parsed_date) {
-            (Some(id), Some(date)) => {
-                tracing::debug!(
-                    from_id = id,
-                    from_date = %date,
-                    "Both from_id and from_date provided - backend will determine precedence"
+            (Some(_), Some(_)) => {
+                bail!(
+                    "Cannot specify both from_id and from_date. Please provide only one replay parameter. \
+                     Use from_id for sequence-based replay or from_date for time-based replay."
                 );
             }
             (Some(id), None) => {
