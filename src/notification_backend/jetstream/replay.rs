@@ -75,7 +75,7 @@ pub async fn get_messages_batch(
     let mut messages = consumer
         .fetch()
         .max_messages(params.limit)
-        .messages() 
+        .messages()
         .await
         .context("Failed to fetch messages")?;
 
@@ -141,7 +141,7 @@ pub async fn get_messages_batch(
         "Batch processing completed"
     );
 
-    // Apply rate limiting with user notification
+    // Apply replay limiting with user notification
     let watch_config = crate::configuration::Settings::get_global_watch_settings();
     let effective_limit = params.limit.min(watch_config.max_historical_notifications);
 
@@ -160,7 +160,7 @@ pub async fn get_messages_batch(
 
     // Create batch result with replay limiting information
     let mut batch_result = BatchResult::new(filtered_messages, params.limit);
-    batch_result.has_more = has_more && !was_replay_limited; // No more if rate limited
+    batch_result.has_more = has_more && !was_replay_limited; // No more if replay limited
 
     // Add replay limiting metadata if applicable
     if was_replay_limited {
