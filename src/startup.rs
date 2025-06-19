@@ -7,6 +7,7 @@ use tracing::{error, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::routes::admin::{wipe_all, wipe_stream};
+use crate::routes::home::homepage;
 use crate::routes::replay::replay;
 use crate::routes::schema::{get_event_schema, get_notification_schema};
 use crate::routes::watch::watch;
@@ -15,6 +16,7 @@ use crate::{
     notification_backend::{NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify},
 };
+use actix_files as fs;
 
 #[allow(dead_code)]
 pub struct Application {
@@ -108,7 +110,9 @@ async fn shutdown_backend(backend: Arc<dyn NotificationBackend>) -> anyhow::Resu
 
 /// Configure operational/infrastructure routes
 fn configure_ops_routes(cfg: &mut web::ServiceConfig) {
-    cfg.route("/health", web::get().to(health_check));
+    cfg.service(fs::Files::new("/static", "./src/static").show_files_listing())
+        .route("/health", web::get().to(health_check))
+        .route("/", web::get().to(homepage));
 }
 
 /// Configure API v1 routes
