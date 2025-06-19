@@ -1,7 +1,7 @@
 use crate::error::{sse_error_response, validation_error_response};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig};
 use crate::notification_backend::NotificationBackend;
-use crate::sse::create_watch_sse_stream;
+use crate::sse::create_replay_only_stream;
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
@@ -9,11 +9,11 @@ use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_actix_web::RequestId;
 
-/// Watch endpoint handler with SSE streaming
+/// Replay endpoint handler for historical message streaming
 ///
-/// Processes watch requests and establishes SSE streaming for real-time notifications.
-/// Validates request parameters and sets up live notification streaming with optional
-/// historical replay functionality when from_id or from_date parameters are provided.
+/// Processes replay requests and establishes SSE streaming for historical notifications only.
+/// Validates request parameters and sets up replay-only streaming that terminates after
+/// historical data is delivered.
 #[tracing::instrument(
     skip(notification_request, notification_backend, shutdown),
     fields(
@@ -21,10 +21,10 @@ use tracing_actix_web::RequestId;
         request_id = %request_id,
         from_id = tracing::field::Empty,
         from_date = tracing::field::Empty,
-        endpoint = "watch",
+        endpoint = "replay",
     )
 )]
-pub async fn watch(
+pub async fn replay(
     notification_request: web::Json<NotificationRequest>,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     shutdown: web::Data<CancellationToken>,
@@ -34,10 +34,10 @@ pub async fn watch(
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,
         request_id,
-        ValidationConfig::for_watch(),
+        ValidationConfig::for_replay(),
     ) {
         Ok(ctx) => ctx,
-        Err(e) => return validation_error_response("Watch Request", e),
+        Err(e) => return validation_error_response("Replay Request", e),
     };
 
     // Update tracing context
@@ -49,37 +49,25 @@ pub async fn watch(
         tracing::Span::current().record("from_date", date.to_rfc3339());
     }
 
-    // Determine streaming mode and create appropriate stream
-    let sse_response = if context.from_id.is_some() || context.from_date.is_some() {
-        info!(
-            topic = %context.topic,
-            from_id = ?context.from_id,
-            from_date = ?context.from_date,
-            "Creating historical replay + live stream"
-        );
+    info!(
+        topic = %context.topic,
+        from_id = ?context.from_id,
+        from_date = ?context.from_date,
+        "Starting replay-only SSE stream"
+    );
 
-        crate::sse::create_historical_then_live_stream(
-            context.topic.clone(),
-            notification_backend.get_ref().clone(),
-            context.from_id,
-            context.from_date,
-            shutdown.clone(),
-        )
-        .await
-    } else {
-        info!(topic = %context.topic, "Creating live-only stream");
-
-        create_watch_sse_stream(
-            context.topic.clone(),
-            notification_backend.get_ref().clone(),
-            shutdown.clone(),
-        )
-        .await
-    };
-
-    match sse_response {
+    // Create replay-only stream
+    match create_replay_only_stream(
+        context.topic.clone(),
+        notification_backend.get_ref().clone(),
+        context.from_id,
+        context.from_date,
+        shutdown.clone(),
+    )
+    .await
+    {
         Ok(response) => {
-            info!(topic = %context.topic, "SSE stream established successfully");
+            info!(topic = %context.topic, "Replay-only SSE stream established successfully");
             response
         }
         Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),

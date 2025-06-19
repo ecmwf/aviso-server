@@ -1,8 +1,10 @@
-use crate::notification_backend::jetstream::{admin, connection, publisher, streams, subscriber};
+use crate::notification_backend::jetstream::{
+    admin, connection, publisher, replay, streams, subscriber,
+};
+use crate::notification_backend::replay::BatchParams;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use futures_util::Stream;
 
 #[derive(Clone)]
@@ -40,24 +42,8 @@ impl NotificationBackend for JetStreamBackend {
         admin::wipe_all(self).await
     }
 
-    async fn get_messages_batch(
-        &self,
-        topic: &str,
-        from_sequence: Option<u64>,
-        from_date: Option<DateTime<Utc>>,
-        limit: usize,
-        offset: usize,
-    ) -> Result<(Vec<NotificationMessage>, bool)> {
-        subscriber::get_messages_batch(self, topic, from_sequence, from_date, limit, offset).await
-    }
-
-    async fn count_messages(
-        &self,
-        topic: &str,
-        from_sequence: Option<u64>,
-        from_date: Option<DateTime<Utc>>,
-    ) -> Result<usize> {
-        subscriber::count_messages(self, topic, from_sequence, from_date).await
+    async fn get_messages_batch(&self, params: BatchParams) -> Result<crate::types::BatchResult> {
+        replay::get_messages_batch(self, params).await
     }
 
     async fn subscribe_to_topic(

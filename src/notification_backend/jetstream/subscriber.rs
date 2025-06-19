@@ -6,7 +6,6 @@ use crate::notification_backend::jetstream::subscriber_utils::{
     ConsumerConfig, apply_message_filter, create_jetstream_consumer, transform_jetstream_message,
 };
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use futures::StreamExt;
 use futures_util::Stream;
 use std::time::Duration;
@@ -159,28 +158,4 @@ async fn create_subscription_internal(
     );
 
     Ok(Box::new(Box::pin(message_stream)))
-}
-
-/// TODO: Implement JetStream message batch retrieval
-#[allow(unused_variables)]
-pub async fn get_messages_batch(
-    backend: &JetStreamBackend,
-    topic: &str,
-    from_sequence: Option<u64>,
-    from_date: Option<DateTime<Utc>>,
-    limit: usize,
-    offset: usize,
-) -> Result<(Vec<NotificationMessage>, bool)> {
-    todo!("JetStream get_messages_batch not yet implemented")
-}
-
-/// TODO: Implement JetStream message counting
-#[allow(unused_variables)]
-pub async fn count_messages(
-    backend: &JetStreamBackend,
-    topic: &str,
-    from_sequence: Option<u64>,
-    from_date: Option<DateTime<Utc>>,
-) -> Result<usize> {
-    todo!("JetStream count_messages not yet implemented")
 }

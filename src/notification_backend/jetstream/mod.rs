@@ -3,6 +3,7 @@ pub mod backend;
 pub mod config;
 pub mod connection;
 pub mod publisher;
+pub mod replay;
 pub mod streams;
 pub mod subscriber;
 pub mod subscriber_utils;

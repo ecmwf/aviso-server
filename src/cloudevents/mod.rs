@@ -63,7 +63,7 @@ impl CloudEventCreator {
 
         // Create CloudEvent with all required fields
         let cloud_event = EventBuilderV10::new()
-            .id(format!("{}_{}", event_type, notification.sequence))
+            .id(format!("{}@{}", event_type, notification.sequence))
             .source(&self.base_url)
             .ty(format!("int.ecmwf.aviso.{}", event_type))
             .time(notification.timestamp.unwrap_or_else(Utc::now))
