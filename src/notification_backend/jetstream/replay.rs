@@ -4,8 +4,9 @@ use anyhow::{Context, Result};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
+use crate::configuration::Settings;
 use crate::notification::topic_parser::derive_stream_name_from_topic;
-use crate::notification::wildcard_matcher::analyze_watch_pattern;
+use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
 use crate::notification_backend::jetstream::{
     backend::JetStreamBackend, subscriber_utils::transform_jetstream_message,
 };
@@ -94,10 +95,7 @@ pub async fn get_messages_batch(
 
                 match transform_jetstream_message(&msg) {
                     Ok(notification) => {
-                        if crate::notification::wildcard_matcher::matches_watch_pattern(
-                            &notification.topic,
-                            &app_filter_pattern,
-                        ) {
+                        if matches_watch_pattern(&notification.topic, &app_filter_pattern) {
                             filtered_messages.push(notification);
                         }
                     }
@@ -142,7 +140,7 @@ pub async fn get_messages_batch(
     );
 
     // Apply replay limiting with user notification
-    let watch_config = crate::configuration::Settings::get_global_watch_settings();
+    let watch_config = Settings::get_global_watch_settings();
     let effective_limit = params.limit.min(watch_config.max_historical_notifications);
 
     let was_replay_limited = filtered_messages.len() > effective_limit;
