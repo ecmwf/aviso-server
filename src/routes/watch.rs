@@ -1,13 +1,12 @@
-use crate::configuration::Settings;
 use crate::error::{sse_error_response, validation_error_response};
-use crate::notification::{NotificationHandler, OperationType};
+use crate::handlers::{StreamingRequestProcessor, ValidationConfig};
 use crate::notification_backend::NotificationBackend;
-use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
+use crate::sse::create_watch_sse_stream;
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
-use tracing::{info, warn};
+use tracing::info;
 use tracing_actix_web::RequestId;
 
 /// Watch endpoint handler with SSE streaming
@@ -16,13 +15,13 @@ use tracing_actix_web::RequestId;
 /// Validates request parameters and sets up live notification streaming with optional
 /// historical replay functionality when from_id or from_date parameters are provided.
 #[tracing::instrument(
-    skip(notification_request, notification_backend),
+    skip(notification_request, notification_backend, shutdown),
     fields(
         event_type = tracing::field::Empty,
         request_id = %request_id,
         from_id = tracing::field::Empty,
         from_date = tracing::field::Empty,
-        replay_mode = tracing::field::Empty,
+        endpoint = "watch",
     )
 )]
 pub async fn watch(
@@ -31,105 +30,58 @@ pub async fn watch(
     shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
 ) -> HttpResponse {
-    // Extract event type and request parameters from notification_request
-    let event_type = &notification_request.event_type;
-    let request_params = &notification_request.request;
-
-    // Update tracing context with event type
-    tracing::Span::current().record("event_type", event_type);
-
-    // Validate watch-specific parameters (from_id and from_date)
-    let (from_id, from_date) = match notification_request.validate_watch_parameters() {
-        Ok(params) => params,
-        Err(e) => {
-            return validation_error_response("Watch Parameters", e);
-        }
+    // Process request using shared processor
+    let context = match StreamingRequestProcessor::process_request(
+        &notification_request,
+        request_id,
+        ValidationConfig::for_watch(),
+    ) {
+        Ok(ctx) => ctx,
+        Err(e) => return validation_error_response("Watch Request", e),
     };
 
-    // Determine if this is a replay request
-    let is_replay_mode = from_id.is_some() || from_date.is_some();
-
-    // Update tracing context with validated parameters
-    if let Some(id) = from_id {
+    // Update tracing context
+    tracing::Span::current().record("event_type", &context.event_type);
+    if let Some(id) = context.from_id {
         tracing::Span::current().record("from_id", id);
     }
-    if let Some(date) = &from_date {
+    if let Some(date) = &context.from_date {
         tracing::Span::current().record("from_date", date.to_rfc3339());
     }
-    tracing::Span::current().record("replay_mode", is_replay_mode);
 
-    // Process watch request with only required fields (watch operation)
-    let notification_handler =
-        NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
-
-    let notification_result = match notification_handler.process_request(
-        event_type,
-        request_params,
-        OperationType::Watch,
-    ) {
-        Ok(result) => result,
-        Err(e) => return validation_error_response("Watch", e),
-    };
-
-    // Log the processing decision based on mode
-    if is_replay_mode {
+    // Determine streaming mode and create appropriate stream
+    let sse_response = if context.from_id.is_some() || context.from_date.is_some() {
         info!(
-            event_type = %event_type,
-            topic = %notification_result.topic,
-            param_count = request_params.len(),
-            from_id = ?from_id,
-            from_date = ?from_date,
-            "Starting SSE stream with historical replay + live notifications"
+            topic = %context.topic,
+            from_id = ?context.from_id,
+            from_date = ?context.from_date,
+            "Creating historical replay + live stream"
         );
-    } else {
-        info!(
-            event_type = %event_type,
-            topic = %notification_result.topic,
-            param_count = request_params.len(),
-            "Starting SSE stream for live notifications only"
-        );
-    }
 
-    // Create SSE stream based on whether replay is requested
-    let sse_response = if is_replay_mode {
-        // Historical replay + live-streaming mode
-        create_historical_then_live_stream(
-            notification_result.topic.clone(),
+        crate::sse::create_historical_then_live_stream(
+            context.topic.clone(),
             notification_backend.get_ref().clone(),
-            from_id,
-            from_date,
+            context.from_id,
+            context.from_date,
             shutdown.clone(),
         )
         .await
     } else {
-        // Live-only streaming mode (existing functionality)
+        info!(topic = %context.topic, "Creating live-only stream");
+
         create_watch_sse_stream(
-            notification_result.topic.clone(),
+            context.topic.clone(),
             notification_backend.get_ref().clone(),
             shutdown.clone(),
         )
         .await
     };
 
-    // Handle the SSE response
     match sse_response {
-        Ok(sse_response) => {
-            info!(
-                topic = %notification_result.topic,
-                replay_mode = is_replay_mode,
-                "SSE stream established successfully"
-            );
-            sse_response
+        Ok(response) => {
+            info!(topic = %context.topic, "SSE stream established successfully");
+            response
         }
-        Err(e) => {
-            warn!(
-                error = %e,
-                topic = %notification_result.topic,
-                replay_mode = is_replay_mode,
-                "Failed to create SSE stream"
-            );
-            // Use your existing consistent error helper
-            sse_error_response(e, &notification_result.topic, &request_id.to_string())
-        }
+        Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),
     }
 }
