@@ -77,28 +77,28 @@ pub fn create_historical_replay_stream(
                         sse_events.push(sse_event);
                     }
 
-                    // Check for rate limiting and emit notification
-                    if let Some(rate_limit_info) = &batch_result.rate_limited {
-                        let truncated_count = rate_limit_info.truncated_count();
+                    // Check for maximum replay limit and emit notification
+                    if let Some(replay_limit_info) = &batch_result.replay_limit {
+                        let truncated_count = replay_limit_info.truncated_count();
 
-                        let rate_limit_event = format_sse_event(
+                        let replay_limit_event = format_sse_event(
                             SseEventType::ReplayControl,
                             json!({
-                                "type": "rate_limit_applied",
+                                "type": "notification_replay_limit_reached",
                                 "topic": params.topic,
-                                "original_count": rate_limit_info.original_count,
-                                "max_allowed": rate_limit_info.max_allowed,
+                                "original_count": replay_limit_info.original_count,
+                                "max_allowed": replay_limit_info.max_allowed,
                                 "truncated_count": truncated_count,
                                 "message": format!(
                                     "Historical replay limited to {} messages (max: {}). {} messages were truncated.",
-                                    rate_limit_info.max_allowed,
-                                    rate_limit_info.max_allowed,
+                                    replay_limit_info.max_allowed,
+                                    replay_limit_info.max_allowed,
                                     truncated_count
                                 ),
                                 "timestamp": chrono::Utc::now().to_rfc3339()
                             }),
                         );
-                        sse_events.push(Ok(web::Bytes::from(rate_limit_event)));
+                        sse_events.push(Ok(web::Bytes::from(replay_limit_event)));
                     }
 
                     // Add batch delay if configured and more batches are coming

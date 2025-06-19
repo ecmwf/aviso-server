@@ -9,16 +9,16 @@ pub struct NotificationResponse {
     pub processed_at: String,
 }
 
-/// Information about rate limiting applied during batch retrieval
+/// Information about replay limiting applied during batch retrieval
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RateLimitInfo {
-    /// Original number of messages before rate limiting
+pub struct ReplayLimitInfo {
+    /// Original number of messages before replay limit
     pub original_count: usize,
     /// Maximum allowed messages from configuration
     pub max_allowed: usize,
 }
 
-impl RateLimitInfo {
+impl ReplayLimitInfo {
     /// Calculate how many messages were truncated
     pub fn truncated_count(&self) -> usize {
         self.original_count.saturating_sub(self.max_allowed)
@@ -38,8 +38,8 @@ pub struct BatchResult {
     pub next_sequence: Option<u64>,
     /// Total number of messages in this batch
     pub batch_size: usize,
-    /// Rate limiting information if applied
-    pub rate_limited: Option<RateLimitInfo>,
+    /// Replay limiting information if applied
+    pub replay_limit: Option<ReplayLimitInfo>,
 }
 
 impl BatchResult {
@@ -55,7 +55,7 @@ impl BatchResult {
             last_sequence,
             next_sequence,
             batch_size,
-            rate_limited: None, // No rate limiting by default
+            replay_limit: None, // No limit by default
         }
     }
 
@@ -67,7 +67,7 @@ impl BatchResult {
             last_sequence: None,
             next_sequence: None,
             batch_size: 0,
-            rate_limited: None,
+            replay_limit: None,
         }
     }
 }

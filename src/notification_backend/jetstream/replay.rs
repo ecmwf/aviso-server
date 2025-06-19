@@ -9,7 +9,7 @@ use crate::notification_backend::jetstream::{
     backend::JetStreamBackend, subscriber_utils::transform_jetstream_message,
 };
 use crate::notification_backend::replay::BatchParams;
-use crate::types::{BatchResult, RateLimitInfo};
+use crate::types::{BatchResult, ReplayLimitInfo};
 use futures_util::StreamExt;
 
 /// Retrieve a batch of historical messages from JetStream using pull consumer
@@ -120,28 +120,28 @@ pub async fn get_messages_batch(
         }
     }
 
-    // Apply rate limiting
+    // Apply replay limiting
     let watch_config = crate::configuration::Settings::get_global_watch_settings();
     let effective_limit = params.limit.min(watch_config.max_historical_notifications);
 
-    let was_rate_limited = filtered_messages.len() > effective_limit;
+    let was_replay_limited = filtered_messages.len() > effective_limit;
     let original_count = filtered_messages.len();
 
-    if was_rate_limited {
+    if was_replay_limited {
         warn!(
             requested_messages = original_count,
             max_allowed = effective_limit,
             topic = %params.topic,
-            "Rate limiting applied to historical replay"
+            "Replay message count limit is reached"
         );
     }
     filtered_messages.truncate(effective_limit);
 
     let mut batch_result = BatchResult::new(filtered_messages, params.limit);
 
-    // Add rate limiting metadata if applicable
-    if was_rate_limited {
-        batch_result.rate_limited = Some(RateLimitInfo {
+    // Add replay limiting metadata if applicable
+    if was_replay_limited {
+        batch_result.replay_limit = Some(ReplayLimitInfo {
             original_count,
             max_allowed: watch_config.max_historical_notifications,
         });
