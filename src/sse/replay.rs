@@ -79,24 +79,19 @@ pub fn create_historical_replay_stream(
 
                     // Check for maximum replay limit and emit notification
                     if let Some(replay_limit_info) = &batch_result.replay_limit {
-                        let truncated_count = replay_limit_info.truncated_count();
-
                         let replay_limit_event = format_sse_event(
                             SseEventType::ReplayControl,
                             json!({
                                 "type": "notification_replay_limit_reached",
                                 "topic": params.topic,
-                                "original_count": replay_limit_info.original_count,
                                 "max_allowed": replay_limit_info.max_allowed,
-                                "truncated_count": truncated_count,
                                 "message": format!(
-                                    "Historical replay limited to {} messages (max: {}). {} messages were truncated from current batch.",
-                                    replay_limit_info.max_allowed,
-                                    replay_limit_info.max_allowed,
-                                    truncated_count
+                                    "Historical replay limited to {} messages. \
+                                    Additional historical messages may be available but were not retrieved.",
+                                    replay_limit_info.max_allowed
                                 ),
-                                "timestamp": chrono::Utc::now().to_rfc3339()
-                            }),
+                                "timestamp": Utc::now().to_rfc3339()
+                             }),
                         );
                         sse_events.push(Ok(web::Bytes::from(replay_limit_event)));
                     }

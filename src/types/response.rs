@@ -12,17 +12,8 @@ pub struct NotificationResponse {
 /// Information about replay limiting applied during batch retrieval
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ReplayLimitInfo {
-    /// Original number of messages before replay limit
-    pub original_count: usize,
     /// Maximum allowed messages from configuration
     pub max_allowed: usize,
-}
-
-impl ReplayLimitInfo {
-    /// Calculate how many messages were truncated
-    pub fn truncated_count(&self) -> usize {
-        self.original_count.saturating_sub(self.max_allowed)
-    }
 }
 
 /// Batch retrieval response for replay functionality
