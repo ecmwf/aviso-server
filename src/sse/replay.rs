@@ -90,7 +90,7 @@ pub fn create_historical_replay_stream(
                                 "max_allowed": replay_limit_info.max_allowed,
                                 "truncated_count": truncated_count,
                                 "message": format!(
-                                    "Historical replay limited to {} messages (max: {}). {} messages were truncated.",
+                                    "Historical replay limited to {} messages (max: {}). {} messages were truncated from current batch.",
                                     replay_limit_info.max_allowed,
                                     replay_limit_info.max_allowed,
                                     truncated_count
