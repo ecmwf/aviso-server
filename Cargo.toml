@@ -14,6 +14,7 @@ name = "aviso_server"
 
 [dependencies]
 actix-web = "4.11.0"
+actix-files = "0.6.6"
 serde = { version = "1.0.219", features = ["derive"] }
 tokio = { version = "1.45.0", features = ["macros", "rt-multi-thread"] }
 config = "0.15.11"
