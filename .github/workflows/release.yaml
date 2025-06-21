@@ -122,27 +122,31 @@ jobs:
     needs: [release-setup, build-multiarch]
     if: needs.release-setup.outputs.should_release == 'true'
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        image: [aviso_server, aviso_server-debug]
     steps:
       - name: Docker login
         run: |
-          # Log in to Docker registry again before pushing the manifest.
           echo "${{ secrets.ECMWF_DOCKER_REGISTRY_ACCESS_TOKEN }}" | \
             docker login eccr.ecmwf.int --username '${{ secrets.ECMWF_DOCKER_REGISTRY_USERNAME }}' --password-stdin
 
-      - name: Create and push multiarch manifest
+      - name: Create and push multiarch manifest for ${{ matrix.image }}
         env:
-          # Use the package version as the common tag.
           PACKAGE_VERSION: ${{ needs.release-setup.outputs.package_version }}
-          # Repository where the images are stored.
-          REPO: eccr.ecmwf.int/aviso/aviso_server
+          REPO: eccr.ecmwf.int/aviso/${{ matrix.image }}
         run: |
-          # Create a multi-arch manifest that ties together the arch-specific images.
           docker manifest create $REPO:$PACKAGE_VERSION \
             $REPO:$PACKAGE_VERSION-amd64 \
             $REPO:$PACKAGE_VERSION-arm64
-          # Push the multi-arch manifest to the registry.
           docker manifest push $REPO:$PACKAGE_VERSION
 
+    # Add a separate job for GitHub release creation
+  github-release:
+    needs: [release-setup, create-manifest-and-release]
+    if: needs.release-setup.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
       - name: Create GitHub Release
         id: create_release
         uses: softprops/action-gh-release@v2
@@ -151,5 +155,4 @@ jobs:
           name: "${{ needs.release-setup.outputs.package_name }} v${{ needs.release-setup.outputs.package_version }}"
           generate_release_notes: true
         env:
-          # GitHub token for creating the release.
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
