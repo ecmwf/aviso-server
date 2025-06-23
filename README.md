@@ -1,13 +1,10 @@
-<p align="center">
-
-<table>
+<table align="center">
 <tr>
 <td><img src="src/static/logo.png" alt="Aviso Logo" width="200"/></td>
 <td><h1>AVISO</h1></td>
 </tr>
 </table>
 
-</p>
 
 <p align="center">
   <a href="https://github.com/ecmwf/codex/raw/refs/heads/main/ESEE">
