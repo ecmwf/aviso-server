@@ -1,7 +1,8 @@
 <p align="center">
   <img src="src/static/logo.png" alt="Aviso Logo" width="200"/><br>
-  <strong style="font-size: 6em;">AVISO</strong>
 </p>
+
+<h1 align="center">AVISO</h1>
 
 <p align="center">
   <a href="https://github.com/ecmwf/codex/raw/refs/heads/main/ESEE">
