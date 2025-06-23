@@ -38,6 +38,7 @@ pub async fn spawn_app() -> TestApp {
         c
     };
 
+    aviso_server::configuration::Settings::init_global_config(&configuration.clone());
     let shutdown_token = CancellationToken::new();
 
     let application = Application::build(configuration.clone(), shutdown_token.clone())
