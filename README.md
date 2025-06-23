@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="src/static/logo.png" alt="Aviso Logo" width="200"/><br>
+  <img src="src/static/logo.png" alt="Aviso Logo" width="200"/>
 </p>
 
 <h1 align="center">AVISO</h1>
