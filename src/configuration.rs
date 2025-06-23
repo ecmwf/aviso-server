@@ -163,10 +163,16 @@ pub struct ApplicationSettings {
     pub port: u16,
     #[serde(default = "default_base_url")]
     pub base_url: String,
+    #[serde(default = "default_static_files_path")]
+    pub static_files_path: String,
 }
 
 fn default_base_url() -> String {
     "http://localhost".to_string()
+}
+
+fn default_static_files_path() -> String {
+    "/app/static".to_string()
 }
 
 // MAIN SETTINGS STRUCT
