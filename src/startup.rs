@@ -110,7 +110,9 @@ async fn shutdown_backend(backend: Arc<dyn NotificationBackend>) -> anyhow::Resu
 
 /// Configure operational/infrastructure routes
 fn configure_ops_routes(cfg: &mut web::ServiceConfig) {
-    let static_path = Settings::get_global_application_settings().static_files_path.clone();
+    let static_path = Settings::get_global_application_settings()
+        .static_files_path
+        .clone();
     cfg.service(fs::Files::new("/static", static_path).show_files_listing())
         .route("/health", web::get().to(health_check))
         .route("/", web::get().to(homepage));
