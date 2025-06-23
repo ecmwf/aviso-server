@@ -1,6 +1,6 @@
 <p align="center">
   <img src="src/static/logo.png" alt="Aviso Logo" width="200"/><br>
-  <strong style="font-size: 2em;">AVISO</strong>
+  <h1 style="font-size: 2em;">AVISO</h1>
 </p>
 
 <p align="center">
