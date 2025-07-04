@@ -279,6 +279,9 @@ impl<'a> NotificationProcessor<'a> {
             ValidationRules::TimeHandler { .. } => {
                 TimeHandler::validate_and_canonicalize(value, field_name)
             }
+            ValidationRules::PolygonHandler { .. } => {
+                PolygonHandler::validate_and_canonicalize(value, field_name)
+            }
         }
     }
 }
