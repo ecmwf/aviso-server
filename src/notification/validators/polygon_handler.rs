@@ -18,15 +18,25 @@ impl PolygonHandler {
     /// * `Ok(String)` - The validated coordinate string
     /// * `Err(anyhow::Error)` - Validation failed with detailed error
     pub fn validate_and_canonicalize(value: &str, field_name: &str) -> Result<String> {
-        debug!("Validating polygon field '{}' with value: {}", field_name, value);
+        debug!(
+            "Validating polygon field '{}' with value: {}",
+            field_name, value
+        );
 
         // Parse the coordinate string
         let coordinates = Self::parse_polygon_coordinates(value)?;
-        debug!("Parsed {} coordinate pairs for field '{}'", coordinates.len(), field_name);
+        debug!(
+            "Parsed {} coordinate pairs for field '{}'",
+            coordinates.len(),
+            field_name
+        );
 
         // Validate the polygon
         Self::validate_polygon_geometry(&coordinates)?;
-        debug!("Polygon geometry validation passed for field '{}'", field_name);
+        debug!(
+            "Polygon geometry validation passed for field '{}'",
+            field_name
+        );
 
         // Return the original validated string
         // (JSON conversion will happen elsewhere when building the payload)
@@ -34,7 +44,7 @@ impl PolygonHandler {
     }
 
     /// Parses polygon coordinate string into coordinate pairs
-    fn parse_polygon_coordinates(coord_string: &str) -> Result<Vec<(f64, f64)>> {
+    pub fn parse_polygon_coordinates(coord_string: &str) -> Result<Vec<(f64, f64)>> {
         // Remove parentheses and trim whitespace
         let trimmed = coord_string
             .trim()
@@ -108,5 +118,259 @@ impl PolygonHandler {
         }
 
         format!("{},{},{},{}", min_lat, min_lon, max_lat, max_lon)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_validate_and_canonicalize_valid_polygon() {
+        let polygon_str = "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)";
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "polygon");
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), polygon_str);
+    }
+
+    #[test]
+    fn test_validate_and_canonicalize_with_spaces() {
+        let polygon_str = "( 52.5 , 13.4 , 52.6 , 13.5 , 52.5 , 13.6 , 52.4 , 13.5 , 52.5 , 13.4 )";
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "polygon");
+
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), polygon_str);
+    }
+
+    #[test]
+    fn test_validate_and_canonicalize_not_closed() {
+        let polygon_str = "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5)"; // Missing closing point
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "polygon");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_and_canonicalize_too_few_points() {
+        let polygon_str = "(52.5,13.4,52.6,13.5)"; // Only 2 points
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "polygon");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_and_canonicalize_empty_string() {
+        let polygon_str = "";
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "polygon");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_and_canonicalize_empty_parentheses() {
+        let polygon_str = "()";
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "polygon");
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_polygon_coordinates_valid() {
+        let coord_string = "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)";
+        let result = PolygonHandler::parse_polygon_coordinates(coord_string);
+
+        assert!(result.is_ok());
+        let coordinates = result.unwrap();
+        assert_eq!(coordinates.len(), 5);
+        assert_eq!(coordinates[0], (52.5, 13.4));
+        assert_eq!(coordinates[1], (52.6, 13.5));
+        assert_eq!(coordinates[4], (52.5, 13.4)); // Should be closed
+    }
+
+    #[test]
+    fn test_parse_polygon_coordinates_without_parentheses() {
+        let coord_string = "52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4";
+        let result = PolygonHandler::parse_polygon_coordinates(coord_string);
+
+        assert!(result.is_ok());
+        let coordinates = result.unwrap();
+        assert_eq!(coordinates.len(), 5);
+        assert_eq!(coordinates[0], (52.5, 13.4));
+    }
+
+    #[test]
+    fn test_parse_polygon_coordinates_with_spaces() {
+        let coord_string = "( 52.5 , 13.4 , 52.6 , 13.5 , 52.5 , 13.4 )";
+        let result = PolygonHandler::parse_polygon_coordinates(coord_string);
+
+        assert!(result.is_ok());
+        let coordinates = result.unwrap();
+        assert_eq!(coordinates.len(), 3);
+        assert_eq!(coordinates[0], (52.5, 13.4));
+        assert_eq!(coordinates[1], (52.6, 13.5));
+        assert_eq!(coordinates[2], (52.5, 13.4));
+    }
+
+    #[test]
+    fn test_parse_polygon_coordinates_odd_number() {
+        let coord_string = "(52.5,13.4,52.6)"; // Odd number of coordinates
+        let result = PolygonHandler::parse_polygon_coordinates(coord_string);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_polygon_coordinates_invalid_latitude() {
+        let coord_string = "(invalid,13.4,52.6,13.5,52.5,13.4)";
+        let result = PolygonHandler::parse_polygon_coordinates(coord_string);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_polygon_coordinates_invalid_longitude() {
+        let coord_string = "(52.5,invalid,52.6,13.5,52.5,13.4)";
+        let result = PolygonHandler::parse_polygon_coordinates(coord_string);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_polygon_coordinates_empty() {
+        let coord_string = "()";
+        let result = PolygonHandler::parse_polygon_coordinates(coord_string);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_polygon_geometry_valid_triangle() {
+        let coordinates = vec![(0.0, 0.0), (1.0, 0.0), (0.5, 1.0), (0.0, 0.0)];
+        let result = PolygonHandler::validate_polygon_geometry(&coordinates);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_polygon_geometry_valid_rectangle() {
+        let coordinates = vec![
+            (52.5, 13.4),
+            (52.6, 13.4),
+            (52.6, 13.5),
+            (52.5, 13.5),
+            (52.5, 13.4),
+        ];
+        let result = PolygonHandler::validate_polygon_geometry(&coordinates);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_polygon_geometry_too_few_points() {
+        let coordinates = vec![(0.0, 0.0), (1.0, 0.0)]; // Only 2 points
+        let result = PolygonHandler::validate_polygon_geometry(&coordinates);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_polygon_geometry_not_closed() {
+        let coordinates = vec![(0.0, 0.0), (1.0, 0.0), (0.5, 1.0), (0.1, 0.1)]; // Not closed
+        let result = PolygonHandler::validate_polygon_geometry(&coordinates);
+
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_validate_polygon_geometry_minimum_valid() {
+        let coordinates = vec![(0.0, 0.0), (1.0, 0.0), (0.5, 1.0), (0.0, 0.0)]; // Minimum valid triangle
+        let result = PolygonHandler::validate_polygon_geometry(&coordinates);
+
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_calculate_bounding_box_rectangle() {
+        let coordinates = vec![
+            (52.5, 13.4),
+            (52.6, 13.4),
+            (52.6, 13.5),
+            (52.5, 13.5),
+            (52.5, 13.4),
+        ];
+        let bbox = PolygonHandler::calculate_bounding_box(&coordinates);
+
+        assert_eq!(bbox, "52.5,13.4,52.6,13.5");
+    }
+
+    #[test]
+    fn test_calculate_bounding_box_triangle() {
+        let coordinates = vec![(0.0, 0.0), (1.0, 0.0), (0.5, 1.0), (0.0, 0.0)];
+        let bbox = PolygonHandler::calculate_bounding_box(&coordinates);
+
+        assert_eq!(bbox, "0,0,1,1");
+    }
+
+    #[test]
+    fn test_calculate_bounding_box_single_point() {
+        let coordinates = vec![(52.5, 13.4), (52.5, 13.4), (52.5, 13.4), (52.5, 13.4)];
+        let bbox = PolygonHandler::calculate_bounding_box(&coordinates);
+
+        assert_eq!(bbox, "52.5,13.4,52.5,13.4");
+    }
+
+    #[test]
+    fn test_calculate_bounding_box_negative_coordinates() {
+        let coordinates = vec![
+            (-1.0, -1.0),
+            (1.0, -1.0),
+            (1.0, 1.0),
+            (-1.0, 1.0),
+            (-1.0, -1.0),
+        ];
+        let bbox = PolygonHandler::calculate_bounding_box(&coordinates);
+
+        assert_eq!(bbox, "-1,-1,1,1");
+    }
+
+    #[test]
+    fn test_integration_parse_and_validate() {
+        let polygon_str = "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)";
+
+        // Test the full pipeline: parse -> validate -> calculate bbox
+        let coordinates = PolygonHandler::parse_polygon_coordinates(polygon_str).unwrap();
+        let validation_result = PolygonHandler::validate_polygon_geometry(&coordinates);
+        assert!(validation_result.is_ok());
+
+        let bbox = PolygonHandler::calculate_bounding_box(&coordinates);
+        assert_eq!(bbox, "52.4,13.4,52.6,13.6");
+    }
+
+    #[test]
+    fn test_real_world_berlin_polygon() {
+        // Real-world coordinates around Berlin
+        let polygon_str =
+            "(52.5200,13.4050,52.5200,13.4500,52.4800,13.4500,52.4800,13.4050,52.5200,13.4050)";
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "berlin_area");
+
+        assert!(result.is_ok());
+
+        let coordinates = PolygonHandler::parse_polygon_coordinates(polygon_str).unwrap();
+        let bbox = PolygonHandler::calculate_bounding_box(&coordinates);
+        assert_eq!(bbox, "52.48,13.405,52.52,13.45");
+    }
+
+    #[test]
+    fn test_precision_handling() {
+        // Test with high precision coordinates
+        let polygon_str = "(52.123456789,13.987654321,52.234567890,13.876543210,52.345678901,13.765432109,52.123456789,13.987654321)";
+        let result = PolygonHandler::validate_and_canonicalize(polygon_str, "precision_test");
+
+        assert!(result.is_ok());
+
+        let coordinates = PolygonHandler::parse_polygon_coordinates(polygon_str).unwrap();
+        assert_eq!(coordinates[0].0, 52.123456789);
+        assert_eq!(coordinates[0].1, 13.987654321);
     }
 }
