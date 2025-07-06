@@ -7,6 +7,7 @@
 pub mod handler;
 pub mod processor;
 pub mod registry;
+pub mod spatial;
 pub mod topic_builder;
 pub mod topic_parser;
 pub mod types;
