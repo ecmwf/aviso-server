@@ -1,29 +1,44 @@
 use crate::configuration::Settings;
-use crate::error::validation_error_response;
-use crate::notification::validators::validate_payload_type;
+use crate::error::processing_error_response;
 use crate::notification::{NotificationHandler, OperationType, ProcessingResult};
-use crate::types::PayloadType;
 use actix_web::HttpResponse;
+use anyhow::Result;
 use std::collections::HashMap;
 
-/// Process notification request with validation
+/// Process notification request with schema validation and spatial metadata extraction
+///
+/// This function handles the core notification processing logic including:
+/// - Schema-based validation of request parameters
+/// - Spatial metadata extraction for polygon fields
+/// - Payload type validation for spatial notifications
+///
+/// # Arguments
+/// * `event_type` - The type of event being processed
+/// * `request_params` - Request parameters to validate and canonicalize
+/// * `payload` - Optional payload data as serde_json::Value
+/// * `operation` - Type of operation (Notify, Watch, Replay)
+///
+/// # Returns
+/// * `Ok(ProcessingResult)` - Successfully processed notification with spatial metadata
+/// * `Err(HttpResponse)` - Processing error response
 pub fn process_notification_request(
     event_type: &str,
     request_params: &HashMap<String, String>,
-    payload: &Option<PayloadType>,
-    operation_type: OperationType,
+    payload: &Option<serde_json::Value>,
+    operation: OperationType,
 ) -> Result<ProcessingResult, HttpResponse> {
-    // Validate payload type against schema configuration
-    if let Err(e) = validate_payload_type(event_type, payload) {
-        return Err(validation_error_response("Payload Type", e));
-    }
-
-    // Process notification
-    let notification_handler =
+    let handler =
         NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
 
-    match notification_handler.process_request(event_type, request_params, operation_type) {
+    match handler.process_request(event_type, request_params, payload, operation) {
         Ok(result) => Ok(result),
-        Err(e) => Err(validation_error_response("Notification", e)),
+        Err(e) => {
+            tracing::warn!(
+                event_type = %event_type,
+                error = %e,
+                "Notification processing failed"
+            );
+            Err(processing_error_response("Notification Processing", e))
+        }
     }
 }
