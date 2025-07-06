@@ -21,6 +21,19 @@ impl PayloadType {
             PayloadType::HashMap(_) => "HashMap",
         }
     }
+
+    /// Convert PayloadType to serde_json::Value for processing
+    pub fn to_json_value(&self) -> serde_json::Value {
+        match self {
+            PayloadType::String(s) => serde_json::Value::String(s.clone()),
+            PayloadType::HashMap(map) => {
+                serde_json::to_value(map).unwrap_or(serde_json::Value::Null)
+            }
+            PayloadType::CloudEvent(ce) => {
+                serde_json::to_value(ce).unwrap_or(serde_json::Value::Null)
+            }
+        }
+    }
 }
 
 /// Notification request structure used by both /notification and /watch endpoints
