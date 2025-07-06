@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 
 use crate::configuration::{EventSchema, ValidationRules};
+use crate::notification::spatial::SpatialMetadata;
 use crate::notification::topic_builder::TopicBuilder;
 use crate::notification::validators::*;
 use crate::notification::{NotificationRegistry, OperationType, ProcessingResult};
@@ -51,20 +52,26 @@ impl<'a> NotificationProcessor<'a> {
         &self,
         event_type: &str,
         request_params: &HashMap<String, String>,
+        payload: &Option<serde_json::Value>,
         operation: OperationType,
     ) -> Result<ProcessingResult> {
         // Determine processing strategy based on schema availability
-        let canonicalized_params = if self.registry.has_schema(event_type) {
-            // Use schema-based validation for known event types
+        let (canonicalized_params, spatial_metadata) = if self.registry.has_schema(event_type) {
             let schema = self.registry.get_schema(event_type).unwrap();
             match operation {
-                OperationType::Notify => self.process_notify_request(schema, request_params)?,
-                OperationType::Watch => self.process_watch_request(schema, request_params)?,
-                OperationType::Replay => self.process_replay_request(schema, request_params)?,
+                OperationType::Notify => {
+                    self.process_notify_request(schema, request_params, payload)?
+                }
+                OperationType::Watch => (self.process_watch_request(schema, request_params)?, None),
+                OperationType::Replay => {
+                    (self.process_replay_request(schema, request_params)?, None)
+                }
             }
         } else {
-            // Use generic validation for unknown event types
-            self.process_generic_request(request_params, operation)?
+            (
+                self.process_generic_request(request_params, operation)?,
+                None,
+            )
         };
 
         // Build topic string based on schema or generic rules
@@ -78,6 +85,7 @@ impl<'a> NotificationProcessor<'a> {
             event_type: event_type.to_string(),
             topic,
             canonicalized_params,
+            spatial_metadata,
         })
     }
 
@@ -97,8 +105,11 @@ impl<'a> NotificationProcessor<'a> {
         &self,
         schema: &EventSchema,
         request_params: &HashMap<String, String>,
-    ) -> Result<HashMap<String, String>> {
+        payload: &Option<serde_json::Value>,
+    ) -> Result<(HashMap<String, String>, Option<SpatialMetadata>)> {
         let mut canonicalized = HashMap::new();
+        let mut spatial_metadata = None;
+        let mut has_polygon_field = false;
 
         // For notify operations, ALL schema fields must be present and valid
         for (field_name, rules) in &schema.request {
@@ -110,10 +121,50 @@ impl<'a> NotificationProcessor<'a> {
             let canonicalized_value =
                 self.validate_and_canonicalize_field(field_name, value, rules)?;
 
+            // Check if this is a polygon field and extract spatial metadata
+            if matches!(rules.first(), Some(ValidationRules::PolygonHandler { .. })) {
+                has_polygon_field = true;
+                let coordinates = PolygonHandler::parse_polygon_coordinates(value)?;
+
+                spatial_metadata = Some(SpatialMetadata::from_coordinates(&coordinates)?);
+
+                tracing::debug!(
+                    field_name = field_name,
+                    coordinate_count = coordinates.len(),
+                    bounding_box = %spatial_metadata.as_ref().unwrap().bounding_box,
+                    "Extracted spatial metadata from polygon field"
+                );
+            }
+
             canonicalized.insert(field_name.clone(), canonicalized_value);
         }
 
-        Ok(canonicalized)
+        // Validate payload type if polygon field is present
+        if has_polygon_field {
+            self.validate_polygon_payload_type(payload)?;
+        }
+
+        Ok((canonicalized, spatial_metadata))
+    }
+
+    /// Validate that payload type is HashMap when polygon field is present
+    fn validate_polygon_payload_type(&self, payload: &Option<serde_json::Value>) -> Result<()> {
+        match payload {
+            Some(serde_json::Value::Object(_)) => {
+                // Payload is HashMap/Object - this is correct
+                Ok(())
+            }
+            Some(_) => {
+                anyhow::bail!(
+                    "When polygon field is specified, payload must be a HashMap/Object, not a primitive type"
+                )
+            }
+            None => {
+                anyhow::bail!(
+                    "When polygon field is specified, payload is required and must be a HashMap/Object"
+                )
+            }
+        }
     }
 
     /// Process request for watch operation with schema validation
@@ -331,6 +382,39 @@ mod tests {
         }
     }
 
+    fn create_polygon_test_schema() -> EventSchema {
+        let mut request = HashMap::new();
+        request.insert(
+            "date".to_string(),
+            vec![ValidationRules::DateHandler {
+                canonical_format: "%Y%m%d".to_string(),
+                required: false,
+            }],
+        );
+        request.insert(
+            "time".to_string(),
+            vec![ValidationRules::TimeHandler { required: false }],
+        );
+        request.insert(
+            "polygon".to_string(),
+            vec![ValidationRules::PolygonHandler { required: true }],
+        );
+
+        EventSchema {
+            payload: Some(PayloadConfig {
+                allowed_types: vec!["HashMap".to_string()],
+                required: true,
+            }),
+            topic: Some(TopicConfig {
+                base: "polygon".to_string(),
+                separator: ".".to_string(),
+                key_order: vec!["date".to_string(), "time".to_string()],
+            }),
+            endpoint: None,
+            request,
+        }
+    }
+
     #[test]
     fn test_notify_request_missing_required_field() {
         let mut schemas = HashMap::new();
@@ -342,13 +426,14 @@ mod tests {
         params.insert("destination".to_string(), "SCL".to_string());
         // Missing required "class" field
 
-        // Use process_request with a known event type
-        let result = processor.process_request("test_event", &params, OperationType::Notify);
+        let payload = None;
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Notify);
         assert!(result.is_err());
     }
 
     #[test]
-    fn test_listen_request_with_wildcards() {
+    fn test_notify_request_all_required_fields_present() {
         let mut schemas = HashMap::new();
         schemas.insert("test_event".to_string(), create_test_schema());
         let registry = NotificationRegistry::from_config(&schemas);
@@ -357,21 +442,81 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("class".to_string(), "od".to_string());
         params.insert("destination".to_string(), "SCL".to_string());
-        params.insert("location".to_string(), "/path/to/file".to_string());
+        params.insert("optional_field".to_string(), "optional_value".to_string());
+
+        let payload = Some(serde_json::Value::String("test payload".to_string()));
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert_eq!(processing_result.event_type, "test_event");
+        assert_eq!(
+            processing_result.canonicalized_params.get("class"),
+            Some(&"od".to_string())
+        );
+        assert_eq!(
+            processing_result.canonicalized_params.get("destination"),
+            Some(&"SCL".to_string())
+        );
+        assert_eq!(
+            processing_result.canonicalized_params.get("optional_field"),
+            Some(&"optional_value".to_string())
+        );
+        assert!(processing_result.spatial_metadata.is_none());
+    }
+
+    #[test]
+    fn test_watch_request_with_wildcards() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), create_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("class".to_string(), "od".to_string());
+        params.insert("destination".to_string(), "SCL".to_string());
         // Missing optional_field should get "*"
 
-        let result = processor.process_request("test_event", &params, OperationType::Watch);
-        assert!(result.is_ok());
+        let payload = None;
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Watch);
 
+        assert!(result.is_ok());
         let processing_result = result.unwrap();
         assert_eq!(
             processing_result.canonicalized_params.get("optional_field"),
             Some(&"*".to_string())
         );
+        assert!(processing_result.spatial_metadata.is_none());
     }
 
     #[test]
-    fn test_payload_extraction_required_missing() {
+    fn test_watch_request_missing_required_field() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), create_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("destination".to_string(), "SCL".to_string());
+        // Missing required "class" field
+
+        let payload = None;
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Watch);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Required field 'class' missing")
+        );
+    }
+
+    #[test]
+    fn test_replay_request_with_wildcards() {
         let mut schemas = HashMap::new();
         schemas.insert("test_event".to_string(), create_test_schema());
         let registry = NotificationRegistry::from_config(&schemas);
@@ -380,9 +525,251 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("class".to_string(), "od".to_string());
         params.insert("destination".to_string(), "SCL".to_string());
+        // Missing optional_field should get "*"
 
-        let result = processor.process_request("test_event", &params, OperationType::Watch);
+        let payload = None;
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Replay);
+
         assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert_eq!(
+            processing_result.canonicalized_params.get("optional_field"),
+            Some(&"*".to_string())
+        );
+        assert!(processing_result.spatial_metadata.is_none());
+    }
+
+    #[test]
+    fn test_polygon_notification_with_valid_payload() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_polygon".to_string(), create_polygon_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("date".to_string(), "20250706".to_string());
+        params.insert("time".to_string(), "1200".to_string());
+        params.insert(
+            "polygon".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        // Valid HashMap payload
+        let mut payload_map = serde_json::Map::new();
+        payload_map.insert(
+            "message".to_string(),
+            serde_json::Value::String("test".to_string()),
+        );
+        let payload = Some(serde_json::Value::Object(payload_map));
+
+        let result =
+            processor.process_request("test_polygon", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert!(processing_result.spatial_metadata.is_some());
+
+        let spatial_metadata = processing_result.spatial_metadata.unwrap();
+        assert!(!spatial_metadata.bounding_box.is_empty());
+        assert!(spatial_metadata.bounding_box.contains(','));
+    }
+
+    #[test]
+    fn test_polygon_notification_with_invalid_payload_type() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_polygon".to_string(), create_polygon_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("date".to_string(), "20250706".to_string());
+        params.insert("time".to_string(), "1200".to_string());
+        params.insert(
+            "polygon".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        // Invalid String payload when HashMap is required
+        let payload = Some(serde_json::Value::String(
+            "invalid payload type".to_string(),
+        ));
+
+        let result =
+            processor.process_request("test_polygon", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("payload must be a HashMap/Object")
+        );
+    }
+
+    #[test]
+    fn test_polygon_notification_with_missing_payload() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_polygon".to_string(), create_polygon_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("date".to_string(), "20250706".to_string());
+        params.insert("time".to_string(), "1200".to_string());
+        params.insert(
+            "polygon".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        // Missing payload when polygon field is present
+        let payload = None;
+
+        let result =
+            processor.process_request("test_polygon", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("payload is required and must be a HashMap/Object")
+        );
+    }
+
+    #[test]
+    fn test_polygon_watch_request_no_payload_validation() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_polygon".to_string(), create_polygon_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert(
+            "polygon".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+        // Missing optional date and time fields
+
+        // Watch operations don't validate payload type
+        let payload = None;
+
+        let result =
+            processor.process_request("test_polygon", &params, &payload, OperationType::Watch);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert_eq!(
+            processing_result.canonicalized_params.get("date"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            processing_result.canonicalized_params.get("time"),
+            Some(&"*".to_string())
+        );
+        assert!(processing_result.spatial_metadata.is_none()); // Watch doesn't extract spatial metadata
+    }
+
+    #[test]
+    fn test_generic_processing_notify_empty_values() {
+        let registry = NotificationRegistry::new();
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("field1".to_string(), "".to_string()); // Empty value
+        params.insert("field2".to_string(), "valid".to_string());
+
+        let payload = None;
+        let result =
+            processor.process_request("unknown_event", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
+    }
+
+    #[test]
+    fn test_generic_processing_notify_valid_values() {
+        let registry = NotificationRegistry::new();
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("field1".to_string(), "value1".to_string());
+        params.insert("field2".to_string(), "value2".to_string());
+
+        let payload = None;
+        let result =
+            processor.process_request("unknown_event", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert_eq!(processing_result.event_type, "unknown_event");
+        assert_eq!(
+            processing_result.canonicalized_params.get("field1"),
+            Some(&"value1".to_string())
+        );
+        assert_eq!(
+            processing_result.canonicalized_params.get("field2"),
+            Some(&"value2".to_string())
+        );
+        assert!(processing_result.spatial_metadata.is_none());
+    }
+
+    #[test]
+    fn test_generic_processing_watch_empty_values_allowed() {
+        let registry = NotificationRegistry::new();
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("field1".to_string(), "".to_string()); // Empty value allowed for watch
+        params.insert("field2".to_string(), "valid".to_string());
+
+        let payload = None;
+        let result =
+            processor.process_request("unknown_event", &params, &payload, OperationType::Watch);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert_eq!(
+            processing_result.canonicalized_params.get("field1"),
+            Some(&"".to_string())
+        );
+        assert_eq!(
+            processing_result.canonicalized_params.get("field2"),
+            Some(&"valid".to_string())
+        );
+    }
+
+    #[test]
+    fn test_validation_rule_not_found() {
+        let mut request = HashMap::new();
+        request.insert("field".to_string(), vec![]); // Empty rules
+
+        let schema = EventSchema {
+            payload: None,
+            topic: None,
+            endpoint: None,
+            request,
+        };
+
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), schema);
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("field".to_string(), "value".to_string());
+
+        let payload = None;
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("No validation rules found")
+        );
     }
 
     #[test]
@@ -426,53 +813,52 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("class".to_string(), "od".to_string());
         params.insert("destination".to_string(), "SCL".to_string());
-        // Missing optional payload field
 
-        let result = processor.process_request("test_event", &params, OperationType::Notify);
+        let payload = None; // Missing optional payload
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Notify);
+
         assert!(result.is_ok());
     }
 
     #[test]
-    fn test_generic_processing_empty_values() {
-        let registry = NotificationRegistry::new();
-        let processor = NotificationProcessor::new(&registry);
-
-        let mut params = HashMap::new();
-        params.insert("field1".to_string(), "".to_string()); // Empty value
-        params.insert("field2".to_string(), "valid".to_string());
-
-        let result = processor.process_generic_request(&params, OperationType::Notify);
-        assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("cannot be empty"));
-    }
-
-    #[test]
-    fn test_validation_rule_not_found() {
-        let mut request = HashMap::new();
-        request.insert("field".to_string(), vec![]);
-
-        let schema = EventSchema {
-            payload: None,
-            topic: None,
-            endpoint: None,
-            request,
-        };
-
+    fn test_topic_generation_with_schema() {
         let mut schemas = HashMap::new();
-        schemas.insert("test_event".to_string(), schema);
+        schemas.insert("test_event".to_string(), create_test_schema());
         let registry = NotificationRegistry::from_config(&schemas);
         let processor = NotificationProcessor::new(&registry);
 
         let mut params = HashMap::new();
-        params.insert("field".to_string(), "value".to_string());
+        params.insert("class".to_string(), "od".to_string());
+        params.insert("destination".to_string(), "SCL".to_string());
+        params.insert("optional_field".to_string(), "optional_value".to_string());
 
-        let result = processor.process_request("test_event", &params, OperationType::Notify);
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("No validation rules found")
-        );
+        let payload = Some(serde_json::Value::String("test payload".to_string()));
+        let result =
+            processor.process_request("test_event", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert!(processing_result.topic.starts_with("test."));
+        assert!(processing_result.topic.contains("od"));
+        assert!(processing_result.topic.contains("SCL"));
+    }
+
+    #[test]
+    fn test_topic_generation_without_schema() {
+        let registry = NotificationRegistry::new();
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("field1".to_string(), "value1".to_string());
+        params.insert("field2".to_string(), "value2".to_string());
+
+        let payload = None;
+        let result =
+            processor.process_request("unknown_event", &params, &payload, OperationType::Notify);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert!(processing_result.topic.starts_with("unknown_event."));
     }
 }
