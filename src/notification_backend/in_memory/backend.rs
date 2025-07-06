@@ -167,6 +167,7 @@ impl NotificationBackend for InMemoryBackend {
             topic: topic.to_string(),
             payload: payload.to_string(),
             timestamp: Some(Utc::now()),
+            metadata: None,
         };
 
         // Update topic state counters
@@ -205,6 +206,16 @@ impl NotificationBackend for InMemoryBackend {
         }
 
         Ok(())
+    }
+
+    async fn put_message_with_headers(
+        &self,
+        topic: &str,
+        _headers: Option<HashMap<String, String>>,
+        payload: String,
+    ) -> Result<()> {
+        // In-memory backend ignores headers, delegate to regular publish
+        self.put_messages(topic, payload).await
     }
 
     /// Remove all notifications from topics matching a stream pattern

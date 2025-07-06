@@ -165,6 +165,7 @@ pub fn transform_jetstream_message(
         topic: subject,
         payload,
         timestamp: Some(timestamp),
+        metadata: None,
     })
 }
 
