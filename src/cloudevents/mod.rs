@@ -264,6 +264,7 @@ mod tests {
             topic: "diss.FOO.E1.od.0001.g.20190810.0.enfo.1".to_string(),
             payload: r#"{"test": "data"}"#.to_string(),
             timestamp: Some(Utc::now()),
+            metadata: None,
         }
     }
 
