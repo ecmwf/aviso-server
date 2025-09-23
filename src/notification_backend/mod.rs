@@ -27,8 +27,8 @@ pub struct NotificationMessage {
     pub payload: String,
     /// Message timestamp from backend
     pub timestamp: Option<DateTime<Utc>>,
-    /// Optional metadata as JSON string
-    pub metadata: Option<String>,
+    /// Optional metadata
+    pub metadata: Option<HashMap<String, String>>,
 }
 
 /// Trait defining the interface for notification backends
