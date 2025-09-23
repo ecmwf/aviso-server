@@ -19,7 +19,7 @@ use super::helpers::{
 use super::types::{SseEventType, format_sse_event};
 use crate::configuration::Settings;
 use crate::notification::wildcard_matcher::matches_notification_filters;
-use crate::notification_backend::{NotificationBackend, replay::BatchParams, NotificationMessage};
+use crate::notification_backend::{NotificationBackend, NotificationMessage, replay::BatchParams};
 
 /// Create a stream that replays historical messages using tokio_stream
 ///
