@@ -8,15 +8,6 @@ use tracing::debug;
 pub struct PolygonHandler;
 
 impl PolygonHandler {
-    /// Validates and canonicalizes polygon coordinate strings
-    ///
-    /// # Arguments
-    /// * `value` - The polygon coordinate string to validate
-    /// * `field_name` - Name of the field being validated (for error messages)
-    ///
-    /// # Returns
-    /// * `Ok(String)` - The validated coordinate string
-    /// * `Err(anyhow::Error)` - Validation failed with detailed error
     pub fn validate_and_canonicalize(value: &str, field_name: &str) -> Result<String> {
         debug!(
             "Validating polygon field '{}' with value: {}",
@@ -43,9 +34,11 @@ impl PolygonHandler {
         Ok(value.to_string())
     }
 
-    /// Parses polygon coordinate string into coordinate pairs
+    /// Parse a string of coordinates "(lat,lon,lat,lon,...)" into a vector of (lat, lon) tuples.
+    ///
+    /// This function ALWAYS returns (lat, lon)
+    /// DO NOT swap here. Only swap to (lon, lat) when passing to geo crate.
     pub fn parse_polygon_coordinates(coord_string: &str) -> Result<Vec<(f64, f64)>> {
-        // Remove parentheses and trim whitespace
         let trimmed = coord_string
             .trim()
             .trim_start_matches('(')
@@ -56,7 +49,6 @@ impl PolygonHandler {
             bail!("Empty polygon coordinate string");
         }
 
-        // Split by comma and parse coordinate pairs
         let coord_parts: Vec<&str> = trimmed.split(',').collect();
 
         if coord_parts.len() % 2 != 0 {
@@ -67,7 +59,7 @@ impl PolygonHandler {
         let mut iter = coord_parts.iter();
 
         while let Some(lat_str) = iter.next() {
-            let lon_str = iter.next().unwrap(); // Safe because we checked length above
+            let lon_str = iter.next().unwrap(); // Already checked length above
 
             let lat: f64 = lat_str
                 .trim()
@@ -118,6 +110,19 @@ impl PolygonHandler {
         }
 
         format!("{},{},{},{}", min_lat, min_lon, max_lat, max_lon)
+    }
+
+    pub fn parse_bbox_coordinates(s: &str) -> Result<(f64, f64, f64, f64)> {
+        // expects (lat_min,lon_min,lat_max,lon_max)
+        let s = s.trim_matches(|c| c == '(' || c == ')');
+        let coords: Vec<f64> = s
+            .split(',')
+            .map(|part| part.trim().parse())
+            .collect::<Result<_, _>>()?;
+        if coords.len() != 4 {
+            anyhow::bail!("BBox must have 4 numbers");
+        }
+        Ok((coords[0], coords[1], coords[2], coords[3]))
     }
 }
 
