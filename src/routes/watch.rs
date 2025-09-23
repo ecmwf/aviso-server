@@ -1,7 +1,7 @@
 use crate::error::{sse_error_response, validation_error_response};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig};
 use crate::notification_backend::NotificationBackend;
-use crate::sse::create_watch_sse_stream;
+use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
@@ -14,6 +14,7 @@ use tracing_actix_web::RequestId;
 /// Processes watch requests and establishes SSE streaming for real-time notifications.
 /// Validates request parameters and sets up live notification streaming with optional
 /// historical replay functionality when from_id or from_date parameters are provided.
+/// Applies spatial and field filtering to ensure only matching notifications are streamed.
 #[tracing::instrument(
     skip(notification_request, notification_backend, shutdown),
     fields(
@@ -49,6 +50,9 @@ pub async fn watch(
         tracing::Span::current().record("from_date", date.to_rfc3339());
     }
 
+    // Prepare filtering parameters - use ORIGINAL request parameters for spatial filtering
+    let original_request_params = Arc::new(notification_request.request.clone());
+
     // Determine streaming mode and create appropriate stream
     let sse_response = if context.from_id.is_some() || context.from_date.is_some() {
         info!(
@@ -58,12 +62,13 @@ pub async fn watch(
             "Creating historical replay + live stream"
         );
 
-        crate::sse::create_historical_then_live_stream(
+        create_historical_then_live_stream(
             context.topic.clone(),
             notification_backend.get_ref().clone(),
             context.from_id,
             context.from_date,
             shutdown.clone(),
+            original_request_params.clone(),
         )
         .await
     } else {
@@ -73,6 +78,7 @@ pub async fn watch(
             context.topic.clone(),
             notification_backend.get_ref().clone(),
             shutdown.clone(),
+            original_request_params.clone(),
         )
         .await
     };
