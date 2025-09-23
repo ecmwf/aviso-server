@@ -97,17 +97,18 @@ fn enhance_payload_with_polygon(
         .iter()
         .find(|(_, value)| value.starts_with('(') && value.ends_with(')'))
         .map(|(_, value)| {
-            // Parse polygon coordinates from the canonicalized value
             crate::notification::validators::PolygonHandler::parse_polygon_coordinates(value)
         })
         .transpose()?;
 
     if let Some(coordinates) = polygon_coordinates {
-        // Add spatial geometry to payload
+        // HERE: Make sure this is lat,lon order for GeoJSON!
         if let Some(payload_obj) = payload_json.as_object_mut() {
             let spatial_geometry = serde_json::json!({
                 "type": "Polygon",
-                "coordinates": coordinates
+                // GeoJSON wants [ [ [lon,lat], ... ] ], but we want [ [ [lat,lon], ... ] ]
+                // Just use coordinates as-is, since whole stack is lat,lon
+                "coordinates": [coordinates]
             });
 
             payload_obj.insert("spatial_geometry".to_string(), spatial_geometry);
