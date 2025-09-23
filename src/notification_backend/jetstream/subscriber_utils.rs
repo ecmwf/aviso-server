@@ -159,13 +159,33 @@ pub fn transform_jetstream_message(
     // Convert payload bytes to string
     let payload = String::from_utf8_lossy(&jetstream_msg.payload).to_string();
 
+    let metadata = match &jetstream_msg.headers {
+        Some(headers) => {
+            let mut map = std::collections::HashMap::new();
+            for (k, v) in headers.iter() {
+                // Each header value is Vec<String>, join with ','
+                let value = v.iter().map(|s| s.as_str()).collect::<Vec<_>>().join(",");
+                map.insert(k.to_string(), value);
+            }
+            if map.is_empty() { None } else { Some(map) }
+        }
+        None => None,
+    };
+
+    debug!(
+        sequence = sequence,
+        topic = %subject,
+        headers_present = metadata.is_some(),
+        "JetStream message converted, headers extracted"
+    );
+
     // Create NotificationMessage
     Ok(NotificationMessage {
         sequence,
         topic: subject,
         payload,
         timestamp: Some(timestamp),
-        metadata: None,
+        metadata,
     })
 }
 
