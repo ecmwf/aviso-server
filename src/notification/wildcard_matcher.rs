@@ -5,6 +5,9 @@
 //! It implements a hybrid approach where the backend handles coarse filtering
 //! and the application handles fine-grained pattern matching.
 
+use crate::notification::validators::PolygonHandler;
+use geo::{BoundingRect, Intersects};
+use std::collections::HashMap;
 use tracing::debug;
 
 /// Analyze a watch pattern to determine optimal backend subscription and application filter
@@ -113,6 +116,257 @@ pub fn matches_watch_pattern(notification_topic: &str, watch_pattern: &[String])
     );
 
     true
+}
+
+/// Determines if a notification matches the given filters, supporting spatial (polygon) filtering.
+///
+/// This function applies spatial filtering when a polygon is specified in the request.
+/// It performs efficient two-stage filtering:
+/// 1. Fast bounding box intersection check to eliminate obvious non-matches
+/// 2. Precise polygon intersection for candidates that pass the bbox test
+///
+/// # Arguments
+/// * `request` - Request parameters including optional polygon filter
+/// * `metadata` - Optional notification metadata containing spatial bounding box
+/// * `payload` - Notification payload as JSON string (must contain HashMap for spatial data)
+///
+/// # Returns
+/// * `bool` - true if notification matches all filters, false otherwise
+pub fn matches_notification_filters(
+    request: &HashMap<String, String>,
+    metadata: Option<&HashMap<String, String>>,
+    payload: &str,
+) -> bool {
+    // Only apply spatial filtering if a polygon is specified in the request
+    let Some(request_polygon) = request.get("polygon") else {
+        // No spatial filtering requested - notification matches
+        return true;
+    };
+
+    debug!(
+        "Starting spatial filter check for polygon: {}",
+        request_polygon
+    );
+
+    // Parse and validate the request polygon coordinates
+    let coords_latlon = match PolygonHandler::parse_polygon_coordinates(request_polygon) {
+        Ok(coords) => {
+            debug!("Parsed request polygon: {} coordinate pairs", coords.len());
+            coords
+        }
+        Err(e) => {
+            debug!("Invalid request polygon format: {}", e);
+            return false; // Malformed request polygon, treat as non-match
+        }
+    };
+
+    // Build geo::Polygon from coordinates
+    let filter_poly = {
+        let coords_lonlat: Vec<(f64, f64)> = coords_latlon
+            .iter()
+            .map(|(lat, lon)| (*lon, *lat))
+            .collect();
+        geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
+    };
+
+    // Calculate bounding box for the filter polygon
+    let filter_bbox = match filter_poly.bounding_rect() {
+        Some(bbox) => {
+            debug!("Request polygon bounding box calculated successfully");
+            bbox
+        }
+        None => {
+            debug!("Failed to calculate bounding box for request polygon");
+            return false; // Degenerate polygon
+        }
+    };
+
+    // Extract candidate's bounding box from metadata
+    let candidate_bbox = metadata
+        .and_then(|m| m.get("spatial_bbox"))
+        .and_then(|bbox_str| {
+            // Parse bbox string: "min_lat,min_lon,max_lat,max_lon"
+            let coords: Vec<f64> = bbox_str
+                .split(',')
+                .map(|part| part.trim().parse().ok())
+                .collect::<Option<Vec<_>>>()?;
+
+            if coords.len() != 4 {
+                debug!(
+                    "Malformed candidate bbox: expected 4 values, got {}",
+                    coords.len()
+                );
+                return None;
+            }
+
+            let (min_lat, min_lon, max_lat, max_lon) = (coords[0], coords[1], coords[2], coords[3]);
+
+            // Create geo::Rect (expects lon,lat coordinates)
+            Some(geo::Rect::new(
+                geo::Coord {
+                    x: min_lon,
+                    y: min_lat,
+                },
+                geo::Coord {
+                    x: max_lon,
+                    y: max_lat,
+                },
+            ))
+        });
+
+    let Some(candidate_bbox) = candidate_bbox else {
+        debug!("No valid spatial_bbox found in candidate metadata");
+        return false;
+    };
+
+    // Fast filtering: check if bounding boxes intersect
+    if !candidate_bbox.intersects(&filter_bbox) {
+        debug!("Bounding boxes do not intersect - filtering out notification");
+        return false;
+    }
+
+    debug!("Bounding boxes intersect - proceeding to polygon intersection check");
+
+    // Extract candidate polygon geometry from metadata or payload
+    let candidate_poly = extract_candidate_polygon(metadata, payload);
+
+    let Some(candidate_poly) = candidate_poly else {
+        debug!("No valid polygon geometry found in candidate - filtering out");
+        return false;
+    };
+
+    // Perform precise polygon intersection check
+    let polygons_intersect = candidate_poly.intersects(&filter_poly);
+
+    if polygons_intersect {
+        debug!("Polygon intersection successful - notification passes spatial filter");
+    } else {
+        debug!("Polygons do not intersect - filtering out notification");
+    }
+
+    polygons_intersect
+}
+
+/// Extract candidate polygon from metadata or payload
+///
+/// Tries to find polygon geometry in this order:
+/// 1. spatial_geometry field in metadata (as coordinate string)
+/// 2. spatial_geometry field in payload (as GeoJSON object)
+///
+/// # Arguments
+/// * `metadata` - Optional notification metadata
+/// * `payload` - Notification payload as JSON string
+///
+/// # Returns
+/// * `Option<geo::Polygon>` - Parsed polygon or None if not found/invalid
+fn extract_candidate_polygon(
+    metadata: Option<&HashMap<String, String>>,
+    payload: &str,
+) -> Option<geo::Polygon<f64>> {
+    // First, try to get polygon from metadata
+    if let Some(candidate_poly) = try_polygon_from_metadata(metadata) {
+        return Some(candidate_poly);
+    }
+
+    // Fallback: try to extract from payload (HashMap only)
+    try_polygon_from_payload(payload)
+}
+
+/// Try to extract polygon from metadata spatial_geometry field
+fn try_polygon_from_metadata(
+    metadata: Option<&HashMap<String, String>>,
+) -> Option<geo::Polygon<f64>> {
+    metadata
+        .and_then(|m| m.get("spatial_geometry"))
+        .and_then(|geom_str| {
+            PolygonHandler::parse_polygon_coordinates(geom_str)
+                .ok()
+                .map(|coords_latlon| {
+                    // Convert (lat,lon) to (lon,lat) for geo crate
+                    let coords_lonlat: Vec<(f64, f64)> = coords_latlon
+                        .iter()
+                        .map(|(lat, lon)| (*lon, *lat))
+                        .collect();
+                    geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
+                })
+        })
+}
+
+/// Try to extract polygon from payload spatial_geometry field
+///
+/// Since your code only works with HashMap payloads, this function assumes
+/// the payload contains a JSON object with a spatial_geometry field.
+fn try_polygon_from_payload(payload: &str) -> Option<geo::Polygon<f64>> {
+    // Parse payload as JSON object (HashMap only)
+    let json: serde_json::Value = serde_json::from_str(payload).ok()?;
+    let spatial_geometry = json.get("spatial_geometry")?;
+
+    // Handle GeoJSON-style geometry object
+    if let Some(geom_obj) = spatial_geometry.as_object() {
+        extract_polygon_from_geojson(geom_obj)
+    } else {
+        // Handle geometry as coordinate string
+        spatial_geometry.as_str().and_then(|geom_str| {
+            PolygonHandler::parse_polygon_coordinates(geom_str)
+                .ok()
+                .map(|coords_latlon| {
+                    let coords_lonlat: Vec<(f64, f64)> = coords_latlon
+                        .iter()
+                        .map(|(lat, lon)| (*lon, *lat))
+                        .collect();
+                    geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
+                })
+        })
+    }
+}
+
+/// Extract polygon from GeoJSON-style geometry object
+fn extract_polygon_from_geojson(
+    geom_obj: &serde_json::Map<String, serde_json::Value>,
+) -> Option<geo::Polygon<f64>> {
+    // Check if this is a Polygon type
+    let geo_type = geom_obj.get("type")?.as_str()?;
+    if geo_type != "Polygon" {
+        debug!(
+            "Geometry type '{}' is not supported (only Polygon)",
+            geo_type
+        );
+        return None;
+    }
+
+    // Extract coordinates array
+    let coords_json = geom_obj.get("coordinates")?;
+    let coords_outer = coords_json.as_array()?.first()?; // Get outer ring
+    let coords_inner = coords_outer.as_array()?;
+
+    // Parse coordinate pairs (assuming lat,lon order in your GeoJSON)
+    let coords_latlon: Vec<(f64, f64)> = coords_inner
+        .iter()
+        .filter_map(|pair| {
+            let lat = pair.get(0)?.as_f64()?;
+            let lon = pair.get(1)?.as_f64()?;
+            Some((lat, lon))
+        })
+        .collect();
+
+    if coords_latlon.len() < 3 {
+        debug!(
+            "Insufficient coordinates for polygon: {}",
+            coords_latlon.len()
+        );
+        return None;
+    }
+
+    // Convert to geo::Polygon (swap to lon,lat for geo crate)
+    let coords_lonlat: Vec<(f64, f64)> = coords_latlon
+        .iter()
+        .map(|(lat, lon)| (*lon, *lat))
+        .collect();
+
+    Some(geo::Polygon::new(
+        geo::LineString::from(coords_lonlat),
+        vec![],
+    ))
 }
 
 /// Generate backend-compatible wildcard pattern from a topic pattern

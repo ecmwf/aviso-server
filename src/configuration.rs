@@ -83,6 +83,9 @@ pub enum ValidationRules {
     TimeHandler {
         required: bool,
     },
+    PolygonHandler {
+        required: bool,
+    },
 }
 
 impl ValidationRules {
@@ -95,6 +98,7 @@ impl ValidationRules {
             ValidationRules::ExpverHandler { required, .. } => *required,
             ValidationRules::IntHandler { required, .. } => *required,
             ValidationRules::TimeHandler { required } => *required,
+            ValidationRules::PolygonHandler { required } => *required,
         }
     }
 }

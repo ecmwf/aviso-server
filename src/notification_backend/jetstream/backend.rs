@@ -6,6 +6,7 @@ use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::Stream;
+use std::collections::HashMap;
 
 #[derive(Clone)]
 pub struct JetStreamBackend {
@@ -32,6 +33,15 @@ impl JetStreamBackend {
 impl NotificationBackend for JetStreamBackend {
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()> {
         publisher::put_messages(self, topic, payload).await
+    }
+
+    async fn put_message_with_headers(
+        &self,
+        topic: &str,
+        headers: Option<HashMap<String, String>>,
+        payload: String,
+    ) -> Result<()> {
+        publisher::put_message_with_headers(self, topic, headers, payload).await
     }
 
     async fn wipe_stream(&self, stream_name: &str) -> Result<()> {

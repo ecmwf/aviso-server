@@ -16,12 +16,14 @@ use tracing_actix_web::RequestId;
 ///
 /// Processes notification requests with all schema fields required.
 /// Validates request format, payload type, processes notification, and saves to backend.
+/// Now supports spatial metadata extraction for polygon fields.
 #[tracing::instrument(
     skip(body, notification_backend),
     fields(
         event_type = tracing::field::Empty,
         topic = tracing::field::Empty,
         request_id = %request_id,
+        spatial_enabled = tracing::field::Empty,
     )
 )]
 pub async fn notify(
@@ -40,11 +42,14 @@ pub async fn notify(
 
     tracing::Span::current().record("event_type", event_type);
 
+    // Convert PayloadType to serde_json::Value
+    let payload_value = payload.payload.as_ref().map(|p| p.to_json_value());
+
     // Process notification request with payload validation
     let notification_result = match process_notification_request(
         event_type,
         request_params,
-        &payload.payload,
+        &payload_value,
         OperationType::Notify,
     ) {
         Ok(result) => result,
@@ -52,11 +57,15 @@ pub async fn notify(
     };
 
     tracing::Span::current().record("topic", &notification_result.topic);
+    tracing::Span::current().record(
+        "spatial_enabled",
+        notification_result.spatial_metadata.is_some(),
+    );
 
     // Convert payload for backend storage
     let payload_string = convert_payload_to_string(&payload.payload);
 
-    // Save to backend storage
+    // Save to backend storage (handles spatial metadata automatically)
     if let Err(e) = save_to_backend(
         &notification_result,
         payload_string.as_deref(),
@@ -79,13 +88,25 @@ pub async fn notify(
         processed_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    info!(
-        topic = %notification_result.topic,
-        event_type = %notification_result.event_type,
-        param_count = notification_result.canonicalized_params.len(),
-        payload_type = ?get_payload_type_name(&payload.payload),
-        "Notification processed and saved successfully"
-    );
+    // Enhanced logging with spatial information
+    if let Some(spatial_metadata) = &notification_result.spatial_metadata {
+        info!(
+            topic = %notification_result.topic,
+            event_type = %notification_result.event_type,
+            param_count = notification_result.canonicalized_params.len(),
+            payload_type = ?get_payload_type_name(&payload.payload),
+            bounding_box = %spatial_metadata.bounding_box,
+            "Notification with spatial data processed and saved successfully"
+        );
+    } else {
+        info!(
+            topic = %notification_result.topic,
+            event_type = %notification_result.event_type,
+            param_count = notification_result.canonicalized_params.len(),
+            payload_type = ?get_payload_type_name(&payload.payload),
+            "Notification processed and saved successfully"
+        );
+    }
 
     HttpResponse::Ok().json(response)
 }

@@ -1,3 +1,4 @@
+use crate::notification::spatial::SpatialMetadata;
 use serde::Serialize;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -152,4 +153,6 @@ pub struct ProcessingResult {
     pub topic: String,
     /// All request parameters after validation and canonicalization
     pub canonicalized_params: HashMap<String, String>,
+    /// Optional spatial metadata extracted from polygon fields
+    pub spatial_metadata: Option<SpatialMetadata>,
 }

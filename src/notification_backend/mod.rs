@@ -4,6 +4,7 @@ pub mod replay;
 
 pub use jetstream::backend::JetStreamBackend;
 pub use jetstream::config::JetStreamConfig;
+use std::collections::HashMap;
 
 use anyhow::Result;
 use async_trait::async_trait;
@@ -26,6 +27,8 @@ pub struct NotificationMessage {
     pub payload: String,
     /// Message timestamp from backend
     pub timestamp: Option<DateTime<Utc>>,
+    /// Optional metadata
+    pub metadata: Option<HashMap<String, String>>,
 }
 
 /// Trait defining the interface for notification backends
@@ -35,6 +38,12 @@ pub struct NotificationMessage {
 #[async_trait]
 pub trait NotificationBackend: Send + Sync {
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()>;
+    async fn put_message_with_headers(
+        &self,
+        topic: &str,
+        headers: Option<HashMap<String, String>>,
+        payload: String,
+    ) -> Result<()>;
     async fn wipe_stream(&self, stream_name: &str) -> Result<()>;
     async fn wipe_all(&self) -> Result<()>;
     async fn get_messages_batch(

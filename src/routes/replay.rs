@@ -10,10 +10,6 @@ use tracing::info;
 use tracing_actix_web::RequestId;
 
 /// Replay endpoint handler for historical message streaming
-///
-/// Processes replay requests and establishes SSE streaming for historical notifications only.
-/// Validates request parameters and sets up replay-only streaming that terminates after
-/// historical data is delivered.
 #[tracing::instrument(
     skip(notification_request, notification_backend, shutdown),
     fields(
@@ -30,7 +26,6 @@ pub async fn replay(
     shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
 ) -> HttpResponse {
-    // Process request using shared processor
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,
         request_id,
@@ -40,7 +35,6 @@ pub async fn replay(
         Err(e) => return validation_error_response("Replay Request", e),
     };
 
-    // Update tracing context
     tracing::Span::current().record("event_type", &context.event_type);
     if let Some(id) = context.from_id {
         tracing::Span::current().record("from_id", id);
@@ -56,13 +50,16 @@ pub async fn replay(
         "Starting replay-only SSE stream"
     );
 
-    // Create replay-only stream
+    // Pass canonicalized params for downstream filtering
+    let filtering_params = Arc::new(context.canonicalized_params.clone());
+
     match create_replay_only_stream(
         context.topic.clone(),
         notification_backend.get_ref().clone(),
         context.from_id,
         context.from_date,
         shutdown.clone(),
+        filtering_params,
     )
     .await
     {

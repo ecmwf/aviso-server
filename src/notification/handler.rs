@@ -41,10 +41,11 @@ impl NotificationHandler {
         &self,
         event_type: &str,
         request_params: &HashMap<String, String>,
+        payload: &Option<serde_json::Value>,
         operation: OperationType,
     ) -> Result<ProcessingResult> {
         let processor = NotificationProcessor::new(&self.registry);
-        processor.process_request(event_type, request_params, operation)
+        processor.process_request(event_type, request_params, payload, operation)
     }
 
     /// Get all request keys defined in the schema for a specific event type
@@ -80,8 +81,9 @@ pub fn extract_aviso_notification(
     let notification_handler =
         NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
 
+    // Add None for payload parameter since CloudEvent data is already extracted
     let mut processing_result =
-        notification_handler.process_request(&event_type, &request_params, operation)?;
+        notification_handler.process_request(&event_type, &request_params, &None, operation)?;
 
     processing_result.event_type = event_type;
 
