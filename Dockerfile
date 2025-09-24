@@ -1,7 +1,7 @@
 ###############################
 # Stage 1: Prepare Cargo Chef Recipe
 ###############################
-FROM rust:1.87-slim-bookworm AS chef
+FROM rust:1.90-slim-bookworm AS chef
 # Install cargo-chef (locked version for reproducibility)
 RUN cargo install cargo-chef --locked
 # Install build tools (openssl, pkg-config, build-essential, etc.)
@@ -15,7 +15,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 ###############################
 # Stage 2: Cache Dependencies
 ###############################
-FROM rust:1.87-slim-bookworm AS cacher
+FROM rust:1.90-slim-bookworm AS cacher
 RUN cargo install cargo-chef --locked
 RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
@@ -27,7 +27,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 ###############################
 # Stage 3: Build the Project
 ###############################
-FROM rust:1.87-slim-bookworm AS builder
+FROM rust:1.90-slim-bookworm AS builder
 RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # Copy full source code
