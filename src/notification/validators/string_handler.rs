@@ -35,15 +35,15 @@ impl StringHandler {
         }
 
         // Check maximum length constraint if specified
-        if let Some(max_len) = max_length {
-            if value.len() > max_len {
-                bail!(
-                    "Field '{}' exceeds maximum length of {} characters, got: {}",
-                    field_name,
-                    max_len,
-                    value.len()
-                );
-            }
+        if let Some(max_len) = max_length
+            && value.len() > max_len
+        {
+            bail!(
+                "Field '{}' exceeds maximum length of {} characters, got: {}",
+                field_name,
+                max_len,
+                value.len()
+            );
         }
 
         // String is valid, return as-is (no canonicalization needed)

@@ -238,15 +238,15 @@ fn find_event_type_from_topic_base(topic_base: &str) -> Result<String> {
 
     // Search through all schemas to find matching topic base
     for (event_type, event_schema) in schema_map {
-        if let Some(topic_config) = &event_schema.topic {
-            if topic_config.base == topic_base {
-                debug!(
-                    topic_base = %topic_base,
-                    event_type = %event_type,
-                    "Found event type for topic base using schema"
-                );
-                return Ok(event_type.clone());
-            }
+        if let Some(topic_config) = &event_schema.topic
+            && topic_config.base == topic_base
+        {
+            debug!(
+                topic_base = %topic_base,
+                event_type = %event_type,
+                "Found event type for topic base using schema"
+            );
+            return Ok(event_type.clone());
         }
     }
 

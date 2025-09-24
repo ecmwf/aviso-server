@@ -51,7 +51,7 @@ impl PolygonHandler {
 
         let coord_parts: Vec<&str> = trimmed.split(',').collect();
 
-        if coord_parts.len() % 2 != 0 {
+        if !coord_parts.len().is_multiple_of(2) {
             bail!("Polygon coordinates must be in pairs (lat,lon)");
         }
 
