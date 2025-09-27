@@ -1,8 +1,7 @@
 use crate::error::{sse_error_response, validation_error_response};
-use crate::handlers::{StreamingRequestProcessor, ValidationConfig};
+use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
 use crate::notification_backend::NotificationBackend;
 use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
-use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -16,7 +15,7 @@ use tracing_actix_web::RequestId;
 /// historical replay functionality when from_id or from_date parameters are provided.
 /// Applies spatial and field filtering to ensure only matching notifications are streamed.
 #[tracing::instrument(
-    skip(notification_request, notification_backend, shutdown),
+    skip(notification_backend, shutdown),
     fields(
         event_type = tracing::field::Empty,
         request_id = %request_id,
@@ -26,11 +25,16 @@ use tracing_actix_web::RequestId;
     )
 )]
 pub async fn watch(
-    notification_request: web::Json<NotificationRequest>,
+    body: web::Bytes,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
 ) -> HttpResponse {
+    // Parse and validate request structure
+    let notification_request = match parse_and_validate_request(&body) {
+        Ok(req) => req,
+        Err(e) => return validation_error_response("Watch Request", e),
+    };
     // Process request using shared processor
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,
@@ -51,7 +55,7 @@ pub async fn watch(
     }
 
     // Prepare filtering parameters - use ORIGINAL request parameters for spatial filtering
-    let original_request_params = Arc::new(notification_request.request.clone());
+    let original_request_params = Arc::new(notification_request.identifier.clone());
 
     // Determine streaming mode and create appropriate stream
     let sse_response = if context.from_id.is_some() || context.from_date.is_some() {
