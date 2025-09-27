@@ -2,25 +2,30 @@
 //!
 //! This module provides endpoints for querying the notification schema
 //! configuration, allowing clients to discover available event types,
-//! validation rules, and field requirements.
-use crate::configuration::Settings;
+//! validation rules, and field requirements. Internal configuration
+//! details like topic structure are excluded from API responses.
+
+use crate::configuration::{ApiEventSchema, Settings};
 use actix_web::{HttpResponse, web};
 use serde_json::json;
+use std::collections::HashMap;
 use tracing::info;
 
 /// Get the notification schema configuration
 ///
-/// Returns the complete notification schema configuration including:
+/// Returns a filtered notification schema configuration including:
 /// - All event types (dissemination, mars, etc.)
-/// - Validation rules for each field
+/// - Validation rules for each identifier field
 /// - Required vs optional fields
-/// - Topic configuration
 /// - Payload configuration
 ///
+/// Note: Topic and endpoint configuration are excluded from the response
+/// as they are internal implementation details.
+///
 /// # Returns
-/// * `200 OK` - Schema configuration with metadata
+/// * `200 OK` - Filtered schema configuration with metadata
 ///   - `status`: "success"
-///   - `schema`: Complete schema configuration
+///   - `schema`: Schema configuration (without topic/endpoint fields)
 ///   - `event_types`: List of available event type names
 ///   - `total_schemas`: Number of configured schemas
 ///   - `message`: Additional information (when no schema configured)
@@ -31,17 +36,23 @@ pub async fn get_notification_schema() -> HttpResponse {
 
     match schema {
         Some(schema_map) => {
+            // Convert to API-friendly format (excluding topic and endpoint)
+            let api_schema: HashMap<String, ApiEventSchema> = schema_map
+                .iter()
+                .map(|(key, value)| (key.clone(), ApiEventSchema::from(value)))
+                .collect();
+
             info!(
-                schema_count = schema_map.len(),
-                event_types = ?schema_map.keys().collect::<Vec<_>>(),
-                "Returning notification schema configuration"
+                schema_count = api_schema.len(),
+                event_types = ?api_schema.keys().collect::<Vec<_>>(),
+                "Returning filtered notification schema configuration"
             );
 
             HttpResponse::Ok().json(json!({
                 "status": "success",
-                "schema": schema_map,
-                "event_types": schema_map.keys().collect::<Vec<_>>(),
-                "total_schemas": schema_map.len()
+                "schema": api_schema,
+                "event_types": api_schema.keys().collect::<Vec<_>>(),
+                "total_schemas": api_schema.len()
             }))
         }
         None => {
@@ -60,14 +71,15 @@ pub async fn get_notification_schema() -> HttpResponse {
 
 /// Get schema for a specific event type
 ///
-/// Returns the schema configuration for a single event type,
+/// Returns the filtered schema configuration for a single event type,
 /// useful for clients that only need specific event information.
+/// Topic and endpoint configuration are excluded from the response.
 ///
 /// # Arguments
 /// * `event_type` - Path parameter specifying the event type
 ///
 /// # Returns
-/// * `200 OK` - Event type schema found
+/// * `200 OK` - Event type schema found (filtered)
 /// * `404 Not Found` - Event type not configured
 #[tracing::instrument]
 pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
@@ -77,16 +89,19 @@ pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
     match schema {
         Some(schema_map) => {
             if let Some(event_schema) = schema_map.get(&event_type) {
+                // Convert to API-friendly format
+                let api_schema = ApiEventSchema::from(event_schema);
+
                 info!(
                     event_type = %event_type,
-                    field_count = event_schema.identifier.len(),
-                    "Returning schema for specific event type"
+                    field_count = api_schema.identifier.len(),
+                    "Returning filtered schema for specific event type"
                 );
 
                 HttpResponse::Ok().json(json!({
                     "status": "success",
                     "event_type": event_type,
-                    "schema": event_schema
+                    "schema": api_schema
                 }))
             } else {
                 HttpResponse::NotFound().json(json!({
