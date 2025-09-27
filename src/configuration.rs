@@ -111,6 +111,28 @@ pub struct EventSchema {
     pub identifier: HashMap<String, Vec<ValidationRules>>,
 }
 
+/// Schema representation for API responses (excluding internal fields)
+///
+/// This structure provides a client-facing view of the event schema,
+/// containing only the fields necessary for request validation and construction.
+/// Internal fields like topic configuration are excluded to simplify the API.
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct ApiEventSchema {
+    /// Payload validation rules and requirements
+    pub payload: Option<PayloadConfig>,
+    /// Identifier field validation rules and requirements
+    pub identifier: HashMap<String, Vec<ValidationRules>>,
+}
+
+impl From<&EventSchema> for ApiEventSchema {
+    fn from(schema: &EventSchema) -> Self {
+        Self {
+            payload: schema.payload.clone(),
+            identifier: schema.identifier.clone(),
+        }
+    }
+}
+
 // LOGGING SETTINGS
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct LoggingSettings {
