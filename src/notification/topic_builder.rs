@@ -143,7 +143,7 @@ mod tests {
             payload: None,
             topic: Some(topic_config),
             endpoint: None,
-            request: HashMap::new(),
+            identifier: HashMap::new(),
         };
 
         let topic =
@@ -167,7 +167,7 @@ mod tests {
             payload: None,
             topic: Some(topic_config),
             endpoint: None,
-            request: HashMap::new(),
+            identifier: HashMap::new(),
         };
 
         let result = TopicBuilder::build_topic_with_schema("dissemination", &schema, &params);
@@ -225,7 +225,7 @@ mod tests {
             payload: None,
             topic: Some(topic_config),
             endpoint: None,
-            request: HashMap::new(),
+            identifier: HashMap::new(),
         };
 
         let topic = TopicBuilder::build_topic_with_schema("test", &schema, &params).unwrap();

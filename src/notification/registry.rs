@@ -81,7 +81,7 @@ impl NotificationRegistry {
         self.schemas.keys().cloned().collect()
     }
 
-    /// Get all request field names for a specific event type
+    /// Get all identifier field names for a specific event type
     ///
     /// # Arguments
     /// * `event_type` - The event type to query
@@ -91,16 +91,16 @@ impl NotificationRegistry {
     /// * `Err(anyhow::Error)` - Only if schema exists but is malformed
     ///
     /// For unknown event types, returns an empty list (generic processing).
-    pub fn get_request_keys(&self, event_type: &str) -> Result<Vec<String>> {
+    pub fn get_identifier_keys(&self, event_type: &str) -> Result<Vec<String>> {
         if let Some(schema) = self.get_schema(event_type) {
-            Ok(schema.request.keys().cloned().collect())
+            Ok(schema.identifier.keys().cloned().collect())
         } else {
             // If no schema exists, return empty list for generic handling
             Ok(Vec::new())
         }
     }
 
-    /// Get required request field names for a specific event type
+    /// Get required identifier field names for a specific event type
     ///
     /// # Arguments
     /// * `event_type` - The event type to query
@@ -111,10 +111,10 @@ impl NotificationRegistry {
     ///
     /// A field is considered required if any of its validation rules
     /// has `required: true`.
-    pub fn get_required_request_keys(&self, event_type: &str) -> Result<Vec<String>> {
+    pub fn get_required_identifier_keys(&self, event_type: &str) -> Result<Vec<String>> {
         if let Some(schema) = self.get_schema(event_type) {
             let required_keys: Vec<String> = schema
-                .request
+                .identifier
                 .iter()
                 .filter_map(|(key, rules)| {
                     // Check if any rule marks this field as required

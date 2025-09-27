@@ -48,14 +48,14 @@ impl NotificationHandler {
         processor.process_request(event_type, request_params, payload, operation)
     }
 
-    /// Get all request keys defined in the schema for a specific event type
-    pub fn get_request_keys(&self, event_type: &str) -> Result<Vec<String>> {
-        self.registry.get_request_keys(event_type)
+    /// Get all identifier keys defined in the schema for a specific event type
+    pub fn get_identifier_keys(&self, event_type: &str) -> Result<Vec<String>> {
+        self.registry.get_identifier_keys(event_type)
     }
 
-    /// Get only the required request keys for a specific event type
-    pub fn get_required_request_keys(&self, event_type: &str) -> Result<Vec<String>> {
-        self.registry.get_required_request_keys(event_type)
+    /// Get only the required identifier keys for a specific event type
+    pub fn get_required_identifier_keys(&self, event_type: &str) -> Result<Vec<String>> {
+        self.registry.get_required_identifier_keys(event_type)
     }
 
     /// Get the complete schema configuration
@@ -108,14 +108,14 @@ fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<Str
         .ok_or_else(|| anyhow::anyhow!("Missing required 'event' field in Aviso data"))?
         .to_string();
 
-    let request_obj = data
-        .get("request")
+    let identifier_obj = data
+        .get("identifier")
         .and_then(|v| v.as_object())
         .ok_or_else(|| anyhow::anyhow!("Missing required 'request' field in Aviso data"))?;
 
     // Extract request parameters - most should already be strings
     let mut request_params = HashMap::new();
-    for (key, value) in request_obj {
+    for (key, value) in identifier_obj {
         let string_value = match value.as_str() {
             Some(s) => s.to_string(),
             None => {
@@ -177,7 +177,7 @@ mod tests {
             "source": "/test",
             "type": "int.ecmwf.aviso.notify",
             "data": {
-                "request": {
+                "identifier": {
                     "class": "od"
                 }
                 // Missing "event" field
@@ -220,7 +220,7 @@ mod tests {
             "type": "int.ecmwf.aviso.notify",
             "data": {
                 "event": "dissemination",
-                "request": {
+                "identifier": {
                     "class": "od"
                 },
                 "payload": "test-payload",
@@ -245,7 +245,7 @@ mod tests {
             "type": "int.ecmwf.aviso.notify",
             "data": {
                 "event": "dissemination",
-                "request": {
+                "identifier": {
                     "class": "od",
                     "step": 12, // Number value
                     "active": true // Boolean value

@@ -83,7 +83,7 @@ impl StreamingRequestProcessor {
 
         let notification_result = notification_handler.process_request(
             &request.event_type,
-            &request.request,
+            &request.identifier,
             &None, // payload parameter as None since this is for request processing
             config.operation_type,
         )?;
