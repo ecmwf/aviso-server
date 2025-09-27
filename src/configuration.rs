@@ -108,7 +108,7 @@ pub struct EventSchema {
     pub payload: Option<PayloadConfig>,
     pub topic: Option<TopicConfig>,
     pub endpoint: Option<TopicConfig>,
-    pub request: HashMap<String, Vec<ValidationRules>>,
+    pub identifier: HashMap<String, Vec<ValidationRules>>,
 }
 
 // LOGGING SETTINGS
