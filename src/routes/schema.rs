@@ -79,7 +79,7 @@ pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
             if let Some(event_schema) = schema_map.get(&event_type) {
                 info!(
                     event_type = %event_type,
-                    field_count = event_schema.request.len(),
+                    field_count = event_schema.identifier.len(),
                     "Returning schema for specific event type"
                 );
 
