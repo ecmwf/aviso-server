@@ -38,7 +38,7 @@ pub async fn notify(
     };
 
     let event_type = &payload.event_type;
-    let request_params = &payload.request;
+    let request_params = &payload.identifier;
 
     tracing::Span::current().record("event_type", event_type);
 
