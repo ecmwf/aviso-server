@@ -6,6 +6,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tracing_actix_web::TracingLogger;
 
+use crate::openapi::ApiDoc;
 use crate::routes::admin::{wipe_all, wipe_stream};
 use crate::routes::home::homepage;
 use crate::routes::replay::replay;
@@ -17,6 +18,8 @@ use crate::{
     routes::{health_check::health_check, notify::notify},
 };
 use actix_files as fs;
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
 
 #[allow(dead_code)]
 pub struct Application {
@@ -144,6 +147,10 @@ pub fn run(
     let server = HttpServer::new(move || {
         App::new()
             .wrap(TracingLogger::default())
+            .service(
+                SwaggerUi::new("/swagger-ui/{_:.*}")
+                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+            )
             .configure(configure_ops_routes)
             .configure(configure_api_v1)
             .app_data(web::Data::new(notification_backend.clone()))
