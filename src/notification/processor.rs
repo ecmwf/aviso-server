@@ -7,11 +7,14 @@
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 
-use crate::configuration::{EventSchema, ValidationRules};
+use crate::configuration::EventSchema;
 use crate::notification::spatial::SpatialMetadata;
 use crate::notification::topic_builder::TopicBuilder;
-use crate::notification::validators::*;
 use crate::notification::{NotificationRegistry, OperationType, ProcessingResult};
+use aviso_validators::ValidationRules;
+use aviso_validators::{
+    DateHandler, EnumHandler, ExpverHandler, IntHandler, PolygonHandler, StringHandler, TimeHandler,
+};
 
 /// Main processor for notification validation and canonicalization
 ///
@@ -340,7 +343,8 @@ impl<'a> NotificationProcessor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{EventSchema, PayloadConfig, TopicConfig, ValidationRules};
+    use crate::configuration::{EventSchema, PayloadConfig, TopicConfig};
+    use aviso_validators::ValidationRules;
     use std::collections::HashMap;
 
     fn create_test_schema() -> EventSchema {

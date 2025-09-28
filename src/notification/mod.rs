@@ -11,7 +11,6 @@ pub mod spatial;
 pub mod topic_builder;
 pub mod topic_parser;
 pub mod types;
-pub mod validators;
 pub mod wildcard_matcher;
 
 pub use handler::NotificationHandler;

@@ -1,6 +1,7 @@
 use crate::notification::ProcessingResult;
 use crate::notification_backend::NotificationBackend;
 use anyhow::Result;
+use aviso_validators::PolygonHandler;
 use std::collections::HashMap;
 use tracing::{debug, info};
 
@@ -96,9 +97,7 @@ fn enhance_payload_with_polygon(
         .canonicalized_params
         .iter()
         .find(|(_, value)| value.starts_with('(') && value.ends_with(')'))
-        .map(|(_, value)| {
-            crate::notification::validators::PolygonHandler::parse_polygon_coordinates(value)
-        })
+        .map(|(_, value)| PolygonHandler::parse_polygon_coordinates(value))
         .transpose()?;
 
     if let Some(coordinates) = polygon_coordinates {
