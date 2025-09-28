@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_aux::field_attributes::deserialize_number_from_string;
 use std::collections::HashMap;
 use std::sync::OnceLock;
+use utoipa::ToSchema;
 
 // WATCH RELATED SETTINGS
 /// Configuration for the watch endpoint SSE streaming functionality
@@ -42,12 +43,13 @@ impl Default for WatchEndpointSettings {
 }
 
 // NOTIFICATION SETTINGS
-#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+#[derive(serde::Deserialize, Serialize, Clone, Debug, ToSchema)]
 pub struct PayloadConfig {
     /// Allowed payload types for this event type
     #[serde(rename = "type")]
     pub allowed_types: Vec<String>,
     /// Whether payload is required
+    #[schema(example = true)]
     pub required: bool,
 }
 
@@ -71,7 +73,7 @@ pub struct EventSchema {
 /// This structure provides a client-facing view of the event schema,
 /// containing only the fields necessary for request validation and construction.
 /// Internal fields like topic configuration are excluded to simplify the API.
-#[derive(Deserialize, Serialize, Clone, Debug)]
+#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
 pub struct ApiEventSchema {
     /// Payload validation rules and requirements
     pub payload: Option<PayloadConfig>,
