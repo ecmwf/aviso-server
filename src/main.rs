@@ -68,7 +68,14 @@ async fn main() -> Result<(), std::io::Error> {
         shutdown_signal.cancel();
     });
 
+    let host = configuration.application.host.clone();
+    let port = configuration.application.port;
     // pass the token into the application builder
     let application = Application::build(configuration, shutdown).await?;
+    info!(
+        port = application.port(),
+        swagger_url = format!("{}:{}/swagger-ui/", host, port),
+        "Server starting with OpenAPI documentation"
+    );
     application.run_until_stopped().await
 }
