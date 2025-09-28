@@ -17,10 +17,12 @@ RUN cargo chef prepare --recipe-path recipe.json
 ###############################
 FROM rust:1.90-slim-bookworm AS cacher
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # Copy the dependency recipe from the chef stage
 COPY --from=chef /app/recipe.json recipe.json
+# Copy validators crate directory structure
+COPY --from=chef /app/aviso-validators /app/aviso-validators
 # Build the dependency layers (release profile)
 RUN cargo chef cook --release --recipe-path recipe.json
 
@@ -28,7 +30,7 @@ RUN cargo chef cook --release --recipe-path recipe.json
 # Stage 3: Build the Project
 ###############################
 FROM rust:1.90-slim-bookworm AS builder
-RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 # Copy full source code
 COPY . .
