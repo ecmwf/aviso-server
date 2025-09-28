@@ -1,13 +1,13 @@
 //! OpenAPI documentation configuration for the Aviso notification service
 
-use utoipa::OpenApi;
+use crate::routes::admin;
 use crate::routes::health_check;
 use crate::routes::home;
-use crate::routes::schema;
 use crate::routes::notify;
-use crate::routes::watch;
 use crate::routes::replay;
-use crate::routes::admin;
+use crate::routes::schema;
+use crate::routes::watch;
+use utoipa::OpenApi;
 
 /// OpenAPI specification for the Aviso notification service
 #[derive(OpenApi)]

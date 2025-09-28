@@ -149,7 +149,7 @@ pub fn run(
             .wrap(TracingLogger::default())
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
-                    .url("/api-docs/openapi.json", ApiDoc::openapi())
+                    .url("/api-docs/openapi.json", ApiDoc::openapi()),
             )
             .configure(configure_ops_routes)
             .configure(configure_api_v1)
