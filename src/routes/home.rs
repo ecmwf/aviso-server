@@ -3,6 +3,14 @@ use actix_web::{HttpResponse, Result};
 use std::fs;
 use std::path::PathBuf;
 
+#[utoipa::path(
+    get,
+    path = "/",
+    tag = "general",
+    responses(
+        (status = 200, description = "Homepage HTML content", content_type = "text/html")
+    )
+)]
 pub async fn homepage() -> Result<HttpResponse> {
     let static_files_path = &Settings::get_global_application_settings().static_files_path;
     let mut index_path = PathBuf::from(static_files_path);

@@ -2,6 +2,7 @@ use crate::error::{sse_error_response, validation_error_response};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
 use crate::notification_backend::NotificationBackend;
 use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
+use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -14,6 +15,17 @@ use tracing_actix_web::RequestId;
 /// Validates request parameters and sets up live notification streaming with optional
 /// historical replay functionality when from_id or from_date parameters are provided.
 /// Applies spatial and field filtering to ensure only matching notifications are streamed.
+#[utoipa::path(
+    post,
+    path = "/api/v1/watch",
+    tag = "streaming",
+    request_body = NotificationRequest,
+    responses(
+        (status = 200, description = "SSE stream established successfully", content_type = "text/event-stream"),
+        (status = 400, description = "Invalid request parameters"),
+        (status = 500, description = "Failed to establish stream")
+    )
+)]
 #[tracing::instrument(
     skip(notification_backend, shutdown),
     fields(

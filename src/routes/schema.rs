@@ -29,6 +29,7 @@ use tracing::info;
 ///   - `event_types`: List of available event type names
 ///   - `total_schemas`: Number of configured schemas
 ///   - `message`: Additional information (when no schema configured)
+#[utoipa::path(get, path = "/api/v1/schema", tag = "schema")]
 #[tracing::instrument]
 pub async fn get_notification_schema() -> HttpResponse {
     // Get the global notification schema using zero-allocation access
@@ -81,6 +82,14 @@ pub async fn get_notification_schema() -> HttpResponse {
 /// # Returns
 /// * `200 OK` - Event type schema found (filtered)
 /// * `404 Not Found` - Event type not configured
+#[utoipa::path(
+    get,
+    path = "/api/v1/schema/{event_type}",
+    tag = "schema",
+    params(
+        ("event_type" = String, Path, description = "Event type identifier")
+    ),
+)]
 #[tracing::instrument]
 pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
     let event_type = path.into_inner();
