@@ -1,8 +1,9 @@
 use crate::notification_backend::NotificationMessage;
 use serde::{Deserialize, Serialize};
+use utoipa::ToSchema;
 
 /// Response structure for successful notification processing
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, ToSchema)]
 pub struct NotificationResponse {
     pub status: String,
     pub request_id: String,
