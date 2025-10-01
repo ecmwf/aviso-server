@@ -42,7 +42,7 @@ pub struct NotificationRequest {
     /// Event type for schema lookup and validation
     pub event_type: String,
     /// Request parameters to validate against schema
-    pub request: HashMap<String, String>,
+    pub identifier: HashMap<String, String>,
     /// Optional message ID for /watch endpoint correlation
     #[serde(default)]
     pub from_id: Option<String>,
@@ -57,7 +57,13 @@ pub struct NotificationRequest {
 impl NotificationRequest {
     /// Get all valid field names for this struct
     pub fn all_field_names() -> Vec<&'static str> {
-        vec!["event_type", "request", "from_id", "from_date", "payload"]
+        vec![
+            "event_type",
+            "identifier",
+            "from_id",
+            "from_date",
+            "payload",
+        ]
     }
 
     /// Get all valid field names as strings

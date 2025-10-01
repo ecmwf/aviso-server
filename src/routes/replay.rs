@@ -1,8 +1,7 @@
 use crate::error::{sse_error_response, validation_error_response};
-use crate::handlers::{StreamingRequestProcessor, ValidationConfig};
+use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
 use crate::notification_backend::NotificationBackend;
 use crate::sse::create_replay_only_stream;
-use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -11,7 +10,7 @@ use tracing_actix_web::RequestId;
 
 /// Replay endpoint handler for historical message streaming
 #[tracing::instrument(
-    skip(notification_request, notification_backend, shutdown),
+    skip(notification_backend, shutdown),
     fields(
         event_type = tracing::field::Empty,
         request_id = %request_id,
@@ -21,11 +20,16 @@ use tracing_actix_web::RequestId;
     )
 )]
 pub async fn replay(
-    notification_request: web::Json<NotificationRequest>,
+    body: web::Bytes,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
 ) -> HttpResponse {
+    // Parse and validate request structure
+    let notification_request = match parse_and_validate_request(&body) {
+        Ok(req) => req,
+        Err(e) => return validation_error_response("Replay Request", e),
+    };
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,
         request_id,

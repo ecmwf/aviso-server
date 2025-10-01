@@ -101,27 +101,25 @@ impl CloudEventCreator {
     /// * `Err(anyhow::Error)` - Schema lookup or payload parsing failed
     fn build_cloud_event_data(
         &self,
-        request_params: &HashMap<String, String>,
+        identifier_params: &HashMap<String, String>, // Changed parameter name
         payload: &str,
         event_type: &str,
     ) -> Result<serde_json::Value> {
-        // Check if payload is required according to schema
+        //
         let include_payload = self.is_payload_required(event_type)?;
 
         if include_payload {
-            // Parse payload back to JSON for CloudEvent data field
             let payload_json = self
                 .parse_payload_to_json(payload)
                 .context("Failed to parse notification payload as JSON")?;
 
             Ok(json!({
-                "request": request_params,
+                "identifier": identifier_params,  // Changed from "request"
                 "payload": payload_json
             }))
         } else {
-            // Payload not required by schema, exclude it
             Ok(json!({
-                "request": request_params
+                "identifier": identifier_params  // Changed from "request"
             }))
         }
     }

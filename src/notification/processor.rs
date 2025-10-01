@@ -112,7 +112,7 @@ impl<'a> NotificationProcessor<'a> {
         let mut has_polygon_field = false;
 
         // For notify operations, ALL schema fields must be present and valid
-        for (field_name, rules) in &schema.request {
+        for (field_name, rules) in &schema.identifier {
             let value = request_params.get(field_name).context(format!(
                 "Required field '{}' missing for notify operation",
                 field_name
@@ -186,7 +186,7 @@ impl<'a> NotificationProcessor<'a> {
     ) -> Result<HashMap<String, String>> {
         let mut canonicalized = HashMap::new();
 
-        for (field_name, rules) in &schema.request {
+        for (field_name, rules) in &schema.identifier {
             let is_required = rules.iter().any(|rule| rule.is_required());
 
             if let Some(value) = request_params.get(field_name) {
@@ -221,7 +221,7 @@ impl<'a> NotificationProcessor<'a> {
     ) -> Result<HashMap<String, String>> {
         let mut canonicalized = HashMap::new();
 
-        for (field_name, rules) in &schema.request {
+        for (field_name, rules) in &schema.identifier {
             let is_required = rules.iter().any(|rule| rule.is_required());
 
             if let Some(value) = request_params.get(field_name) {
@@ -344,22 +344,22 @@ mod tests {
     use std::collections::HashMap;
 
     fn create_test_schema() -> EventSchema {
-        let mut request = HashMap::new();
-        request.insert(
+        let mut identifier = HashMap::new();
+        identifier.insert(
             "class".to_string(),
             vec![ValidationRules::StringHandler {
                 max_length: Some(2),
                 required: true,
             }],
         );
-        request.insert(
+        identifier.insert(
             "destination".to_string(),
             vec![ValidationRules::StringHandler {
                 max_length: None,
                 required: true,
             }],
         );
-        request.insert(
+        identifier.insert(
             "optional_field".to_string(),
             vec![ValidationRules::StringHandler {
                 max_length: None,
@@ -378,24 +378,24 @@ mod tests {
                 key_order: vec!["class".to_string(), "destination".to_string()],
             }),
             endpoint: None,
-            request,
+            identifier,
         }
     }
 
     fn create_polygon_test_schema() -> EventSchema {
-        let mut request = HashMap::new();
-        request.insert(
+        let mut identifier = HashMap::new();
+        identifier.insert(
             "date".to_string(),
             vec![ValidationRules::DateHandler {
                 canonical_format: "%Y%m%d".to_string(),
                 required: false,
             }],
         );
-        request.insert(
+        identifier.insert(
             "time".to_string(),
             vec![ValidationRules::TimeHandler { required: false }],
         );
-        request.insert(
+        identifier.insert(
             "polygon".to_string(),
             vec![ValidationRules::PolygonHandler { required: true }],
         );
@@ -411,7 +411,7 @@ mod tests {
                 key_order: vec!["date".to_string(), "time".to_string()],
             }),
             endpoint: None,
-            request,
+            identifier,
         }
     }
 
@@ -741,14 +741,14 @@ mod tests {
 
     #[test]
     fn test_validation_rule_not_found() {
-        let mut request = HashMap::new();
-        request.insert("field".to_string(), vec![]); // Empty rules
+        let mut identifier = HashMap::new();
+        identifier.insert("field".to_string(), vec![]); // Empty rules
 
         let schema = EventSchema {
             payload: None,
             topic: None,
             endpoint: None,
-            request,
+            identifier,
         };
 
         let mut schemas = HashMap::new();
@@ -775,15 +775,15 @@ mod tests {
     #[test]
     fn test_payload_extraction_optional_missing() {
         // Create a schema with optional payload configuration
-        let mut request = HashMap::new();
-        request.insert(
+        let mut identifier = HashMap::new();
+        identifier.insert(
             "class".to_string(),
             vec![ValidationRules::StringHandler {
                 max_length: Some(2),
                 required: true,
             }],
         );
-        request.insert(
+        identifier.insert(
             "destination".to_string(),
             vec![ValidationRules::StringHandler {
                 max_length: None,
@@ -802,7 +802,7 @@ mod tests {
                 key_order: vec!["class".to_string(), "destination".to_string()],
             }),
             endpoint: None,
-            request,
+            identifier,
         };
 
         let mut schemas = HashMap::new();
