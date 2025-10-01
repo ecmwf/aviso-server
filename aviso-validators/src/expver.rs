@@ -80,7 +80,7 @@ impl ExpverHandler {
     /// # Numeric Canonicalization
     /// Numeric experiment versions are zero-padded to exactly 4 digits:
     /// - 1 → "0001"
-    /// - 42 → "0042"  
+    /// - 42 → "0042"
     /// - 123 → "0123"
     /// - 9999 → "9999"
     ///

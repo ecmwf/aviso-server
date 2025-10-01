@@ -5,7 +5,7 @@
 //! It implements a hybrid approach where the backend handles coarse filtering
 //! and the application handles fine-grained pattern matching.
 
-use crate::notification::validators::PolygonHandler;
+use aviso_validators::polygon::PolygonHandler;
 use geo::{BoundingRect, Intersects};
 use std::collections::HashMap;
 use tracing::debug;

@@ -83,7 +83,7 @@ impl DateHandler {
     ///
     /// # Supported Formats
     /// 1. **ISO 8601**: YYYY-MM-DD (e.g., "2025-12-25")
-    /// 2. **Compact**: YYYYMMDD (e.g., "20251225")  
+    /// 2. **Compact**: YYYYMMDD (e.g., "20251225")
     /// 3. **Day-of-year**: YYYY-DDD (e.g., "2025-359")
     fn parse_date(value: &str, field_name: &str) -> Result<NaiveDate> {
         // Try ISO 8601 format first (YYYY-MM-DD)

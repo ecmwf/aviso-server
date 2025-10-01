@@ -1,3 +1,4 @@
+use aviso_validators::ValidationRules;
 use dirs;
 use serde::{Deserialize, Serialize};
 use serde_aux::field_attributes::deserialize_number_from_string;
@@ -55,52 +56,6 @@ pub struct TopicConfig {
     pub base: String,
     pub separator: String,
     pub key_order: Vec<String>,
-}
-
-#[derive(Deserialize, Serialize, Clone, Debug)]
-#[serde(tag = "type")]
-pub enum ValidationRules {
-    StringHandler {
-        max_length: Option<usize>,
-        required: bool,
-    },
-    DateHandler {
-        canonical_format: String,
-        required: bool,
-    },
-    EnumHandler {
-        values: Vec<String>,
-        required: bool,
-    },
-    ExpverHandler {
-        default: Option<String>,
-        required: bool,
-    },
-    IntHandler {
-        range: Option<[i64; 2]>,
-        required: bool,
-    },
-    TimeHandler {
-        required: bool,
-    },
-    PolygonHandler {
-        required: bool,
-    },
-}
-
-impl ValidationRules {
-    /// Check if this validation rule marks a field as required
-    pub fn is_required(&self) -> bool {
-        match self {
-            ValidationRules::StringHandler { required, .. } => *required,
-            ValidationRules::DateHandler { required, .. } => *required,
-            ValidationRules::EnumHandler { required, .. } => *required,
-            ValidationRules::ExpverHandler { required, .. } => *required,
-            ValidationRules::IntHandler { required, .. } => *required,
-            ValidationRules::TimeHandler { required } => *required,
-            ValidationRules::PolygonHandler { required } => *required,
-        }
-    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
