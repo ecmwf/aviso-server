@@ -9,6 +9,17 @@ use tracing::info;
 use tracing_actix_web::RequestId;
 
 /// Replay endpoint handler for historical message streaming
+#[utoipa::path(
+    post,
+    path = "/api/v1/replay",
+    tag = "streaming",
+    request_body = crate::types::request::NotificationRequest,
+    responses(
+        (status = 200, description = "Historical replay stream established successfully", content_type = "text/event-stream"),
+        (status = 400, description = "Invalid request parameters or missing from_id/from_date"),
+        (status = 500, description = "Failed to establish replay stream")
+    )
+)]
 #[tracing::instrument(
     skip(notification_backend, shutdown),
     fields(

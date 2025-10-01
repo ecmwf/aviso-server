@@ -4,6 +4,7 @@ pub mod error;
 pub mod handlers;
 pub mod notification;
 pub mod notification_backend;
+pub mod openapi;
 pub mod routes;
 pub mod sse;
 pub mod startup;

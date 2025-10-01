@@ -6,7 +6,7 @@ use crate::handlers::{
 };
 use crate::notification::OperationType;
 use crate::notification_backend::NotificationBackend;
-use crate::types::NotificationResponse;
+use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
 use tracing::{error, info};
@@ -17,6 +17,17 @@ use tracing_actix_web::RequestId;
 /// Processes notification requests with all schema fields required.
 /// Validates request format, payload type, processes notification, and saves to backend.
 /// Now supports spatial metadata extraction for polygon fields.
+#[utoipa::path(
+    post,
+    path = "/api/v1/notification",
+    tag = "notification",
+    request_body = NotificationRequest,
+    responses(
+        (status = 200, description = "Notification processed and stored successfully", body = crate::types::NotificationResponse),
+        (status = 400, description = "Invalid request data or validation failure"),
+        (status = 500, description = "Internal server error during processing")
+    )
+)]
 #[tracing::instrument(
     skip(body, notification_backend),
     fields(

@@ -2,19 +2,30 @@ use crate::notification_backend::NotificationBackend;
 use actix_web::{HttpResponse, Result as ActixResult, web};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::ToSchema;
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 pub struct WipeStreamRequest {
     pub stream_name: String,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, ToSchema)]
 pub struct WipeResponse {
     pub success: bool,
     pub message: String,
 }
 
 /// Wipe an entire stream
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/wipe/stream",
+    tag = "admin",
+    request_body = WipeStreamRequest,
+    responses(
+        (status = 200, description = "Stream wiped successfully", body = WipeResponse),
+        (status = 500, description = "Failed to wipe stream", body = WipeResponse)
+    )
+)]
 pub async fn wipe_stream(
     backend: web::Data<Arc<dyn NotificationBackend>>,
     req: web::Json<WipeStreamRequest>,
@@ -40,6 +51,16 @@ pub async fn wipe_stream(
 }
 
 /// Wipe all data from all streams
+#[utoipa::path(
+    delete,
+    path = "/api/v1/admin/wipe/all",
+    tag = "admin",
+    responses(
+        (status = 200, description = "All data wiped successfully", body = WipeResponse),
+        (status = 500, description = "Failed to wipe all data", body = WipeResponse)
+    )
+)]
+
 pub async fn wipe_all(
     backend: web::Data<Arc<dyn NotificationBackend>>,
 ) -> ActixResult<HttpResponse> {

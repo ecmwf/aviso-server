@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use cloudevents::Event;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use utoipa::ToSchema;
 
 #[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
 #[serde(untagged)]
@@ -37,7 +38,7 @@ impl PayloadType {
 }
 
 /// Notification request structure used by both /notification and /watch endpoints
-#[derive(Debug, Deserialize, Serialize)]
+#[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct NotificationRequest {
     /// Event type for schema lookup and validation
     pub event_type: String,
@@ -48,9 +49,11 @@ pub struct NotificationRequest {
     pub from_id: Option<String>,
     /// Optional date filter for /watch endpoint
     #[serde(default)]
+    #[schema(example = "2025-09-15T12:00:00Z")]
     pub from_date: Option<String>,
     /// Payload with flexible type based on schema configuration
     #[serde(default)]
+    #[schema(value_type = Object, example = json!({"key": "value"}))]
     pub payload: Option<PayloadType>,
 }
 
