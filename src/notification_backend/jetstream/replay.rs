@@ -189,7 +189,7 @@ async fn create_pull_consumer(
 {
     use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, ReplayPolicy};
 
-    // Fix: Handle all possible u64 values in the match
+    // Handle all possible u64 values in the match
     let deliver_policy = match from_sequence {
         Some(0) | None => {
             debug!("Using DeliverPolicy::All for sequence 0 or no sequence");
