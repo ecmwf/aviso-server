@@ -278,6 +278,8 @@ mod tests {
 
     #[test]
     fn policy_prefers_sequence_when_both_sequence_and_date_present() {
+        // This can occur internally after the first replay batch, when pagination
+        // adds `from_sequence` while `from_date` remains set in the carried params.
         let boundary = DateTime::parse_from_rfc3339("2025-06-09T13:15:00Z")
             .unwrap()
             .with_timezone(&Utc);

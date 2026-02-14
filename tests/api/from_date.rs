@@ -4,6 +4,8 @@ use serde_json::json;
 use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{Duration, Instant, sleep};
 
+// JetStream-backed integration tests are opt-in:
+// AVISO_RUN_NATS_TESTS=1 cargo test --workspace
 fn should_run_nats_tests() -> bool {
     std::env::var("AVISO_RUN_NATS_TESTS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
@@ -147,10 +149,11 @@ async fn watch_without_replay_params_is_live_only() {
 
     while Instant::now() < deadline {
         let remaining = deadline.saturating_duration_since(Instant::now());
-        let next_chunk = tokio::time::timeout(remaining, watch_response.chunk())
-            .await
-            .expect("watch stream did not yield data within timeout")
-            .expect("failed to read watch response chunk");
+        let next_chunk_result = tokio::time::timeout(remaining, watch_response.chunk()).await;
+        let next_chunk = match next_chunk_result {
+            Err(_) => break,
+            Ok(chunk_result) => chunk_result.expect("failed to read watch response chunk"),
+        };
 
         match next_chunk {
             Some(chunk) => {
