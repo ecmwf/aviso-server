@@ -32,11 +32,11 @@ pub struct TestApp {
 
 pub async fn spawn_app() -> TestApp {
     LazyLock::force(&TRACING);
-    let configuration = {
-        let c = get_configuration().expect("Failed to read configuration");
+    let mut configuration = {
         // overrides should be set here
-        c
+        get_configuration().expect("Failed to read configuration")
     };
+    configuration.application.port = 0;
 
     aviso_server::configuration::Settings::init_global_config(&configuration.clone());
     let shutdown_token = CancellationToken::new();
@@ -45,6 +45,6 @@ pub async fn spawn_app() -> TestApp {
         .await
         .expect("Failed to build server");
     let address = format!("http://127.0.0.1:{}", application.port());
-    let _ = tokio::spawn(application.run_until_stopped());
+    std::mem::drop(tokio::spawn(application.run_until_stopped()));
     TestApp { address }
 }
