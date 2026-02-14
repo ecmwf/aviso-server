@@ -5,7 +5,7 @@
 
 use actix_web::HttpResponse;
 use serde_json::json;
-use tracing::error;
+use tracing::{error, warn};
 
 /// Extension trait for converting anyhow errors to HTTP responses
 ///
@@ -36,7 +36,7 @@ impl ToHttpResponse for anyhow::Error {
     fn to_http_response_with_type(self, error_type: &str) -> HttpResponse {
         let error_chain = extract_error_chain(&self);
 
-        error!(
+        warn!(
             error_chain = ?error_chain,
             error_type = error_type,
             "Request processing failed"
