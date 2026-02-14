@@ -145,7 +145,7 @@ impl BenchmarkApp {
 
         // Wipe only the benchmark stream, not all data
         let response = client
-            .delete(&format!("{}/api/v1/admin/wipe/stream", self.address))
+            .delete(format!("{}/api/v1/admin/wipe/stream", self.address))
             .header("Content-Type", "application/json")
             .json(&json!({"stream_name": BENCHMARK_STREAM_NAME}))
             .timeout(Duration::from_secs(10))
@@ -246,7 +246,7 @@ async fn send_notification_batch(
 
                 // Send notification with timeout protection
                 let _result = client
-                    .post(&format!("{}/api/v1/notification", app_address))
+                    .post(format!("{}/api/v1/notification", app_address))
                     .header("Content-Type", "application/json")
                     .json(&payload)
                     .timeout(Duration::from_secs(REQUEST_TIMEOUT_SECONDS))
@@ -450,7 +450,7 @@ fn benchmark_latency_comparison(c: &mut Criterion) {
         group.bench_function("in_memory_single_notification", |b| {
             b.to_async(&rt).iter(|| async {
                 let _result = client
-                    .post(&format!("{}/api/v1/notification", app.address))
+                    .post(format!("{}/api/v1/notification", app.address))
                     .header("Content-Type", "application/json")
                     .json(&payload)
                     .send()
@@ -464,7 +464,7 @@ fn benchmark_latency_comparison(c: &mut Criterion) {
         group.bench_function("jetstream_single_notification", |b| {
             b.to_async(&rt).iter(|| async {
                 let _result = client
-                    .post(&format!("{}/api/v1/notification", app.address))
+                    .post(format!("{}/api/v1/notification", app.address))
                     .header("Content-Type", "application/json")
                     .json(&payload)
                     .send()
