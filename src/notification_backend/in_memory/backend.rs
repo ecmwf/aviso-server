@@ -191,7 +191,7 @@ impl NotificationBackend for InMemoryBackend {
         let msg = NotificationMessage {
             sequence,
             topic: topic.to_string(),
-            payload: payload.to_string(),
+            payload,
             timestamp: Some(Utc::now()),
             metadata: None,
         };

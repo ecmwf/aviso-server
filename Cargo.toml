@@ -43,15 +43,10 @@ tokio-util = "0.7"
 geo = "0.32"
 geo-types = "0.7"
 
-[dependencies.reqwest]
-version = "0.13"
-default-features = true
-# `json` feature flag to serialize/deserialize JSON payloads
-features = ["json"]
-
 [[bench]]
 name = "notification_backend_benchmark"
 harness = false
 
 [dev-dependencies]
 criterion = { version = "0.8", features = ["html_reports", "async_tokio"] }
+reqwest = { version = "0.13", default-features = true, features = ["json"] }
