@@ -54,3 +54,13 @@ Aviso Server is a specialized notification system that enables real-time monitor
 ## Testing Notes
 - JetStream integration tests are opt-in and require a running NATS/JetStream instance.
 - Run them with: `AVISO_RUN_NATS_TESTS=1 cargo test --workspace`
+
+## Documentation
+- Project docs are maintained with mdBook under `docs/`.
+- Helm chart for Kubernetes deployment: `https://github.com/ecmwf/aviso-chart`
+- Install mdBook:
+  - `cargo install mdbook`
+- Build docs:
+  - `mdbook build docs`
+- Serve locally:
+  - `mdbook serve docs --open`
