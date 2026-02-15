@@ -57,7 +57,8 @@ Existing streams are reused; configuration is not automatically reconciled for a
 ## Operational caveats
 
 - Policy values (`storage_type`, `retention_policy`, `discard_policy`) are validated when stream creation is attempted.
-- `timeout_seconds` and `retry_attempts` exist in config but are not consumed by backend operations.
-- Reconnect-related settings are applied to subscription creation retry path.
+- Stream settings are applied when a stream is created; existing streams are not auto-mutated.
+- Startup connectivity is controlled by `timeout_seconds` + `retry_attempts`.
+- Runtime reconnect behavior is controlled by `enable_auto_reconnect`, `max_reconnect_attempts`, and `reconnect_delay_ms`.
 
 For detailed field mapping, see [JetStream Settings](./jetstream-settings.md).

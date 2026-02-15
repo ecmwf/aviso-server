@@ -53,8 +53,8 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 |---|---|---|---|
 | `nats_url` | `string` | `nats://localhost:4222` | NATS connection URL. |
 | `token` | `string?` | `None` | Token auth; `NATS_TOKEN` env fallback. |
-| `timeout_seconds` | `u64?` | `30` | Currently not fully wired. |
-| `retry_attempts` | `u32?` | `3` | Currently not fully wired. |
+| `timeout_seconds` | `u64?` | `30` | NATS connection timeout for each startup connect attempt. |
+| `retry_attempts` | `u32?` | `3` | Startup connect attempts before backend init fails (`min=1`). |
 | `max_messages` | `i64?` | `None` | Stream message cap. |
 | `max_bytes` | `i64?` | `None` | Stream size cap in bytes. |
 | `retention_days` | `u32?` | `None` | Converted to stream max age. |
@@ -62,9 +62,9 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `replicas` | `usize?` | `None` | Stream replicas. |
 | `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue`. |
 | `discard_policy` | `string?` | `old` | `old`/`new`. |
-| `enable_auto_reconnect` | `bool?` | `true` | Mostly subscription setup retries today. |
-| `max_reconnect_attempts` | `u32?` | `5` | Subscription retry count. |
-| `reconnect_delay_ms` | `u64?` | `2000` | Subscription retry backoff base. |
+| `enable_auto_reconnect` | `bool?` | `true` | Enables/disables NATS client reconnect behavior. |
+| `max_reconnect_attempts` | `u32?` | `5` | Mapped to NATS `max_reconnects` (`0` => unlimited). |
+| `reconnect_delay_ms` | `u64?` | `2000` | Reconnect delay and startup connect retry backoff. |
 
 See [JetStream Settings](./jetstream-settings.md) and [JetStream Backend](./backend-jetstream.md) for detailed behavior.
 
@@ -78,4 +78,3 @@ AVISOSERVER_NOTIFICATION_BACKEND__JETSTREAM__NATS_URL=nats://localhost:4222
 AVISOSERVER_NOTIFICATION_BACKEND__JETSTREAM__TOKEN=secret
 AVISOSERVER_WATCH_ENDPOINT__REPLAY_BATCH_SIZE=200
 ```
-
