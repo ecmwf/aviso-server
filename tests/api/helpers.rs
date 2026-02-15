@@ -1,5 +1,7 @@
 use aviso_server::{
+    configuration::InMemorySettings,
     configuration::LoggingSettings,
+    configuration::Settings,
     configuration::get_configuration,
     startup::Application,
     telemetry::{get_subscriber, init_subscriber},
@@ -47,4 +49,39 @@ pub async fn spawn_app() -> TestApp {
     let address = format!("http://127.0.0.1:{}", application.port());
     std::mem::drop(tokio::spawn(application.run_until_stopped()));
     TestApp { address }
+}
+
+pub async fn spawn_app_with_config<F>(configure: F) -> TestApp
+where
+    F: FnOnce(&mut Settings),
+{
+    LazyLock::force(&TRACING);
+    let mut configuration = get_configuration().expect("Failed to read configuration");
+    configuration.application.port = 0;
+    configure(&mut configuration);
+
+    aviso_server::configuration::Settings::init_global_config(&configuration.clone());
+    let shutdown_token = CancellationToken::new();
+
+    let application = Application::build(configuration.clone(), shutdown_token.clone())
+        .await
+        .expect("Failed to build server");
+    let address = format!("http://127.0.0.1:{}", application.port());
+    std::mem::drop(tokio::spawn(application.run_until_stopped()));
+    TestApp { address }
+}
+
+pub async fn spawn_streaming_test_app() -> TestApp {
+    spawn_app_with_config(|configuration| {
+        configuration.notification_backend.kind = "in_memory".to_string();
+        configuration.notification_backend.jetstream = None;
+        if configuration.notification_backend.in_memory.is_none() {
+            configuration.notification_backend.in_memory = Some(InMemorySettings {
+                max_history_per_topic: Some(100),
+                max_topics: Some(1000),
+                enable_metrics: Some(false),
+            });
+        }
+    })
+    .await
 }

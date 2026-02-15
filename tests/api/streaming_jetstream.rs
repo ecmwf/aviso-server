@@ -20,7 +20,7 @@ fn unique_suffix() -> String {
     nanos.to_string()
 }
 
-fn berlin_polygon() -> &'static str {
+fn test_polygon() -> &'static str {
     "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
 }
 
@@ -37,7 +37,7 @@ async fn post_test_polygon_notification(
             "identifier": {
                 "date": "20250706",
                 "time": "1200",
-                "polygon": berlin_polygon(),
+                "polygon": test_polygon(),
             },
             "payload": {
                 "note": note,
@@ -49,7 +49,7 @@ async fn post_test_polygon_notification(
 }
 
 #[tokio::test]
-async fn replay_with_from_date_excludes_older_messages() {
+async fn jetstream_replay_with_from_date_excludes_older_messages() {
     if !should_run_nats_tests() {
         return;
     }
@@ -78,7 +78,7 @@ async fn replay_with_from_date_excludes_older_messages() {
             "event_type": "test_polygon",
             "identifier": {
                 "time": "1200",
-                "polygon": berlin_polygon(),
+                "polygon": test_polygon(),
             },
             "from_date": from_date,
         }))
@@ -103,7 +103,7 @@ async fn replay_with_from_date_excludes_older_messages() {
 }
 
 #[tokio::test]
-async fn watch_without_replay_params_is_live_only() {
+async fn jetstream_watch_without_replay_params_is_live_only() {
     if !should_run_nats_tests() {
         return;
     }
@@ -128,7 +128,7 @@ async fn watch_without_replay_params_is_live_only() {
             "event_type": "test_polygon",
             "identifier": {
                 "time": "1200",
-                "polygon": berlin_polygon(),
+                "polygon": test_polygon(),
             }
         }))
         .send()
@@ -175,30 +175,4 @@ async fn watch_without_replay_params_is_live_only() {
         !observed.contains(&historical_note),
         "expected watch stream to exclude historical note: {historical_note}; observed: {observed}"
     );
-}
-
-#[tokio::test]
-async fn replay_without_from_id_or_from_date_returns_bad_request() {
-    if !should_run_nats_tests() {
-        return;
-    }
-
-    let app = spawn_app().await;
-    let client = reqwest::Client::new();
-
-    let response = client
-        .post(format!("{}/api/v1/replay", &app.address))
-        .header("Content-Type", "application/json")
-        .json(&json!({
-            "event_type": "test_polygon",
-            "identifier": {
-                "time": "1200",
-                "polygon": berlin_polygon(),
-            }
-        }))
-        .send()
-        .await
-        .expect("failed to call replay endpoint");
-
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
