@@ -1,15 +1,19 @@
+use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
 use crate::notification_backend::in_memory::InMemoryConfig;
 use crate::notification_backend::in_memory::InMemoryStats;
+use crate::notification_backend::replay::BatchParams;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
+use crate::types::BatchResult;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
 use futures_util::Stream;
+use futures_util::stream::unfold;
 use std::{
     collections::{HashMap, VecDeque},
     sync::Arc,
 };
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, broadcast};
 use tracing::{debug, info, warn};
 
 /// Internal state tracking for each topic
@@ -18,8 +22,6 @@ use tracing::{debug, info, warn};
 struct TopicState {
     /// Queue of messages for this topic (oldest at front, newest at back)
     messages: VecDeque<NotificationMessage>,
-    /// Next message ID to assign (monotonically increasing per topic)
-    next_id: u64,
     /// Total number of messages ever received for this topic (for statistics)
     total_messages_received: u64,
 }
@@ -35,10 +37,15 @@ impl TopicState {
     fn new(capacity: usize) -> Self {
         Self {
             messages: VecDeque::with_capacity(capacity),
-            next_id: 1, // Start message IDs at 1
             total_messages_received: 0,
         }
     }
+}
+
+#[derive(Debug)]
+struct BackendState {
+    topics: HashMap<String, TopicState>,
+    next_sequence: u64,
 }
 
 /// In-memory notification backend with configurable limits
@@ -48,7 +55,9 @@ impl TopicState {
 #[derive(Clone)]
 pub struct InMemoryBackend {
     /// Thread-safe storage mapping topic names to their state
-    topics: Arc<Mutex<HashMap<String, TopicState>>>,
+    state: Arc<Mutex<BackendState>>,
+    /// Live notification fanout for subscriptions
+    live_notifications_tx: broadcast::Sender<NotificationMessage>,
     /// Configuration controlling memory limits and behavior
     config: InMemoryConfig,
 }
@@ -70,8 +79,18 @@ impl InMemoryBackend {
             "Initializing in-memory backend with configuration"
         );
 
+        let channel_capacity = (config
+            .max_history_per_topic
+            .saturating_mul(config.max_topics))
+        .clamp(1024, 65536);
+        let (live_notifications_tx, _) = broadcast::channel(channel_capacity);
+
         Self {
-            topics: Arc::new(Mutex::new(HashMap::new())),
+            state: Arc::new(Mutex::new(BackendState {
+                topics: HashMap::new(),
+                next_sequence: 1,
+            })),
+            live_notifications_tx,
             config,
         }
     }
@@ -82,10 +101,15 @@ impl InMemoryBackend {
     /// # Returns
     /// * `InMemoryStats` - Current backend statistics including counts and limits
     pub async fn get_stats(&self) -> InMemoryStats {
-        let topics = self.topics.lock().await;
-        let total_topics = topics.len();
-        let total_messages: usize = topics.values().map(|state| state.messages.len()).sum();
-        let total_received: u64 = topics
+        let state = self.state.lock().await;
+        let total_topics = state.topics.len();
+        let total_messages: usize = state
+            .topics
+            .values()
+            .map(|state| state.messages.len())
+            .sum();
+        let total_received: u64 = state
+            .topics
             .values()
             .map(|state| state.total_messages_received)
             .sum();
@@ -105,7 +129,7 @@ impl InMemoryBackend {
     ///
     /// # Arguments
     /// * `topics` - Mutable reference to the topics HashMap for modification
-    async fn enforce_topic_limit(&self, topics: &mut HashMap<String, TopicState>) {
+    fn enforce_topic_limit(&self, topics: &mut HashMap<String, TopicState>) {
         if topics.len() >= self.config.max_topics {
             // Find the topic with the oldest most recent message (LRU strategy)
             let oldest_topic = topics
@@ -144,15 +168,17 @@ impl NotificationBackend for InMemoryBackend {
     /// # Returns
     /// * `anyhow::Result<()>` - Success or error if timestamp generation fails
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()> {
-        let mut topics = self.topics.lock().await;
+        let mut state = self.state.lock().await;
+        let sequence = state.next_sequence;
+        state.next_sequence += 1;
 
         // Enforce topic limit before potentially creating a new topic
-        if !topics.contains_key(topic) {
-            self.enforce_topic_limit(&mut topics).await;
+        if !state.topics.contains_key(topic) {
+            self.enforce_topic_limit(&mut state.topics);
         }
 
         // Get or create topic state with configured capacity
-        let topic_state = topics.entry(topic.to_string()).or_insert_with(|| {
+        let topic_state = state.topics.entry(topic.to_string()).or_insert_with(|| {
             info!(
                 topic = %topic,
                 max_history = self.config.max_history_per_topic,
@@ -163,7 +189,7 @@ impl NotificationBackend for InMemoryBackend {
 
         // Create message with optional fields populated for in-memory backend
         let msg = NotificationMessage {
-            sequence: topic_state.next_id,
+            sequence,
             topic: topic.to_string(),
             payload: payload.to_string(),
             timestamp: Some(Utc::now()),
@@ -171,7 +197,6 @@ impl NotificationBackend for InMemoryBackend {
         };
 
         // Update topic state counters
-        topic_state.next_id += 1;
         topic_state.total_messages_received += 1;
 
         // Enforce per-topic message history limit (FIFO eviction)
@@ -186,13 +211,13 @@ impl NotificationBackend for InMemoryBackend {
         }
 
         // Add new message to the back of the queue
-        topic_state.messages.push_back(msg);
+        topic_state.messages.push_back(msg.clone());
 
         // Log with optional detailed metrics
         if self.config.enable_metrics {
             debug!(
                 topic = %topic,
-                msg_id = topic_state.next_id - 1,
+                msg_id = msg.sequence,
                 queue_size = topic_state.messages.len(),
                 total_received = topic_state.total_messages_received,
                 "Message stored with detailed metrics"
@@ -200,10 +225,13 @@ impl NotificationBackend for InMemoryBackend {
         } else {
             debug!(
                 topic = %topic,
-                msg_id = topic_state.next_id - 1,
+                msg_id = msg.sequence,
                 "Message stored successfully"
             );
         }
+
+        // Live-only fanout: subscribers receive only notifications published after subscription.
+        let _ = self.live_notifications_tx.send(msg);
 
         Ok(())
     }
@@ -211,11 +239,38 @@ impl NotificationBackend for InMemoryBackend {
     async fn put_message_with_headers(
         &self,
         topic: &str,
-        _headers: Option<HashMap<String, String>>,
+        headers: Option<HashMap<String, String>>,
         payload: String,
     ) -> Result<()> {
-        // In-memory backend ignores headers, delegate to regular publish
-        self.put_messages(topic, payload).await
+        let mut state = self.state.lock().await;
+        let sequence = state.next_sequence;
+        state.next_sequence += 1;
+
+        if !state.topics.contains_key(topic) {
+            self.enforce_topic_limit(&mut state.topics);
+        }
+
+        let topic_state = state
+            .topics
+            .entry(topic.to_string())
+            .or_insert_with(|| TopicState::new(self.config.max_history_per_topic));
+
+        let msg = NotificationMessage {
+            sequence,
+            topic: topic.to_string(),
+            payload,
+            timestamp: Some(Utc::now()),
+            metadata: headers,
+        };
+        topic_state.total_messages_received += 1;
+
+        if topic_state.messages.len() >= self.config.max_history_per_topic {
+            topic_state.messages.pop_front();
+        }
+        topic_state.messages.push_back(msg.clone());
+
+        let _ = self.live_notifications_tx.send(msg);
+        Ok(())
     }
 
     /// Remove all notifications from topics matching a stream pattern
@@ -228,7 +283,8 @@ impl NotificationBackend for InMemoryBackend {
     /// # Returns
     /// * `anyhow::Result<()>` - Always succeeds for in-memory backend
     async fn wipe_stream(&self, stream_name: &str) -> Result<()> {
-        let mut topics = self.topics.lock().await;
+        let mut state = self.state.lock().await;
+        let topics = &mut state.topics;
         let stream_prefix = format!("{}.", stream_name.to_lowercase());
 
         // Collect all topic keys that match the stream prefix
@@ -272,7 +328,8 @@ impl NotificationBackend for InMemoryBackend {
     /// # Returns
     /// * `anyhow::Result<()>` - Always succeeds for in-memory backend
     async fn wipe_all(&self) -> Result<()> {
-        let mut topics = self.topics.lock().await;
+        let mut state = self.state.lock().await;
+        let topics = &mut state.topics;
 
         // Collect statistics before clearing for logging
         let subjects_count = topics.len();
@@ -290,21 +347,201 @@ impl NotificationBackend for InMemoryBackend {
         Ok(())
     }
 
-    #[allow(unused_variables)]
-    async fn get_messages_batch(
-        &self,
-        params: crate::notification_backend::replay::BatchParams,
-    ) -> Result<crate::types::BatchResult> {
-        // TODO: Implement InMemory message retrieval
-        todo!("InMemory get_messages_batch not yet implemented")
+    async fn get_messages_batch(&self, params: BatchParams) -> Result<BatchResult> {
+        let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(&params.topic);
+
+        let mut messages = {
+            let state = self.state.lock().await;
+            state
+                .topics
+                .values()
+                .flat_map(|topic_state| topic_state.messages.iter())
+                .filter(|message| matches_watch_pattern(&message.topic, &app_filter_pattern))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+
+        if let Some(from_sequence) = params.from_sequence {
+            if from_sequence > 0 {
+                messages.retain(|m| m.sequence >= from_sequence);
+            }
+        } else if let Some(from_date) = params.from_date {
+            messages.retain(|m| m.timestamp.is_some_and(|ts| ts >= from_date));
+        }
+
+        if messages.is_empty() {
+            return Ok(BatchResult::empty());
+        }
+
+        messages.sort_by_key(|m| m.sequence);
+
+        let requested_limit = params.limit;
+        let available_before_truncate = messages.len();
+        messages.truncate(requested_limit);
+
+        let mut result = BatchResult::new(messages, requested_limit);
+        result.has_more = available_before_truncate > requested_limit;
+        result.next_sequence = result.last_sequence.map(|seq| seq + 1);
+        Ok(result)
     }
 
-    #[allow(unused_variables)]
     async fn subscribe_to_topic(
         &self,
         topic: &str,
     ) -> anyhow::Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
-        // TODO: Implement InMemory real-time subscription
-        todo!("InMemory subscribe_to_topic not yet implemented")
+        let receiver = self.live_notifications_tx.subscribe();
+        let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic);
+
+        let stream = unfold(
+            (receiver, app_filter_pattern),
+            |(mut receiver, app_filter_pattern)| async move {
+                loop {
+                    match receiver.recv().await {
+                        Ok(message) => {
+                            if matches_watch_pattern(&message.topic, &app_filter_pattern) {
+                                return Some((message, (receiver, app_filter_pattern)));
+                            }
+                        }
+                        Err(broadcast::error::RecvError::Lagged(skipped)) => {
+                            warn!(
+                                skipped = skipped,
+                                "In-memory subscription lagged; dropped notifications"
+                            );
+                        }
+                        Err(broadcast::error::RecvError::Closed) => return None,
+                    }
+                }
+            },
+        );
+
+        Ok(Box::new(Box::pin(stream)))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures_util::StreamExt;
+    use std::collections::HashMap;
+    use tokio::time::{Duration, timeout};
+
+    fn test_backend() -> InMemoryBackend {
+        InMemoryBackend::new(InMemoryConfig {
+            max_history_per_topic: 10,
+            max_topics: 10,
+            enable_metrics: false,
+        })
+    }
+
+    #[tokio::test]
+    async fn batch_replay_filters_by_sequence() {
+        let backend = test_backend();
+        backend
+            .put_messages("mars.a", "one".to_string())
+            .await
+            .unwrap();
+        backend
+            .put_messages("mars.a", "two".to_string())
+            .await
+            .unwrap();
+
+        let batch = backend
+            .get_messages_batch(BatchParams {
+                topic: "mars.a".to_string(),
+                from_sequence: Some(2),
+                from_date: None,
+                limit: 10,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(batch.messages.len(), 1);
+        assert_eq!(batch.messages[0].payload, "two");
+    }
+
+    #[tokio::test]
+    async fn batch_replay_filters_by_wildcard_topic() {
+        let backend = test_backend();
+        backend
+            .put_messages("mars.a.1", "first".to_string())
+            .await
+            .unwrap();
+        backend
+            .put_messages("mars.b.1", "second".to_string())
+            .await
+            .unwrap();
+
+        let batch = backend
+            .get_messages_batch(BatchParams {
+                topic: "mars.*.1".to_string(),
+                from_sequence: None,
+                from_date: None,
+                limit: 10,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(batch.messages.len(), 2);
+    }
+
+    #[tokio::test]
+    async fn batch_replay_filters_by_from_date() {
+        let backend = test_backend();
+        backend
+            .put_messages("mars.time", "early".to_string())
+            .await
+            .unwrap();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        let boundary = Utc::now();
+        tokio::time::sleep(Duration::from_millis(5)).await;
+        backend
+            .put_messages("mars.time", "late".to_string())
+            .await
+            .unwrap();
+
+        let batch = backend
+            .get_messages_batch(BatchParams {
+                topic: "mars.time".to_string(),
+                from_sequence: None,
+                from_date: Some(boundary),
+                limit: 10,
+            })
+            .await
+            .unwrap();
+
+        assert_eq!(batch.messages.len(), 1);
+        assert_eq!(batch.messages[0].payload, "late");
+    }
+
+    #[tokio::test]
+    async fn subscription_is_live_only_and_preserves_headers() {
+        let backend = test_backend();
+        backend
+            .put_messages("mars.live", "historical".to_string())
+            .await
+            .unwrap();
+
+        let mut stream = backend.subscribe_to_topic("mars.live").await.unwrap();
+
+        let mut headers = HashMap::new();
+        headers.insert("spatial_bbox".to_string(), "1,1,2,2".to_string());
+
+        backend
+            .put_message_with_headers("mars.live", Some(headers), "live".to_string())
+            .await
+            .unwrap();
+
+        let next = timeout(Duration::from_secs(2), stream.next())
+            .await
+            .expect("timed out waiting for live notification")
+            .expect("stream ended unexpectedly");
+
+        assert_eq!(next.payload, "live");
+        assert!(
+            next.metadata
+                .as_ref()
+                .and_then(|m| m.get("spatial_bbox"))
+                .is_some()
+        );
     }
 }
