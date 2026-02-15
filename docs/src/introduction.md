@@ -3,7 +3,7 @@
 Aviso Server provides:
 
 - real-time notifications over Server-Sent Events (SSE),
-- historical replay from JetStream-backed storage,
+- historical replay from configured backend storage,
 - schema-driven validation and topic construction.
 
 This documentation focuses on operational behavior and configuration, with special attention to replay and JetStream settings.

@@ -64,6 +64,22 @@ curl -X POST "http://127.0.0.1:8000/api/v1/notification" \
   }'
 ```
 
+## Run full smoke script
+
+Once the server is running, execute:
+
+```bash
+./scripts/smoke_test.sh
+```
+
+Useful overrides:
+
+```bash
+BASE_URL="http://127.0.0.1:8000" ./scripts/smoke_test.sh
+BACKEND="jetstream" ./scripts/smoke_test.sh
+TIMEOUT_SECONDS=12 ./scripts/smoke_test.sh
+```
+
 ## Build and serve docs
 
 ```bash
