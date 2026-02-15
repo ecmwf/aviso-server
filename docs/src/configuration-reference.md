@@ -58,10 +58,10 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `max_messages` | `i64?` | `None` | Stream message cap. |
 | `max_bytes` | `i64?` | `None` | Stream size cap in bytes. |
 | `retention_days` | `u32?` | `None` | Converted to stream max age. |
-| `storage_type` | `string?` | `file` | `file` or `memory` (validated at startup). |
+| `storage_type` | `string?` | `file` | `file` or `memory` (parsed as typed enum at config load). |
 | `replicas` | `usize?` | `None` | Stream replicas. |
-| `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue` (validated at startup). |
-| `discard_policy` | `string?` | `old` | `old`/`new` (validated at startup). |
+| `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue` (parsed as typed enum at config load). |
+| `discard_policy` | `string?` | `old` | `old`/`new` (parsed as typed enum at config load). |
 | `enable_auto_reconnect` | `bool?` | `true` | Enables/disables NATS client reconnect behavior. |
 | `max_reconnect_attempts` | `u32?` | `5` | Mapped to NATS `max_reconnects` (`0` => unlimited). |
 | `reconnect_delay_ms` | `u64?` | `2000` | Reconnect delay and startup connect retry backoff (`> 0`). |
