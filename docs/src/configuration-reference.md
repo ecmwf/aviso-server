@@ -53,18 +53,18 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 |---|---|---|---|
 | `nats_url` | `string` | `nats://localhost:4222` | NATS connection URL. |
 | `token` | `string?` | `None` | Token auth; `NATS_TOKEN` env fallback. |
-| `timeout_seconds` | `u64?` | `30` | NATS connection timeout for each startup connect attempt. |
-| `retry_attempts` | `u32?` | `3` | Startup connect attempts before backend init fails (`min=1`). |
+| `timeout_seconds` | `u64?` | `30` | NATS connection timeout for each startup connect attempt (`> 0`). |
+| `retry_attempts` | `u32?` | `3` | Startup connect attempts before backend init fails (`> 0`). |
 | `max_messages` | `i64?` | `None` | Stream message cap. |
 | `max_bytes` | `i64?` | `None` | Stream size cap in bytes. |
 | `retention_days` | `u32?` | `None` | Converted to stream max age. |
-| `storage_type` | `string?` | `file` | `file` or `memory`. |
+| `storage_type` | `string?` | `file` | `file` or `memory` (validated at startup). |
 | `replicas` | `usize?` | `None` | Stream replicas. |
-| `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue`. |
-| `discard_policy` | `string?` | `old` | `old`/`new`. |
+| `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue` (validated at startup). |
+| `discard_policy` | `string?` | `old` | `old`/`new` (validated at startup). |
 | `enable_auto_reconnect` | `bool?` | `true` | Enables/disables NATS client reconnect behavior. |
 | `max_reconnect_attempts` | `u32?` | `5` | Mapped to NATS `max_reconnects` (`0` => unlimited). |
-| `reconnect_delay_ms` | `u64?` | `2000` | Reconnect delay and startup connect retry backoff. |
+| `reconnect_delay_ms` | `u64?` | `2000` | Reconnect delay and startup connect retry backoff (`> 0`). |
 
 See [JetStream Settings](./jetstream-settings.md) and [JetStream Backend](./backend-jetstream.md) for detailed behavior.
 

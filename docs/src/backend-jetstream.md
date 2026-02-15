@@ -56,7 +56,7 @@ Existing streams are reused; configuration is not automatically reconciled for a
 
 ## Operational caveats
 
-- Policy values (`storage_type`, `retention_policy`, `discard_policy`) are validated when stream creation is attempted.
+- Core JetStream settings are validated at backend startup (fail-fast) before connection and stream operations begin.
 - Stream settings are applied when a stream is created; existing streams are not auto-mutated.
 - Startup connectivity is controlled by `timeout_seconds` + `retry_attempts`.
 - Runtime reconnect behavior is controlled by `enable_auto_reconnect`, `max_reconnect_attempts`, and `reconnect_delay_ms`.

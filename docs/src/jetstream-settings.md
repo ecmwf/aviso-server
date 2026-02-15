@@ -24,7 +24,7 @@ This page maps `notification_backend.jetstream` settings to runtime behavior.
 ## Important caveats
 
 - Stream config settings only apply on stream creation. Existing streams are not reconciled automatically.
-- `storage_type`, `retention_policy`, and `discard_policy` values are validated during stream creation.
+- Invalid values for `storage_type`, `retention_policy`, `discard_policy`, and key numeric timing fields fail fast during backend startup.
 - `retry_attempts` applies to startup connect attempts; reconnect behavior after startup uses `enable_auto_reconnect`/`max_reconnect_attempts`.
 
 ## Recommended usage
