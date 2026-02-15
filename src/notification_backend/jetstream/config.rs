@@ -83,6 +83,8 @@ impl JetStreamConfig {
         }
 
         if self.retry_attempts == 0 {
+            // Connection code defensively clamps with `.max(1)`, but config keeps
+            // strict semantics so users cannot rely on implicit clamping.
             bail!("notification_backend.jetstream.retry_attempts must be > 0");
         }
 
