@@ -1,7 +1,7 @@
 use crate::helpers::spawn_app;
+use crate::test_utils::{post_test_polygon_notification, test_polygon, unique_suffix};
 use reqwest::StatusCode;
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{Duration, Instant, sleep};
 
 // JetStream-backed integration tests are opt-in:
@@ -10,42 +10,6 @@ fn should_run_nats_tests() -> bool {
     std::env::var("AVISO_RUN_NATS_TESTS")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
-}
-
-fn unique_suffix() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is before unix epoch")
-        .as_nanos();
-    nanos.to_string()
-}
-
-fn test_polygon() -> &'static str {
-    "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
-}
-
-async fn post_test_polygon_notification(
-    client: &reqwest::Client,
-    base_url: &str,
-    note: &str,
-) -> reqwest::Response {
-    client
-        .post(format!("{}/api/v1/notification", base_url))
-        .header("Content-Type", "application/json")
-        .json(&json!({
-            "event_type": "test_polygon",
-            "identifier": {
-                "date": "20250706",
-                "time": "1200",
-                "polygon": test_polygon(),
-            },
-            "payload": {
-                "note": note,
-            }
-        }))
-        .send()
-        .await
-        .expect("failed to send notification")
 }
 
 #[tokio::test]

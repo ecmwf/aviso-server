@@ -2,7 +2,6 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
-BACKEND="${BACKEND:-in_memory}" # in_memory | jetstream
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-8}"
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -64,14 +63,19 @@ post_notification() {
 }
 
 health_check() {
+    local out_file
+    out_file="$(mktemp)"
     local code
-    code="$(curl -s -o /tmp/aviso_smoke_health.out -w "%{http_code}" "${BASE_URL}/health")"
+    code="$(curl -s -o "$out_file" -w "%{http_code}" "${BASE_URL}/health")"
+    rm -f "$out_file"
     [[ "$code" == "200" ]]
 }
 
 replay_requires_start_param() {
+    local out_file
+    out_file="$(mktemp)"
     local status
-    status="$(curl -s -o /tmp/aviso_smoke_replay_400.out -w "%{http_code}" \
+    status="$(curl -s -o "$out_file" -w "%{http_code}" \
         -X POST "${BASE_URL}/api/v1/replay" \
         -H "Content-Type: application/json" \
         -d '{
@@ -81,6 +85,7 @@ replay_requires_start_param() {
             "polygon": "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
           }
         }')"
+    rm -f "$out_file"
     [[ "$status" == "400" ]]
 }
 
@@ -189,7 +194,7 @@ main() {
     require_cmd date
     require_cmd timeout
 
-    note "Running smoke tests against ${BASE_URL} (backend=${BACKEND})"
+    note "Running smoke tests against ${BASE_URL}"
     run_test "health endpoint returns 200" health_check
     run_test "replay requires from_id or from_date" replay_requires_start_param
     run_test "watch without replay params is live-only" watch_live_only_behavior

@@ -75,13 +75,11 @@ pub async fn spawn_streaming_test_app() -> TestApp {
     spawn_app_with_config(|configuration| {
         configuration.notification_backend.kind = "in_memory".to_string();
         configuration.notification_backend.jetstream = None;
-        if configuration.notification_backend.in_memory.is_none() {
-            configuration.notification_backend.in_memory = Some(InMemorySettings {
-                max_history_per_topic: Some(100),
-                max_topics: Some(1000),
-                enable_metrics: Some(false),
-            });
-        }
+        configuration.notification_backend.in_memory = Some(InMemorySettings {
+            max_history_per_topic: Some(100),
+            max_topics: Some(500),
+            enable_metrics: Some(false),
+        });
     })
     .await
 }

@@ -1,44 +1,8 @@
 use crate::helpers::spawn_streaming_test_app;
+use crate::test_utils::{post_test_polygon_notification, test_polygon, unique_suffix};
 use reqwest::StatusCode;
 use serde_json::json;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::time::{Duration, Instant, sleep};
-
-fn unique_suffix() -> String {
-    let nanos = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .expect("system clock is before unix epoch")
-        .as_nanos();
-    nanos.to_string()
-}
-
-fn test_polygon() -> &'static str {
-    "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
-}
-
-async fn post_test_polygon_notification(
-    client: &reqwest::Client,
-    base_url: &str,
-    note: &str,
-) -> reqwest::Response {
-    client
-        .post(format!("{}/api/v1/notification", base_url))
-        .header("Content-Type", "application/json")
-        .json(&json!({
-            "event_type": "test_polygon",
-            "identifier": {
-                "date": "20250706",
-                "time": "1200",
-                "polygon": test_polygon(),
-            },
-            "payload": {
-                "note": note,
-            }
-        }))
-        .send()
-        .await
-        .expect("failed to send notification")
-}
 
 #[tokio::test]
 async fn watch_without_replay_params_is_live_only() {
@@ -119,9 +83,9 @@ async fn replay_with_from_date_excludes_older_messages() {
     let old_response = post_test_polygon_notification(&client, &app.address, &old_note).await;
     assert_eq!(old_response.status(), StatusCode::OK);
 
-    sleep(Duration::from_millis(20)).await;
+    sleep(Duration::from_millis(100)).await;
     let from_date = chrono::Utc::now().to_rfc3339();
-    sleep(Duration::from_millis(20)).await;
+    sleep(Duration::from_millis(100)).await;
 
     let new_response = post_test_polygon_notification(&client, &app.address, &new_note).await;
     assert_eq!(new_response.status(), StatusCode::OK);
