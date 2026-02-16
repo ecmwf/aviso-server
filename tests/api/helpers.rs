@@ -291,6 +291,8 @@ fn ensure_test_notification_schema(configuration: &mut Settings) {
         .get_or_insert_with(HashMap::new);
 
     schema.insert("test_polygon".to_string(), build_test_polygon_schema());
+    schema.insert("mars".to_string(), build_mars_schema());
+    schema.insert("dissemination".to_string(), build_dissemination_schema());
 }
 
 fn set_streaming_test_notification_schema(configuration: &mut Settings) {
