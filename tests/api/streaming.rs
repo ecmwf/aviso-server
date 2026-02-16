@@ -1,5 +1,8 @@
 use crate::helpers::spawn_streaming_test_app;
-use crate::test_utils::{post_test_polygon_notification, test_polygon, unique_suffix};
+use crate::test_utils::{
+    post_dissemination_notification, post_mars_notification, post_test_polygon_notification,
+    test_polygon, unique_suffix,
+};
 use reqwest::StatusCode;
 use serde_json::json;
 use tokio::time::{Duration, Instant, sleep};
@@ -182,4 +185,138 @@ async fn replay_without_from_id_or_from_date_returns_bad_request() {
         .expect("failed to call replay endpoint");
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn replay_with_from_id_returns_mars_messages_with_dot_values() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let suffix = unique_suffix();
+
+    let first_note = format!("MARS_REPLAY_FIRST_{suffix}");
+    let second_note = format!("MARS_REPLAY_SECOND_{suffix}");
+    let stream_value = format!("ens.member.{suffix}");
+
+    let first_response =
+        post_mars_notification(&client, &app.address, &first_note, &stream_value).await;
+    assert_eq!(first_response.status(), StatusCode::OK);
+    let second_response =
+        post_mars_notification(&client, &app.address, &second_note, &stream_value).await;
+    assert_eq!(second_response.status(), StatusCode::OK);
+
+    let replay_response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": "20250706",
+                "time": "1200",
+                "stream": stream_value,
+                "step": "1"
+            },
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let body = replay_response
+        .text()
+        .await
+        .expect("failed to read replay response body");
+
+    assert!(
+        body.contains(&stream_value),
+        "expected replay to include mars identifier stream with dot value: {stream_value}; body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn watch_with_from_date_replays_dissemination_with_dot_target_then_goes_live() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let suffix = unique_suffix();
+    let target_value = format!("target.v1.{suffix}");
+
+    let historical_note = format!("DISS_HISTORICAL_BEFORE_{suffix}");
+    let live_note = format!("DISS_LIVE_AFTER_{suffix}");
+
+    let old_response =
+        post_dissemination_notification(&client, &app.address, &historical_note, &target_value)
+            .await;
+    assert_eq!(old_response.status(), StatusCode::OK);
+
+    sleep(Duration::from_millis(100)).await;
+    let from_date = chrono::Utc::now().to_rfc3339();
+    sleep(Duration::from_millis(100)).await;
+
+    let mut watch_response = client
+        .post(format!("{}/api/v1/watch", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "dissemination",
+            "identifier": {
+                "destination": "FOO",
+                "target": target_value,
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": "20250706",
+                "time": "1200",
+                "stream": "enfo",
+                "step": "1"
+            },
+            "from_date": from_date,
+        }))
+        .send()
+        .await
+        .expect("failed to call watch endpoint");
+
+    assert_eq!(watch_response.status(), StatusCode::OK);
+
+    let live_response =
+        post_dissemination_notification(&client, &app.address, &live_note, &target_value).await;
+    assert_eq!(live_response.status(), StatusCode::OK);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut observed = String::new();
+    let mut saw_live_note = false;
+    let mut saw_historical_note = false;
+
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let next_chunk_result = tokio::time::timeout(remaining, watch_response.chunk()).await;
+        let next_chunk = match next_chunk_result {
+            Err(_) => break,
+            Ok(chunk_result) => chunk_result.expect("failed to read watch response chunk"),
+        };
+
+        match next_chunk {
+            Some(chunk) => {
+                observed.push_str(&String::from_utf8_lossy(&chunk));
+                if observed.contains(&historical_note) {
+                    saw_historical_note = true;
+                }
+                if observed.contains(&live_note) {
+                    saw_live_note = true;
+                    break;
+                }
+            }
+            None => break,
+        }
+    }
+
+    assert!(
+        !saw_historical_note,
+        "expected from_date watch to exclude older diss message; observed: {observed}"
+    );
+    assert!(
+        saw_live_note,
+        "expected from_date watch to include live diss message; observed: {observed}"
+    );
 }

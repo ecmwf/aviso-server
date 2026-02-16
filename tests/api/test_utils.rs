@@ -36,3 +36,61 @@ pub async fn post_test_polygon_notification(
         .await
         .expect("failed to send notification")
 }
+
+pub async fn post_mars_notification(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    stream_value: &str,
+) -> reqwest::Response {
+    client
+        .post(format!("{}/api/v1/notification", base_url))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": "20250706",
+                "time": "1200",
+                "stream": stream_value,
+                "step": "1"
+            },
+            "payload": note
+        }))
+        .send()
+        .await
+        .expect("failed to send mars notification")
+}
+
+pub async fn post_dissemination_notification(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    target_value: &str,
+) -> reqwest::Response {
+    client
+        .post(format!("{}/api/v1/notification", base_url))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "dissemination",
+            "identifier": {
+                "destination": "FOO",
+                "target": target_value,
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": "20250706",
+                "time": "1200",
+                "stream": "enfo",
+                "step": "1"
+            },
+            "payload": {
+                "note": note
+            }
+        }))
+        .send()
+        .await
+        .expect("failed to send dissemination notification")
+}
