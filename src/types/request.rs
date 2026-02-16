@@ -1,3 +1,4 @@
+use crate::notification_backend::replay::StartAt;
 use anyhow::{Result, bail};
 use chrono::{DateTime, Utc};
 use cloudevents::Event;
@@ -224,5 +225,16 @@ impl NotificationRequest {
         }
 
         Ok((parsed_id, parsed_date))
+    }
+
+    /// Validate replay parameters and return a typed replay cursor.
+    pub fn validate_start_at(&self) -> Result<StartAt> {
+        let (parsed_id, parsed_date) = self.validate_watch_parameters()?;
+        match (parsed_id, parsed_date) {
+            (Some(id), None) => Ok(StartAt::Sequence(id)),
+            (None, Some(date)) => Ok(StartAt::Date(date)),
+            (None, None) => Ok(StartAt::LiveOnly),
+            (Some(_), Some(_)) => unreachable!("validate_watch_parameters enforces exclusivity"),
+        }
     }
 }

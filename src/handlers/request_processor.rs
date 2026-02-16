@@ -4,12 +4,12 @@
 //! that can be shared between watch and replay endpoints.
 
 use anyhow::Result;
-use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 use tracing_actix_web::RequestId;
 
 use crate::configuration::Settings;
 use crate::notification::{NotificationHandler, OperationType};
+use crate::notification_backend::replay::StartAt;
 use crate::types::NotificationRequest;
 
 /// Context containing all validated request information
@@ -18,8 +18,7 @@ pub struct StreamingRequestContext {
     pub event_type: String,
     pub topic: String,
     pub canonicalized_params: HashMap<String, String>,
-    pub from_id: Option<u64>,
-    pub from_date: Option<DateTime<Utc>>,
+    pub start_at: StartAt,
     pub request_id: RequestId,
 }
 
@@ -75,7 +74,7 @@ impl StreamingRequestProcessor {
         config: ValidationConfig,
     ) -> Result<StreamingRequestContext> {
         // Validate replay parameters based on configuration
-        let (from_id, from_date) = Self::validate_replay_parameters(request, &config)?;
+        let start_at = Self::validate_replay_parameters(request, &config)?;
 
         // Process notification request using schema
         let notification_handler =
@@ -92,8 +91,7 @@ impl StreamingRequestProcessor {
             event_type: notification_result.event_type,
             topic: notification_result.topic,
             canonicalized_params: notification_result.canonicalized_params,
-            from_id,
-            from_date,
+            start_at,
             request_id,
         })
     }
@@ -102,17 +100,17 @@ impl StreamingRequestProcessor {
     fn validate_replay_parameters(
         request: &NotificationRequest,
         config: &ValidationConfig,
-    ) -> Result<(Option<u64>, Option<DateTime<Utc>>)> {
-        let (from_id, from_date) = request.validate_watch_parameters()?;
+    ) -> Result<StartAt> {
+        let start_at = request.validate_start_at()?;
 
         // Check if replay parameters are required but missing
-        if config.require_replay_params && from_id.is_none() && from_date.is_none() {
+        if config.require_replay_params && matches!(start_at, StartAt::LiveOnly) {
             anyhow::bail!(
                 "Replay endpoint requires either from_id or from_date parameter. \
                  Use from_id for sequence-based replay or from_date for time-based replay."
             );
         }
 
-        Ok((from_id, from_date))
+        Ok(start_at)
     }
 }

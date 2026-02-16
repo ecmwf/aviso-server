@@ -3,11 +3,17 @@
 use actix_web::{HttpResponse, web};
 use futures_util::stream::unfold;
 use serde_json::json;
+use std::sync::{
+    Arc,
+    atomic::{AtomicU8, Ordering},
+};
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
-use super::types::{SseEventType, format_sse_event};
+use super::types::{
+    CloseReason, ControlEvent, DeliveryKind, SseEventType, StreamFrame, format_sse_event,
+};
 use crate::cloudevents::create_cloud_event_from_notification;
 
 /// Convert a notification message to an SSE event
@@ -55,11 +61,130 @@ pub fn notification_to_sse_event(
     }
 }
 
+/// Render an internal stream frame into SSE wire bytes.
+///
+/// This is the single formatting boundary between typed stream state and
+/// event-stream text payloads sent to clients.
+pub fn frame_to_sse_bytes(
+    frame: StreamFrame,
+    base_url: &str,
+) -> Result<web::Bytes, actix_web::Error> {
+    match frame {
+        StreamFrame::Notification { notification, kind } => {
+            let event_type = match kind {
+                DeliveryKind::Live => SseEventType::LiveNotification,
+                DeliveryKind::Replay => SseEventType::ReplayNotification,
+            };
+            notification_to_sse_event(&notification, base_url, event_type)
+        }
+        StreamFrame::Control(control) => match control {
+            ControlEvent::ConnectionEstablished {
+                topic,
+                timestamp,
+                connection_will_close_in_seconds,
+            } => Ok(web::Bytes::from(format_sse_event(
+                SseEventType::LiveNotification,
+                json!({
+                    "type": "connection_established",
+                    "topic": topic,
+                    "timestamp": timestamp.to_rfc3339(),
+                    "connection_will_close_in_seconds": connection_will_close_in_seconds
+                }),
+            ))),
+            ControlEvent::ReplayStarted {
+                topic,
+                from_sequence,
+                from_date,
+                batch_size,
+                timestamp,
+            } => Ok(web::Bytes::from(format_sse_event(
+                SseEventType::ReplayControl,
+                json!({
+                    "type": "replay_started",
+                    "topic": topic,
+                    "from_sequence": from_sequence,
+                    "from_date": from_date,
+                    "batch_size": batch_size,
+                    "timestamp": timestamp.to_rfc3339()
+                }),
+            ))),
+            ControlEvent::ReplayCompleted { topic, timestamp } => {
+                Ok(web::Bytes::from(format_sse_event(
+                    SseEventType::ReplayControl,
+                    json!({
+                        "type": "replay_completed",
+                        "topic": topic,
+                        "timestamp": timestamp.to_rfc3339()
+                    }),
+                )))
+            }
+            ControlEvent::ReplayLimitReached {
+                topic,
+                max_allowed,
+                timestamp,
+            } => Ok(web::Bytes::from(format_sse_event(
+                SseEventType::ReplayControl,
+                json!({
+                    "type": "notification_replay_limit_reached",
+                    "topic": topic,
+                    "max_allowed": max_allowed,
+                    "message": format!(
+                        "Historical replay limited to {} messages. Additional historical messages may be available but were not retrieved.",
+                        max_allowed
+                    ),
+                    "timestamp": timestamp.to_rfc3339()
+                }),
+            ))),
+        },
+        StreamFrame::Heartbeat { topic, timestamp } => Ok(web::Bytes::from(format_sse_event(
+            SseEventType::Heartbeat,
+            json!({
+                "timestamp": timestamp.to_rfc3339(),
+                "topic": topic
+            }),
+        ))),
+        StreamFrame::Error { topic, message } => Ok(web::Bytes::from(format_sse_event(
+            SseEventType::Error,
+            json!({
+                "error": "stream_processing_failed",
+                "message": message,
+                "topic": topic
+            }),
+        ))),
+        StreamFrame::Close {
+            topic,
+            reason,
+            timestamp,
+        } => {
+            let (reason_str, message) = match reason {
+                CloseReason::ServerShutdown => (
+                    "server_shutdown",
+                    "Server is shutting down gracefully".to_string(),
+                ),
+                CloseReason::MaxDurationReached => (
+                    "max_duration_reached",
+                    "Connection reached maximum duration".to_string(),
+                ),
+                CloseReason::EndOfStream => ("end_of_stream", "Stream completed".to_string()),
+            };
+            Ok(web::Bytes::from(format_sse_event(
+                SseEventType::ConnectionClosing,
+                json!({
+                    "reason": reason_str,
+                    "timestamp": timestamp.to_rfc3339(),
+                    "message": message,
+                    "topic": topic
+                }),
+            )))
+        }
+    }
+}
+
 /// Create a heartbeat stream for SSE connections
 pub fn create_heartbeat_stream(
     topic: String,
     interval_seconds: u64,
-) -> impl tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>> {
+) -> impl tokio_stream::Stream<Item = StreamFrame> {
     let heartbeat_interval = Duration::from_secs(interval_seconds);
     let heartbeat_interval_timer = tokio::time::interval(heartbeat_interval);
 
@@ -67,48 +192,74 @@ pub fn create_heartbeat_stream(
         let topic_clone = topic.clone();
         async move {
             timer.tick().await;
-            let heartbeat_event = format_sse_event(
-                SseEventType::Heartbeat,
-                json!({
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                    "topic": topic_clone
-                }),
-            );
-            Some((Ok(web::Bytes::from(heartbeat_event)), timer))
+            Some((
+                StreamFrame::Heartbeat {
+                    topic: topic_clone,
+                    timestamp: chrono::Utc::now(),
+                },
+                timer,
+            ))
         }
     })
 }
 
-/// Apply graceful shutdown handling to any stream
-pub fn apply_graceful_shutdown<S>(
+/// Apply lifecycle boundaries to a frame stream and append a terminal close frame.
+///
+/// Close reason precedence:
+/// 1. server shutdown
+/// 2. max duration reached
+/// 3. natural end-of-stream
+pub fn apply_stream_lifecycle<S>(
     stream: S,
+    topic: String,
     shutdown_token: CancellationToken,
-) -> impl tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>>
+    max_duration: Option<Duration>,
+) -> impl tokio_stream::Stream<Item = StreamFrame>
 where
-    S: tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>>,
+    S: tokio_stream::Stream<Item = StreamFrame>,
 {
-    let shutdown_future = {
-        let token = shutdown_token.clone();
-        async move {
-            token.cancelled().await;
-            tracing::debug!("SSE stream received shutdown signal");
+    let close_code = Arc::new(AtomicU8::new(0));
+    let close_code_clone = close_code.clone();
+
+    let stop_future = async move {
+        match max_duration {
+            Some(duration) => {
+                tokio::select! {
+                    _ = shutdown_token.cancelled() => {
+                        tracing::debug!("SSE stream received shutdown signal");
+                        close_code_clone.store(1, Ordering::SeqCst);
+                    }
+                    _ = tokio::time::sleep(duration) => {
+                        tracing::debug!("SSE stream reached max duration");
+                        close_code_clone.store(2, Ordering::SeqCst);
+                    }
+                }
+            }
+            None => {
+                shutdown_token.cancelled().await;
+                tracing::debug!("SSE stream received shutdown signal");
+                close_code_clone.store(1, Ordering::SeqCst);
+            }
         }
     };
 
-    let graceful = futures_util::StreamExt::take_until(stream, shutdown_future);
+    let graceful = futures_util::StreamExt::take_until(stream, stop_future);
 
+    let close_code_for_end = close_code.clone();
     futures_util::StreamExt::chain(
         graceful,
         tokio_stream::once({
-            let closing_event = format_sse_event(
-                SseEventType::ConnectionClosing,
-                json!({
-                    "reason": "server_shutdown",
-                    "timestamp": chrono::Utc::now().to_rfc3339(),
-                    "message": "Server is shutting down gracefully"
-                }),
-            );
-            Ok::<_, actix_web::Error>(web::Bytes::from(closing_event))
+            let reason = match close_code_for_end.load(Ordering::SeqCst) {
+                1 => CloseReason::ServerShutdown,
+                2 => CloseReason::MaxDurationReached,
+                _ => CloseReason::EndOfStream,
+            };
+
+            StreamFrame::Close {
+                topic,
+                reason,
+                timestamp: chrono::Utc::now(),
+            }
         }),
     )
 }

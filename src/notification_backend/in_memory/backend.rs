@@ -1,7 +1,7 @@
 use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
 use crate::notification_backend::in_memory::InMemoryConfig;
 use crate::notification_backend::in_memory::InMemoryStats;
-use crate::notification_backend::replay::BatchParams;
+use crate::notification_backend::replay::{BatchParams, StartAt};
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use crate::types::BatchResult;
 use anyhow::Result;
@@ -339,12 +339,14 @@ impl NotificationBackend for InMemoryBackend {
                 .collect::<Vec<_>>()
         };
 
-        if let Some(from_sequence) = params.from_sequence {
-            if from_sequence > 0 {
+        match params.start_at {
+            StartAt::Sequence(from_sequence) if from_sequence > 0 => {
                 messages.retain(|m| m.sequence >= from_sequence);
             }
-        } else if let Some(from_date) = params.from_date {
-            messages.retain(|m| m.timestamp.is_some_and(|ts| ts >= from_date));
+            StartAt::Date(from_date) => {
+                messages.retain(|m| m.timestamp.is_some_and(|ts| ts >= from_date));
+            }
+            StartAt::LiveOnly | StartAt::Sequence(_) => {}
         }
 
         if messages.is_empty() {
@@ -426,8 +428,7 @@ mod tests {
         let batch = backend
             .get_messages_batch(BatchParams {
                 topic: "mars.a".to_string(),
-                from_sequence: Some(2),
-                from_date: None,
+                start_at: StartAt::Sequence(2),
                 limit: 10,
             })
             .await
@@ -452,8 +453,7 @@ mod tests {
         let batch = backend
             .get_messages_batch(BatchParams {
                 topic: "mars.*.1".to_string(),
-                from_sequence: None,
-                from_date: None,
+                start_at: StartAt::LiveOnly,
                 limit: 10,
             })
             .await
@@ -480,8 +480,7 @@ mod tests {
         let batch = backend
             .get_messages_batch(BatchParams {
                 topic: "mars.time".to_string(),
-                from_sequence: None,
-                from_date: Some(boundary),
+                start_at: StartAt::Date(boundary),
                 limit: 10,
             })
             .await

@@ -1,5 +1,7 @@
 //! SSE event types and formatting utilities
 
+use crate::notification_backend::NotificationMessage;
+use chrono::{DateTime, Utc};
 use serde_json::Value;
 
 /// SSE event types for different message categories
@@ -39,4 +41,64 @@ impl SseEventType {
 /// Server-Sent Events specification.
 pub fn format_sse_event(event_type: SseEventType, data: Value) -> String {
     format!("event: {}\ndata: {}\n\n", event_type.as_str(), data)
+}
+
+#[derive(Debug, Clone)]
+pub enum DeliveryKind {
+    Live,
+    Replay,
+}
+
+#[derive(Debug, Clone)]
+pub enum CloseReason {
+    ServerShutdown,
+    MaxDurationReached,
+    EndOfStream,
+}
+
+#[derive(Debug, Clone)]
+pub enum ControlEvent {
+    ConnectionEstablished {
+        topic: String,
+        timestamp: DateTime<Utc>,
+        connection_will_close_in_seconds: u64,
+    },
+    ReplayStarted {
+        topic: String,
+        from_sequence: Option<u64>,
+        from_date: Option<DateTime<Utc>>,
+        batch_size: usize,
+        timestamp: DateTime<Utc>,
+    },
+    ReplayCompleted {
+        topic: String,
+        timestamp: DateTime<Utc>,
+    },
+    ReplayLimitReached {
+        topic: String,
+        max_allowed: usize,
+        timestamp: DateTime<Utc>,
+    },
+}
+
+#[derive(Debug, Clone)]
+pub enum StreamFrame {
+    Notification {
+        notification: NotificationMessage,
+        kind: DeliveryKind,
+    },
+    Control(ControlEvent),
+    Heartbeat {
+        topic: String,
+        timestamp: DateTime<Utc>,
+    },
+    Error {
+        topic: String,
+        message: String,
+    },
+    Close {
+        topic: String,
+        reason: CloseReason,
+        timestamp: DateTime<Utc>,
+    },
 }
