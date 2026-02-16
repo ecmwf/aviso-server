@@ -292,18 +292,7 @@ fn try_polygon_from_metadata(
 ) -> Option<geo::Polygon<f64>> {
     metadata
         .and_then(|m| m.get("spatial_geometry"))
-        .and_then(|geom_str| {
-            PolygonHandler::parse_polygon_coordinates(geom_str)
-                .ok()
-                .map(|coords_latlon| {
-                    // Convert (lat,lon) to (lon,lat) for geo crate
-                    let coords_lonlat: Vec<(f64, f64)> = coords_latlon
-                        .iter()
-                        .map(|(lat, lon)| (*lon, *lat))
-                        .collect();
-                    geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
-                })
-        })
+        .and_then(|geom_str| parse_polygon_geometry_str(geom_str))
 }
 
 /// Try to extract polygon from payload spatial_geometry field
@@ -320,18 +309,24 @@ fn try_polygon_from_payload(payload: &str) -> Option<geo::Polygon<f64>> {
         extract_polygon_from_geojson(geom_obj)
     } else {
         // Handle geometry as coordinate string
-        spatial_geometry.as_str().and_then(|geom_str| {
-            PolygonHandler::parse_polygon_coordinates(geom_str)
-                .ok()
-                .map(|coords_latlon| {
-                    let coords_lonlat: Vec<(f64, f64)> = coords_latlon
-                        .iter()
-                        .map(|(lat, lon)| (*lon, *lat))
-                        .collect();
-                    geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
-                })
-        })
+        spatial_geometry
+            .as_str()
+            .and_then(parse_polygon_geometry_str)
     }
+}
+
+/// Parse polygon coordinate string and convert to geo::Polygon.
+fn parse_polygon_geometry_str(geom_str: &str) -> Option<geo::Polygon<f64>> {
+    PolygonHandler::parse_polygon_coordinates(geom_str)
+        .ok()
+        .map(|coords_latlon| {
+            // Convert (lat,lon) to (lon,lat) for geo crate
+            let coords_lonlat: Vec<(f64, f64)> = coords_latlon
+                .iter()
+                .map(|(lat, lon)| (*lon, *lat))
+                .collect();
+            geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
+        })
 }
 
 /// Extract polygon from GeoJSON-style geometry object
