@@ -11,7 +11,7 @@ High-level flow:
 
 - `src/routes/*`: endpoint entry points.
 - `src/handlers/*`: shared request parsing/validation/processing.
-- `src/notification/*`: schema-aware topic building and filtering.
+- `src/notification/*`: schema-aware topic building/filtering and shared topic codec.
 - `src/notification_backend/*`: backend abstraction and JetStream/InMemory implementations.
 - `src/sse/*`: stream composition, heartbeats, control events, graceful shutdown.
 

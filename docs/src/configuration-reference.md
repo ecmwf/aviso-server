@@ -2,6 +2,14 @@
 
 This page documents runtime-relevant configuration fields and defaults.
 
+## Topic Wire Format
+
+- Topic wire subjects always use `.` as separator.
+- Per-schema `topic.separator` is no longer used.
+- Token values are percent-encoded for reserved chars (`.`, `*`, `>`, `%`) before writing to backend subjects.
+
+See [Topic Encoding](./topic-encoding.md) for rules and examples.
+
 ## `application`
 
 | Field | Type | Default | Notes |

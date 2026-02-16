@@ -9,5 +9,6 @@
 - [Backends Overview](./backends-overview.md)
 - [InMemory Backend](./backend-in-memory.md)
 - [JetStream Backend](./backend-jetstream.md)
+- [Topic Encoding](./topic-encoding.md)
 - [Streaming Semantics](./streaming-semantics.md)
 - [JetStream Settings](./jetstream-settings.md)
