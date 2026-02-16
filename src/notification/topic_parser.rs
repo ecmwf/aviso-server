@@ -8,6 +8,7 @@ use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
 
 use crate::configuration::{EventSchema, Settings};
+use crate::notification::topic_codec::{decode_subject, decode_subject_base};
 
 /// Convert a topic string back to request parameters using schema configuration
 ///
@@ -56,8 +57,7 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
         .as_ref()
         .ok_or_else(|| anyhow::anyhow!("No topic configuration in schema"))?;
 
-    // Split topic by separator (typically ".")
-    let topic_parts: Vec<&str> = topic.split(&topic_config.separator).collect();
+    let topic_parts = decode_subject(topic)?;
 
     // Verify the topic starts with the expected base
     if topic_parts.is_empty() || topic_parts[0] != topic_config.base {
@@ -76,7 +76,7 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
         let value_index = i + 1; // Skip base part at index 0
 
         if value_index < topic_parts.len() {
-            let value = topic_parts[value_index];
+            let value = &topic_parts[value_index];
 
             // Include non-empty values and skip wildcards
             // Values are already in canonical form, so no conversion needed
@@ -91,7 +91,7 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
 
 /// Derive event type from topic string
 ///
-/// Extracts the event type from the topic base (first component before separator).
+/// Extracts the event type from the decoded topic base (first component).
 /// This is useful when you have a topic but need to determine which schema to use.
 ///
 /// # Arguments
@@ -100,12 +100,7 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
 /// # Returns
 /// * `Result<String>` - The event type derived from topic base or error
 pub fn derive_event_type_from_topic(topic: &str) -> Result<String> {
-    let first_part = topic.split('.').next().unwrap_or("");
-    if first_part.is_empty() {
-        anyhow::bail!("Topic cannot be empty or malformed: '{}'", topic);
-    } else {
-        Ok(first_part.to_string())
-    }
+    decode_subject_base(topic)
 }
 
 /// Derive stream name from topic string
@@ -134,6 +129,10 @@ mod tests {
         assert_eq!(
             derive_event_type_from_topic("mars.od.0001").unwrap(),
             "mars"
+        );
+        assert_eq!(
+            derive_event_type_from_topic("diss%2Ev2.FOO").unwrap(),
+            "diss.v2"
         );
         assert_eq!(derive_event_type_from_topic("single").unwrap(), "single");
         assert!(derive_event_type_from_topic("").is_err());

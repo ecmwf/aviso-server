@@ -378,7 +378,6 @@ mod tests {
             }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
-                separator: ".".to_string(),
                 key_order: vec!["class".to_string(), "destination".to_string()],
             }),
             endpoint: None,
@@ -411,7 +410,6 @@ mod tests {
             }),
             topic: Some(TopicConfig {
                 base: "polygon".to_string(),
-                separator: ".".to_string(),
                 key_order: vec!["date".to_string(), "time".to_string()],
             }),
             endpoint: None,
@@ -802,7 +800,6 @@ mod tests {
             }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
-                separator: ".".to_string(),
                 key_order: vec!["class".to_string(), "destination".to_string()],
             }),
             endpoint: None,

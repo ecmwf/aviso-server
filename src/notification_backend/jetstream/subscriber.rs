@@ -90,7 +90,7 @@ async fn create_subscription_internal(
     backend: &JetStreamBackend,
     topic: &str,
 ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Send + Unpin>> {
-    let (backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic);
+    let (backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic)?;
 
     debug!(
         topic = %topic,

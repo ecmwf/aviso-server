@@ -21,7 +21,7 @@ pub async fn get_messages_batch(
     backend: &JetStreamBackend,
     params: BatchParams,
 ) -> Result<BatchResult> {
-    let (backend_pattern, app_filter_pattern) = analyze_watch_pattern(&params.topic);
+    let (backend_pattern, app_filter_pattern) = analyze_watch_pattern(&params.topic)?;
 
     debug!(
         topic = %params.topic,

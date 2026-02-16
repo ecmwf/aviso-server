@@ -5,10 +5,13 @@
 //! It implements a hybrid approach where the backend handles coarse filtering
 //! and the application handles fine-grained pattern matching.
 
+use anyhow::{Context, Result};
 use aviso_validators::polygon::PolygonHandler;
 use geo::{BoundingRect, Intersects};
 use std::collections::HashMap;
 use tracing::debug;
+
+use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
 
 /// Analyze a watch pattern to determine optimal backend subscription and application filter
 ///
@@ -21,35 +24,36 @@ use tracing::debug;
 /// * `watch_topic` - The topic pattern from the watch request (e.g., "diss.FOO.*.od.*.*.*.*.*.*")
 ///
 /// # Returns
-/// * `(String, Vec<String>)` - (backend subscription pattern, full watch pattern as Vec)
-pub fn analyze_watch_pattern(watch_topic: &str) -> (String, Vec<String>) {
-    let parts: Vec<&str> = watch_topic.split('.').collect();
-
-    // Convert to owned strings for the full pattern
-    let full_watch_pattern: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
+/// * `(String, Vec<String>)` - (backend subscription pattern, full watch pattern as decoded parts)
+pub fn analyze_watch_pattern(watch_topic: &str) -> Result<(String, Vec<String>)> {
+    let full_watch_pattern = decode_subject(watch_topic)
+        .with_context(|| format!("Failed to decode watch topic pattern '{}'", watch_topic))?;
 
     // Find the first wildcard position
-    let first_wildcard_pos = parts.iter().position(|&part| part == "*");
+    let first_wildcard_pos = full_watch_pattern.iter().position(|part| part == "*");
 
     let backend_subscription_pattern = match first_wildcard_pos {
         Some(pos) if pos > 1 => {
             // Use JetStream '>' wildcard for everything after first wildcard position
-            let specific_parts = &parts[..pos];
-            format!("{}.>", specific_parts.join(".")) // Use > instead of .*
+            let specific_parts = &full_watch_pattern[..pos];
+            format!("{}.>", encode_subject(specific_parts))
         }
         Some(_) => {
             // Wildcard at position 0 or 1, use broad pattern with just the base
-            let base = parts.first().map_or("unknown", |v| *v);
-            format!("{}.>", base) // Use > instead of .*
+            let base = full_watch_pattern
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            format!("{}.>", encode_token(&base))
         }
         None => {
             // No wildcards present, use specific pattern with > for potential sub-topics
-            if parts.len() > 1 {
-                let without_last = &parts[..parts.len() - 1];
-                format!("{}.>", without_last.join(".")) // Use > instead of .*
+            if full_watch_pattern.len() > 1 {
+                let without_last = &full_watch_pattern[..full_watch_pattern.len() - 1];
+                format!("{}.>", encode_subject(without_last))
             } else {
                 // Single part topic, use > wildcard
-                format!("{}.>", watch_topic) // Use > instead of .*
+                format!("{}.>", watch_topic)
             }
         }
     };
@@ -58,11 +62,11 @@ pub fn analyze_watch_pattern(watch_topic: &str) -> (String, Vec<String>) {
         watch_topic = %watch_topic,
         backend_subscription_pattern = %backend_subscription_pattern,
         first_wildcard_pos = ?first_wildcard_pos,
-        pattern_parts = parts.len(),
+        pattern_parts = full_watch_pattern.len(),
         "Analyzed watch pattern for hybrid filtering"
     );
 
-    (backend_subscription_pattern, full_watch_pattern)
+    Ok((backend_subscription_pattern, full_watch_pattern))
 }
 
 /// Check if a notification topic matches a watch pattern
@@ -79,7 +83,17 @@ pub fn analyze_watch_pattern(watch_topic: &str) -> (String, Vec<String>) {
 /// # Returns
 /// * `bool` - true if the notification topic matches the watch pattern
 pub fn matches_watch_pattern(notification_topic: &str, watch_pattern: &[String]) -> bool {
-    let notification_parts: Vec<&str> = notification_topic.split('.').collect();
+    let notification_parts = match decode_subject(notification_topic) {
+        Ok(parts) => parts,
+        Err(error) => {
+            debug!(
+                notification_topic = %notification_topic,
+                error = %error,
+                "Failed to decode notification topic"
+            );
+            return false;
+        }
+    };
 
     // Must have the same number of parts
     if notification_parts.len() != watch_pattern.len() {
@@ -380,8 +394,9 @@ fn extract_polygon_from_geojson(
 /// # Returns
 /// * `String` - The backend subscription pattern
 pub fn generate_backend_subscription_pattern(watch_topic: &str) -> String {
-    let (backend_pattern, _) = analyze_watch_pattern(watch_topic);
-    backend_pattern
+    analyze_watch_pattern(watch_topic)
+        .map(|(backend_pattern, _)| backend_pattern)
+        .unwrap_or_else(|_| format!("{}.>", watch_topic))
 }
 
 /// Create a pattern matcher function for a specific watch pattern
@@ -404,7 +419,8 @@ mod tests {
 
     #[test]
     fn test_analyze_watch_pattern_early_wildcard() {
-        let (backend_pattern, app_pattern) = analyze_watch_pattern("diss.FOO.*.od.*.*.*.*.*.*");
+        let (backend_pattern, app_pattern) =
+            analyze_watch_pattern("diss.FOO.%2A.od.%2A.%2A.%2A.%2A.%2A.%2A").unwrap();
         assert_eq!(backend_pattern, "diss.FOO.>");
         assert_eq!(
             app_pattern,
@@ -414,7 +430,8 @@ mod tests {
 
     #[test]
     fn test_analyze_watch_pattern_late_wildcard() {
-        let (backend_pattern, app_pattern) = analyze_watch_pattern("diss.FOO.E1.od.*.*.*.*.*.*");
+        let (backend_pattern, app_pattern) =
+            analyze_watch_pattern("diss.FOO.E1.od.%2A.%2A.%2A.%2A.%2A.%2A").unwrap();
         assert_eq!(backend_pattern, "diss.FOO.E1.od.>");
         assert_eq!(
             app_pattern,
@@ -424,7 +441,8 @@ mod tests {
 
     #[test]
     fn test_analyze_watch_pattern_immediate_wildcard() {
-        let (backend_pattern, app_pattern) = analyze_watch_pattern("diss.*.*.*.*.*.*.*.*.*");
+        let (backend_pattern, app_pattern) =
+            analyze_watch_pattern("diss.%2A.%2A.%2A.%2A.%2A.%2A.%2A.%2A.%2A").unwrap();
         assert_eq!(backend_pattern, "diss.>");
         assert_eq!(
             app_pattern,
@@ -435,7 +453,7 @@ mod tests {
     #[test]
     fn test_analyze_watch_pattern_no_wildcards() {
         let (backend_pattern, app_pattern) =
-            analyze_watch_pattern("diss.FOO.E1.od.0001.g.20260706.0000.enfo.1");
+            analyze_watch_pattern("diss.FOO.E1.od.0001.g.20260706.0000.enfo.1").unwrap();
         assert_eq!(
             backend_pattern,
             "diss.FOO.E1.od.0001.g.20260706.0000.enfo.>"
@@ -465,6 +483,17 @@ mod tests {
         assert!(matches_watch_pattern("diss.FOO.E1.od", &pattern));
         assert!(matches_watch_pattern("diss.FOO.E2.od", &pattern));
         assert!(!matches_watch_pattern("diss.FOO.E1.mars", &pattern));
+    }
+
+    #[test]
+    fn test_matches_watch_pattern_with_encoded_notification_tokens() {
+        let pattern = vec![
+            "diss".to_string(),
+            "FOO".to_string(),
+            "1.45".to_string(),
+            "p%q".to_string(),
+        ];
+        assert!(matches_watch_pattern("diss.FOO.1%2E45.p%25q", &pattern));
     }
 
     #[test]
