@@ -62,3 +62,35 @@ curl -N -X POST "http://localhost:8000/api/v1/replay" \
 
 Streaming endpoints (`watch` and `replay`) work with both backends.
 With `in_memory`, behavior is node-local and limited to in-process retention.
+
+## SSE Implementation Model
+
+Internally, streaming is implemented as a typed pipeline:
+
+1. Request parameters are validated and converted to a typed replay cursor:
+   - `StartAt::LiveOnly`
+   - `StartAt::Sequence(u64)`
+   - `StartAt::Date(DateTime<Utc>)`
+2. Replay/live producers emit typed frames (`StreamFrame`) rather than raw SSE strings:
+   - control frames (connection/replay lifecycle)
+   - notification frames (live or replay)
+   - heartbeat frames
+   - error frames
+   - close frame
+3. Lifecycle handling is applied once:
+   - server shutdown
+   - optional max connection duration
+   - natural end-of-stream
+4. A single renderer converts typed frames into SSE wire format.
+
+This design keeps endpoint semantics stable while making lifecycle behavior explicit and easier to maintain.
+
+### Close Event Reasons
+
+The final `connection-closing` event can carry one of these reasons:
+
+- `server_shutdown`
+- `max_duration_reached`
+- `end_of_stream`
+
+`/replay` is finite by design, so normal completion uses `end_of_stream`.
