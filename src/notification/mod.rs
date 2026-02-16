@@ -1,8 +1,4 @@
-//! Notification processing module for Aviso server
-//!
-//! This module provides comprehensive notification request validation, canonicalization,
-//! and topic building based on configurable schemas. It supports both schema-driven
-//! validation for known event types and generic fallback processing for unknown types.
+//! Notification validation, canonicalization, and topic routing.
 
 pub mod handler;
 pub mod processor;

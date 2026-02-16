@@ -1,7 +1,4 @@
-//! Backend-agnostic topic wire encoding for subject-safe routing.
-//!
-//! Topic values are encoded per token before joining with '.' so values can
-//! safely contain subject-reserved characters while preserving wildcard semantics.
+//! Shared topic wire encoding/decoding.
 
 use anyhow::{Result, bail};
 
@@ -20,7 +17,7 @@ fn from_hex(byte: u8) -> Option<u8> {
     }
 }
 
-/// Encode a logical token into a wire-safe token.
+/// Encode one logical token for wire transport.
 pub fn encode_token(token: &str) -> String {
     let mut out = String::with_capacity(token.len());
     for ch in token.chars() {
@@ -34,7 +31,7 @@ pub fn encode_token(token: &str) -> String {
     out
 }
 
-/// Decode a wire token back to its logical form.
+/// Decode one wire token back to logical form.
 pub fn decode_token(token: &str) -> Result<String> {
     let bytes = token.as_bytes();
     let mut out = Vec::with_capacity(bytes.len());
@@ -80,12 +77,12 @@ pub fn encode_subject(parts: &[String]) -> String {
     encoded_parts.join(&SUBJECT_SEPARATOR.to_string())
 }
 
-/// Decode a wire subject to logical topic parts.
+/// Decode wire subject into logical topic parts.
 pub fn decode_subject(subject: &str) -> Result<Vec<String>> {
     subject.split(SUBJECT_SEPARATOR).map(decode_token).collect()
 }
 
-/// Decode just the first token of a subject.
+/// Decode first token of a subject.
 pub fn decode_subject_base(subject: &str) -> Result<String> {
     let raw = subject
         .split(SUBJECT_SEPARATOR)

@@ -1,7 +1,4 @@
-//! High-level notification processing and CloudEvent integration
-//!
-//! This module provides the main public API for notification processing,
-//! including CloudEvent integration and the primary NotificationHandler.
+//! High-level notification entry points.
 
 use actix_web::web;
 use anyhow::Result;
@@ -12,13 +9,9 @@ use tracing::debug;
 use super::{NotificationProcessor, NotificationRegistry, OperationType, ProcessingResult};
 use crate::configuration::Settings;
 
-/// Main notification handler that orchestrates the entire processing pipeline
-///
-/// This is the primary entry point for notification processing. It coordinates
-/// between the registry (schema management) and processor (validation/canonicalization)
-/// to provide a clean API for the rest of the application.
+/// Public facade over registry + processor.
 pub struct NotificationHandler {
-    /// Registry containing all configured schemas and validation rules
+    /// Schema registry used by the processor.
     registry: NotificationRegistry,
 }
 
@@ -36,7 +29,7 @@ impl NotificationHandler {
         Self { registry }
     }
 
-    /// Process a notification request with validation and canonicalization
+    /// Validate request parameters and build routing topic.
     pub fn process_request(
         &self,
         event_type: &str,
@@ -48,40 +41,33 @@ impl NotificationHandler {
         processor.process_request(event_type, request_params, payload, operation)
     }
 
-    /// Get all identifier keys defined in the schema for a specific event type
+    /// Get all identifier keys defined for an event type.
     pub fn get_identifier_keys(&self, event_type: &str) -> Result<Vec<String>> {
         self.registry.get_identifier_keys(event_type)
     }
 
-    /// Get only the required identifier keys for a specific event type
+    /// Get required identifier keys for an event type.
     pub fn get_required_identifier_keys(&self, event_type: &str) -> Result<Vec<String>> {
         self.registry.get_required_identifier_keys(event_type)
     }
 
-    /// Get the complete schema configuration
+    /// Get full schema map.
     pub fn get_whole_schema(&self) -> &HashMap<String, crate::configuration::EventSchema> {
         self.registry.get_whole_schema()
     }
 }
 
-/// Extract and process Aviso notification from CloudEvent payload
-///
-/// This function handles the complete Aviso notification pipeline:
-/// - Extracts and validates Aviso data structure
-/// - Converts request parameters (assuming they're already strings)
-/// - Applies schema-based validation and canonicalization
+/// Extract and process Aviso notification from a CloudEvent payload.
 pub fn extract_aviso_notification(
     payload: &web::Json<Value>,
     operation: OperationType,
 ) -> Result<ProcessingResult> {
-    // Extract Aviso data structure
     let (event_type, request_params) = extract_aviso_data(payload)?;
 
-    // Process with notification handler using the provided operation
     let notification_handler =
         NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
 
-    // Add None for payload parameter since CloudEvent data is already extracted
+    // Payload is already carried by CloudEvent data; request validation path uses `None`.
     let mut processing_result =
         notification_handler.process_request(&event_type, &request_params, &None, operation)?;
 
@@ -96,7 +82,7 @@ pub fn extract_aviso_notification(
     Ok(processing_result)
 }
 
-/// Extract Aviso data from CloudEvent payload
+/// Extract Aviso event type + identifier fields from CloudEvent data.
 fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<String, String>)> {
     let data = payload
         .get("data")
@@ -113,7 +99,7 @@ fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<Str
         .and_then(|v| v.as_object())
         .ok_or_else(|| anyhow::anyhow!("Missing required 'request' field in Aviso data"))?;
 
-    // Extract request parameters - most should already be strings
+    // Convert non-string values to string to preserve legacy payload shape.
     let mut request_params = HashMap::new();
     for (key, value) in identifier_obj {
         let string_value = match value.as_str() {
@@ -126,7 +112,7 @@ fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<Str
         request_params.insert(key.clone(), string_value);
     }
 
-    // Extract additional Aviso fields
+    // Preserve optional Aviso fields that may exist outside `identifier`.
     extract_additional_fields(data, &mut request_params);
 
     debug!(
@@ -138,7 +124,7 @@ fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<Str
     Ok((event_type, request_params))
 }
 
-/// Extract additional Aviso-specific fields like payload and location
+/// Copy optional Aviso fields used by downstream processing.
 fn extract_additional_fields(data: &Value, request_params: &mut HashMap<String, String>) {
     if let Some(payload_str) = data.get("payload").and_then(|v| v.as_str()) {
         request_params.insert("payload".to_string(), payload_str.to_string());

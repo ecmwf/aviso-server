@@ -1,7 +1,4 @@
-//! Spatial processing for polygon notifications
-//!
-//! This module handles polygon coordinate validation, bounding box calculation,
-//! and spatial metadata extraction for notifications containing polygon data.
+//! Spatial helpers for polygon notifications.
 
 use anyhow::Result;
 use geo::{BoundingRect, Intersects};
@@ -9,39 +6,39 @@ use geo_types::{Polygon, Rect};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
-/// Spatial metadata extracted from polygon fields during notification processing
+/// Spatial metadata derived from polygon fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpatialMetadata {
-    /// Bounding box as comma-separated string: "min_lat,min_lon,max_lat,max_lon"
+    /// Bounding box string: `min_lat,min_lon,max_lat,max_lon`.
     pub bounding_box: String,
 }
 
 impl SpatialMetadata {
-    /// Create spatial metadata from polygon coordinates
+    /// Build metadata from polygon coordinates.
     pub fn from_coordinates(coordinates: &[(f64, f64)]) -> Result<Self> {
         let bounding_box = calculate_bounding_box_string(coordinates)?;
         Ok(Self { bounding_box })
     }
 
-    /// Get the bounding box as a geo_types::Rect for geometric operations
+    /// Parse bounding box to `geo_types::Rect`.
     pub fn as_geo_rect(&self) -> Result<Rect<f64>> {
         bounding_box_string_to_geo_rect(&self.bounding_box)
     }
 
-    /// Serialize spatial metadata to JSON string for backend storage
+    /// Serialize metadata to JSON.
     pub fn to_json_string(&self) -> Result<String> {
         serde_json::to_string(self)
             .map_err(|e| anyhow::anyhow!("Failed to serialize spatial metadata: {}", e))
     }
 
-    /// Deserialize spatial metadata from JSON string
+    /// Deserialize metadata from JSON.
     pub fn from_json_string(json_str: &str) -> Result<Self> {
         serde_json::from_str(json_str)
             .map_err(|e| anyhow::anyhow!("Failed to deserialize spatial metadata: {}", e))
     }
 }
 
-/// Calculate bounding box string from polygon coordinates using geo crate
+/// Calculate bounding box string from polygon coordinates.
 pub fn calculate_bounding_box_string(coordinates: &[(f64, f64)]) -> Result<String> {
     if coordinates.is_empty() {
         anyhow::bail!("Cannot calculate bounding box for empty coordinates");
@@ -62,13 +59,13 @@ pub fn calculate_bounding_box_string(coordinates: &[(f64, f64)]) -> Result<Strin
     ))
 }
 
-/// Convert coordinate pairs to geo_types::Polygon
+/// Convert `(lat, lon)` pairs to a geo polygon.
 pub fn coordinates_to_geo_polygon(coordinates: &[(f64, f64)]) -> Result<Polygon<f64>> {
     if coordinates.len() < 4 {
         anyhow::bail!("Polygon must have at least 4 coordinate pairs (including closure)");
     }
 
-    // Convert (lat, lon) to (lon, lat) for geo crate (which expects x, y)
+    // Geo uses (x, y) = (lon, lat).
     let geo_coords: Vec<(f64, f64)> = coordinates.iter().map(|(lat, lon)| (*lon, *lat)).collect();
 
     let polygon = Polygon::new(geo_coords.into(), vec![]);
@@ -81,7 +78,7 @@ pub fn coordinates_to_geo_polygon(coordinates: &[(f64, f64)]) -> Result<Polygon<
     Ok(polygon)
 }
 
-/// Parse bounding box string to geo_types::Rect
+/// Parse bounding box string to geo rectangle.
 pub fn bounding_box_string_to_geo_rect(bbox_string: &str) -> Result<Rect<f64>> {
     let parts: Vec<&str> = bbox_string.split(',').collect();
 
@@ -102,13 +99,13 @@ pub fn bounding_box_string_to_geo_rect(bbox_string: &str) -> Result<Rect<f64>> {
         .parse()
         .map_err(|e| anyhow::anyhow!("Invalid max_lon in bounding box: {}", e))?;
 
-    // Create rectangle (geo expects x, y which is lon, lat)
+    // Geo expects (x, y) = (lon, lat).
     let rect = Rect::new((min_lon, min_lat), (max_lon, max_lat));
 
     Ok(rect)
 }
 
-/// Test if two bounding boxes intersect using geo operations
+/// Test whether two bounding boxes intersect.
 pub fn bounding_boxes_intersect(bbox1: &str, bbox2: &str) -> Result<bool> {
     let rect1 = bounding_box_string_to_geo_rect(bbox1)?;
     let rect2 = bounding_box_string_to_geo_rect(bbox2)?;
@@ -116,7 +113,7 @@ pub fn bounding_boxes_intersect(bbox1: &str, bbox2: &str) -> Result<bool> {
     Ok(rect1.intersects(&rect2))
 }
 
-/// Test if two polygons intersect
+/// Test whether two polygons intersect.
 pub fn polygons_intersect(
     polygon1_coords: &[(f64, f64)],
     polygon2_coords: &[(f64, f64)],

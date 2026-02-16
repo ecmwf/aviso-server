@@ -1,8 +1,4 @@
-//! Topic to request conversion functionality
-//!
-//! This module provides functionality to convert topic strings back to their
-//! original request parameters using the schema configuration. The conversion
-//! is straightforward since topic values are already in their canonical form.
+//! Topic subject parsing helpers.
 
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
@@ -10,20 +6,7 @@ use std::collections::HashMap;
 use crate::configuration::{EventSchema, Settings};
 use crate::notification::topic_codec::{decode_subject, decode_subject_base};
 
-/// Convert a topic string back to request parameters using schema configuration
-///
-/// This function reverses the topic building process by parsing the topic
-/// components and reconstructing the original request parameters. Since topic
-/// values are already sanitized and in canonical form, no value conversion
-/// is needed - we simply parse the structure.
-///
-/// # Arguments
-/// * `topic` - The topic string to parse (e.g., "diss.FOO.E1.od.0001.g.20190810.0.enfo.1")
-/// * `event_type` - The event type for schema lookup ("dissemination", "mars", etc.)
-///
-/// # Returns
-/// * `Ok(HashMap<String, String>)` - Reconstructed request parameters
-/// * `Err(anyhow::Error)` - Invalid topic format or missing schema
+/// Parse a topic subject back into request parameters using schema key order.
 pub fn topic_to_request(topic: &str, event_type: &str) -> Result<HashMap<String, String>> {
     let schema = Settings::get_global_notification_schema();
 
@@ -38,19 +21,7 @@ pub fn topic_to_request(topic: &str, event_type: &str) -> Result<HashMap<String,
     parse_topic_with_schema(topic, event_schema)
 }
 
-/// Parse topic using schema configuration
-///
-/// Uses the schema's topic configuration to parse the topic string back
-/// into its component parameters. The parsing follows the key_order defined
-/// in the schema to map topic positions to parameter names.
-///
-/// # Arguments
-/// * `topic` - The topic string to parse
-/// * `schema` - The event schema containing topic structure definition
-///
-/// # Returns
-/// * `Ok(HashMap<String, String>)` - Parsed request parameters
-/// * `Err(anyhow::Error)` - Invalid topic structure or missing configuration
+/// Parse a schema-based topic subject.
 fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<String, String>> {
     let topic_config = schema
         .topic
@@ -59,7 +30,7 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
 
     let topic_parts = decode_subject(topic)?;
 
-    // Verify the topic starts with the expected base
+    // Base token must match schema base for this event type.
     if topic_parts.is_empty() || topic_parts[0] != topic_config.base {
         bail!(
             "Topic '{}' does not match expected base '{}'",
@@ -70,16 +41,13 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
 
     let mut request = HashMap::new();
 
-    // Map topic parts to request parameters using key_order from schema
-    // Skip the first part (base) and map remaining parts to parameters
     for (i, key) in topic_config.key_order.iter().enumerate() {
-        let value_index = i + 1; // Skip base part at index 0
+        let value_index = i + 1;
 
         if value_index < topic_parts.len() {
             let value = &topic_parts[value_index];
 
-            // Include non-empty values and skip wildcards
-            // Values are already in canonical form, so no conversion needed
+            // Wildcards represent omitted optional fields.
             if !value.is_empty() && value != "*" {
                 request.insert(key.clone(), value.to_string());
             }
@@ -89,30 +57,12 @@ fn parse_topic_with_schema(topic: &str, schema: &EventSchema) -> Result<HashMap<
     Ok(request)
 }
 
-/// Derive event type from topic string
-///
-/// Extracts the event type from the decoded topic base (first component).
-/// This is useful when you have a topic but need to determine which schema to use.
-///
-/// # Arguments
-/// * `topic` - The topic string to analyze
-///
-/// # Returns
-/// * `Result<String>` - The event type derived from topic base or error
+/// Decode the first subject token as event type.
 pub fn derive_event_type_from_topic(topic: &str) -> Result<String> {
     decode_subject_base(topic)
 }
 
-/// Derive stream name from topic string
-///
-/// Converts the topic base to uppercase stream name format, following
-/// the convention that stream names are uppercase versions of topic bases.
-///
-/// # Arguments
-/// * `topic` - The topic string to analyze
-///
-/// # Returns
-/// *  `Result<String>` - The stream type derived from topic base or error
+/// Derive uppercase stream name from topic base.
 pub fn derive_stream_name_from_topic(topic: &str) -> Result<String> {
     let event_type = derive_event_type_from_topic(topic)
         .context("Failed to derive event type for stream name")?;
