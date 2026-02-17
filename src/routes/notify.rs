@@ -5,6 +5,7 @@ use crate::handlers::{
     process_notification_request, save_to_backend,
 };
 use crate::notification::OperationType;
+use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpResponse, web};
@@ -67,7 +68,8 @@ pub async fn notify(
         Err(response) => return response,
     };
 
-    tracing::Span::current().record("topic", &notification_result.topic);
+    let display_topic = decode_subject_for_display(&notification_result.topic);
+    tracing::Span::current().record("topic", &display_topic);
     tracing::Span::current().record(
         "spatial_enabled",
         notification_result.spatial_metadata.is_some(),
@@ -86,7 +88,7 @@ pub async fn notify(
     {
         error!(
             error = %e,
-            topic = %notification_result.topic,
+            topic = %display_topic,
             "Failed to save notification to backend"
         );
         return processing_error_response("Notification Storage", e);
@@ -100,21 +102,22 @@ pub async fn notify(
     };
 
     // Enhanced logging with spatial information
+    let payload_type = get_payload_type_name(&payload.payload).unwrap_or("None");
     if let Some(spatial_metadata) = &notification_result.spatial_metadata {
         info!(
-            topic = %notification_result.topic,
+            topic = %display_topic,
             event_type = %notification_result.event_type,
             param_count = notification_result.canonicalized_params.len(),
-            payload_type = ?get_payload_type_name(&payload.payload),
+            payload_type = %payload_type,
             bounding_box = %spatial_metadata.bounding_box,
             "Notification with spatial data processed and saved successfully"
         );
     } else {
         info!(
-            topic = %notification_result.topic,
+            topic = %display_topic,
             event_type = %notification_result.event_type,
             param_count = notification_result.canonicalized_params.len(),
-            payload_type = ?get_payload_type_name(&payload.payload),
+            payload_type = %payload_type,
             "Notification processed and saved successfully"
         );
     }

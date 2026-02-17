@@ -15,6 +15,7 @@ use super::types::{
     CloseReason, ControlEvent, DeliveryKind, SseEventType, StreamFrame, format_sse_event,
 };
 use crate::cloudevents::create_cloud_event_from_notification;
+use crate::notification::decode_subject_for_display;
 
 /// Convert a notification message to an SSE event
 pub fn notification_to_sse_event(
@@ -29,8 +30,9 @@ pub fn notification_to_sse_event(
 
             let sse_event = format_sse_event(event_type.clone(), event_data);
 
+            let display_topic = decode_subject_for_display(&notification.topic);
             debug!(
-                topic = %notification.topic,
+                topic = %display_topic,
                 sequence = notification.sequence,
                 event_type = %event_type.as_str(),
                 "Converted notification to SSE event"
@@ -39,9 +41,10 @@ pub fn notification_to_sse_event(
             Ok(web::Bytes::from(sse_event))
         }
         Err(e) => {
+            let display_topic = decode_subject_for_display(&notification.topic);
             warn!(
                 error = %e,
-                topic = %notification.topic,
+                topic = %display_topic,
                 sequence = notification.sequence,
                 "Failed to create CloudEvent from notification"
             );
@@ -51,7 +54,7 @@ pub fn notification_to_sse_event(
                 json!({
                     "error": "CloudEvent creation failed",
                     "message": e.to_string(),
-                    "topic": notification.topic,
+                    "topic": display_topic,
                     "sequence": notification.sequence
                 }),
             );
@@ -86,7 +89,7 @@ pub fn frame_to_sse_bytes(
                 SseEventType::LiveNotification,
                 json!({
                     "type": "connection_established",
-                    "topic": topic,
+                    "topic": decode_subject_for_display(&topic),
                     "timestamp": timestamp.to_rfc3339(),
                     "connection_will_close_in_seconds": connection_will_close_in_seconds
                 }),
@@ -101,7 +104,7 @@ pub fn frame_to_sse_bytes(
                 SseEventType::ReplayControl,
                 json!({
                     "type": "replay_started",
-                    "topic": topic,
+                    "topic": decode_subject_for_display(&topic),
                     "from_sequence": from_sequence,
                     "from_date": from_date,
                     "batch_size": batch_size,
@@ -113,7 +116,7 @@ pub fn frame_to_sse_bytes(
                     SseEventType::ReplayControl,
                     json!({
                         "type": "replay_completed",
-                        "topic": topic,
+                        "topic": decode_subject_for_display(&topic),
                         "timestamp": timestamp.to_rfc3339()
                     }),
                 )))
@@ -126,7 +129,7 @@ pub fn frame_to_sse_bytes(
                 SseEventType::ReplayControl,
                 json!({
                     "type": "notification_replay_limit_reached",
-                    "topic": topic,
+                    "topic": decode_subject_for_display(&topic),
                     "max_allowed": max_allowed,
                     "message": format!(
                         "Historical replay limited to {} messages. Additional historical messages may be available but were not retrieved.",
@@ -140,7 +143,7 @@ pub fn frame_to_sse_bytes(
             SseEventType::Heartbeat,
             json!({
                 "timestamp": timestamp.to_rfc3339(),
-                "topic": topic
+                "topic": decode_subject_for_display(&topic)
             }),
         ))),
         StreamFrame::Error { topic, message } => Ok(web::Bytes::from(format_sse_event(
@@ -148,7 +151,7 @@ pub fn frame_to_sse_bytes(
             json!({
                 "error": "stream_processing_failed",
                 "message": message,
-                "topic": topic
+                "topic": decode_subject_for_display(&topic)
             }),
         ))),
         StreamFrame::Close {
@@ -173,7 +176,7 @@ pub fn frame_to_sse_bytes(
                     "reason": reason_str,
                     "timestamp": timestamp.to_rfc3339(),
                     "message": message,
-                    "topic": topic
+                    "topic": decode_subject_for_display(&topic)
                 }),
             )))
         }

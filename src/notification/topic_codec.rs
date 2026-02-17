@@ -82,6 +82,16 @@ pub fn decode_subject(subject: &str) -> Result<Vec<String>> {
     subject.split(SUBJECT_SEPARATOR).map(decode_token).collect()
 }
 
+/// Decode a wire subject into a display-friendly topic string.
+///
+/// Falls back to the original input if decoding fails.
+pub fn decode_subject_for_display(subject: &str) -> String {
+    match decode_subject(subject) {
+        Ok(parts) => parts.join("."),
+        Err(_) => subject.to_string(),
+    }
+}
+
 /// Decode first token of a subject.
 pub fn decode_subject_base(subject: &str) -> Result<String> {
     let raw = subject

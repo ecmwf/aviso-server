@@ -14,7 +14,8 @@ pub use handler::NotificationHandler;
 pub use processor::NotificationProcessor;
 pub use registry::NotificationRegistry;
 pub use topic_codec::{
-    decode_subject, decode_subject_base, decode_token, encode_subject, encode_token,
+    decode_subject, decode_subject_base, decode_subject_for_display, decode_token, encode_subject,
+    encode_token,
 };
 pub use types::{OperationType, ProcessingResult};
 pub use wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};

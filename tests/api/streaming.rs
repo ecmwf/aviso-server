@@ -1,7 +1,8 @@
 use crate::helpers::spawn_streaming_test_app;
 use crate::test_utils::{
-    post_dissemination_notification, post_mars_notification, post_test_polygon_notification,
-    test_polygon, unique_suffix,
+    outside_polygon, post_dissemination_notification, post_mars_notification,
+    post_test_polygon_notification, post_test_polygon_notification_with_polygon, test_polygon,
+    unique_suffix,
 };
 use reqwest::StatusCode;
 use serde_json::json;
@@ -185,6 +186,134 @@ async fn replay_without_from_id_or_from_date_returns_bad_request() {
         .expect("failed to call replay endpoint");
 
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn watch_rejects_polygon_and_point_together() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{}/api/v1/watch", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "test_polygon",
+            "identifier": {
+                "time": "1200",
+                "polygon": test_polygon(),
+            },
+            "point": "52.55,13.5",
+        }))
+        .send()
+        .await
+        .expect("failed to call watch endpoint");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn replay_rejects_polygon_and_point_together() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "test_polygon",
+            "identifier": {
+                "time": "1200",
+                "polygon": test_polygon(),
+            },
+            "point": "52.55,13.5",
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn replay_rejects_invalid_point_format() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "test_polygon",
+            "identifier": {
+                "time": "1200"
+            },
+            "point": "invalid-point",
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn replay_with_point_matches_only_containing_polygons() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let suffix = unique_suffix();
+
+    let inside_note = format!("POINT_INSIDE_{suffix}");
+    let outside_note = format!("POINT_OUTSIDE_{suffix}");
+
+    let inside_response = post_test_polygon_notification_with_polygon(
+        &client,
+        &app.address,
+        &inside_note,
+        test_polygon(),
+    )
+    .await;
+    assert_eq!(inside_response.status(), StatusCode::OK);
+
+    let outside_response = post_test_polygon_notification_with_polygon(
+        &client,
+        &app.address,
+        &outside_note,
+        outside_polygon(),
+    )
+    .await;
+    assert_eq!(outside_response.status(), StatusCode::OK);
+
+    let replay_response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "test_polygon",
+            "identifier": {
+                "time": "1200"
+            },
+            "point": "52.55,13.5",
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let body = replay_response
+        .text()
+        .await
+        .expect("failed to read replay response body");
+
+    assert!(
+        body.contains(&inside_note),
+        "expected replay to include message whose polygon contains point; body: {body}"
+    );
+    assert!(
+        !body.contains(&outside_note),
+        "expected replay to exclude message whose polygon does not contain point; body: {body}"
+    );
 }
 
 #[tokio::test]

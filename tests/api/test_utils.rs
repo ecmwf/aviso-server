@@ -13,10 +13,23 @@ pub fn test_polygon() -> &'static str {
     "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
 }
 
+pub fn outside_polygon() -> &'static str {
+    "(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"
+}
+
 pub async fn post_test_polygon_notification(
     client: &reqwest::Client,
     base_url: &str,
     note: &str,
+) -> reqwest::Response {
+    post_test_polygon_notification_with_polygon(client, base_url, note, test_polygon()).await
+}
+
+pub async fn post_test_polygon_notification_with_polygon(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    polygon: &str,
 ) -> reqwest::Response {
     client
         .post(format!("{}/api/v1/notification", base_url))
@@ -26,7 +39,7 @@ pub async fn post_test_polygon_notification(
             "identifier": {
                 "date": "20250706",
                 "time": "1200",
-                "polygon": test_polygon(),
+                "polygon": polygon,
             },
             "payload": {
                 "note": note,

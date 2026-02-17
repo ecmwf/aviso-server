@@ -8,6 +8,10 @@
   - historical replay starts first, then transitions to live stream.
 - If both are present:
   - request is rejected with `400`.
+- Spatial filtering:
+  - optional `identifier.polygon` means polygon-intersects-polygon filtering.
+  - optional top-level `point` means point-in-notification-polygon filtering.
+  - `identifier.polygon` and `point` are mutually exclusive (`400` if both are sent).
 
 Example (live-only watch):
 
@@ -23,6 +27,20 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
   }'
 ```
 
+Example (live-only watch with point filter):
+
+```bash
+curl -N -X POST "http://localhost:8000/api/v1/watch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_type": "test_polygon",
+    "identifier": {
+      "time": "1200"
+    },
+    "point": "52.55,13.50"
+  }'
+```
+
 ## `POST /api/v1/replay`
 
 - Requires exactly one replay start parameter:
@@ -31,6 +49,8 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
 - If both are missing:
   - request is rejected with `400`.
 - Endpoint returns historical replay stream and then closes.
+- Same spatial filter contract as `watch`:
+  - use either `identifier.polygon` or `point`, not both.
 
 Example (time-based replay):
 
@@ -61,9 +81,11 @@ You can choose one of these fields:
 
 - `from_id`
   - Start from a message sequence number (inclusive).
+  - Example: `from_id: "42"` means replay starts at sequence `42`.
   - Use this when you know the last sequence you processed.
 - `from_date`
   - Start from a UTC timestamp (inclusive, RFC3339).
+  - Example: `from_date: "2025-01-15T10:00:00Z"` means replay starts at or after that instant.
   - Use this when you want events from a specific time onward.
 
 ## Rules by Endpoint

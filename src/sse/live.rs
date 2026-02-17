@@ -13,6 +13,7 @@ use super::helpers::{
 };
 use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
+use crate::notification::decode_subject_for_display;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 
 /// Create a live notification stream from a backend subscription
@@ -92,6 +93,7 @@ pub async fn create_watch_sse_stream(
     });
 
     tracing::info!(
+        topic = %decode_subject_for_display(&topic),
         timeout_seconds = connection_timeout.as_secs(),
         concurrent_limit = watch_config.concurrent_notification_processing,
         "SSE stream created with graceful-shutdown support and filtering"

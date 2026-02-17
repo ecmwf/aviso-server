@@ -1,8 +1,8 @@
 //! Wildcard analysis and matching for watch/replay.
 
 use anyhow::{Context, Result};
-use aviso_validators::polygon::PolygonHandler;
-use geo::{BoundingRect, Intersects};
+use aviso_validators::{PointHandler, polygon::PolygonHandler};
+use geo::{BoundingRect, Contains, Intersects, Point};
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -103,6 +103,17 @@ pub fn matches_notification_filters(
     metadata: Option<&HashMap<String, String>>,
     payload: &str,
 ) -> bool {
+    let has_explicit_polygon = request.get("polygon").is_some_and(|polygon| polygon != "*");
+
+    if has_explicit_polygon && request.contains_key("point") {
+        debug!("Both polygon and point are set in request filter; rejecting");
+        return false;
+    }
+
+    if let Some(request_point) = request.get("point") {
+        return matches_point_spatial_filter(request_point, metadata, payload);
+    }
+
     let Some(request_polygon) = request.get("polygon") else {
         return true;
     };
@@ -142,35 +153,7 @@ pub fn matches_notification_filters(
         }
     };
 
-    let candidate_bbox = metadata
-        .and_then(|m| m.get("spatial_bbox"))
-        .and_then(|bbox_str| {
-            let coords: Vec<f64> = bbox_str
-                .split(',')
-                .map(|part| part.trim().parse().ok())
-                .collect::<Option<Vec<_>>>()?;
-
-            if coords.len() != 4 {
-                debug!(
-                    "Malformed candidate bbox: expected 4 values, got {}",
-                    coords.len()
-                );
-                return None;
-            }
-
-            let (min_lat, min_lon, max_lat, max_lon) = (coords[0], coords[1], coords[2], coords[3]);
-
-            Some(geo::Rect::new(
-                geo::Coord {
-                    x: min_lon,
-                    y: min_lat,
-                },
-                geo::Coord {
-                    x: max_lon,
-                    y: max_lat,
-                },
-            ))
-        });
+    let candidate_bbox = extract_candidate_bbox(metadata);
 
     let Some(candidate_bbox) = candidate_bbox else {
         debug!("No valid spatial_bbox found in candidate metadata");
@@ -200,6 +183,79 @@ pub fn matches_notification_filters(
     }
 
     polygons_intersect
+}
+
+fn matches_point_spatial_filter(
+    request_point: &str,
+    metadata: Option<&HashMap<String, String>>,
+    payload: &str,
+) -> bool {
+    let point = match PointHandler::parse_point_coordinates(request_point) {
+        Ok((lat, lon)) => Point::new(lon, lat),
+        Err(_) => {
+            debug!("Invalid point filter format");
+            return false;
+        }
+    };
+
+    if let Some(candidate_bbox) = extract_candidate_bbox(metadata) {
+        if !bbox_contains_point(&candidate_bbox, point.x(), point.y()) {
+            debug!("Point is outside candidate bounding box");
+            return false;
+        }
+    } else {
+        debug!("No valid spatial_bbox found in candidate metadata; using geometry fallback");
+    }
+
+    let Some(candidate_poly) = extract_candidate_polygon(metadata, payload) else {
+        debug!("No valid polygon geometry found in candidate - filtering out");
+        return false;
+    };
+
+    let contains_point = candidate_poly.contains(&point);
+    if contains_point {
+        debug!("Point is inside candidate polygon");
+    } else {
+        debug!("Point is outside candidate polygon");
+    }
+    contains_point
+}
+
+fn bbox_contains_point(bbox: &geo::Rect<f64>, lon: f64, lat: f64) -> bool {
+    lon >= bbox.min().x && lon <= bbox.max().x && lat >= bbox.min().y && lat <= bbox.max().y
+}
+
+fn extract_candidate_bbox(metadata: Option<&HashMap<String, String>>) -> Option<geo::Rect<f64>> {
+    metadata
+        .and_then(|m| m.get("spatial_bbox"))
+        .and_then(|bbox| parse_bbox(bbox))
+}
+
+fn parse_bbox(bbox_str: &str) -> Option<geo::Rect<f64>> {
+    let coords: Vec<f64> = bbox_str
+        .split(',')
+        .map(|part| part.trim().parse().ok())
+        .collect::<Option<Vec<_>>>()?;
+
+    if coords.len() != 4 {
+        debug!(
+            "Malformed candidate bbox: expected 4 values, got {}",
+            coords.len()
+        );
+        return None;
+    }
+
+    let (min_lat, min_lon, max_lat, max_lon) = (coords[0], coords[1], coords[2], coords[3]);
+    Some(geo::Rect::new(
+        geo::Coord {
+            x: min_lon,
+            y: min_lat,
+        },
+        geo::Coord {
+            x: max_lon,
+            y: max_lat,
+        },
+    ))
 }
 
 /// Parse candidate polygon from metadata first, then payload.
@@ -438,5 +494,128 @@ mod tests {
         assert!(matcher("diss.BAR.E1"));
         assert!(!matcher("diss.FOO.E2"));
         assert!(!matcher("mars.FOO.E1"));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_point_inside_polygon() {
+        let mut request = HashMap::new();
+        request.insert("point".to_string(), "52.55,13.5".to_string());
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "spatial_bbox".to_string(),
+            "52.4,13.4,52.6,13.6".to_string(),
+        );
+        metadata.insert(
+            "spatial_geometry".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        assert!(matches_notification_filters(
+            &request,
+            Some(&metadata),
+            "{}"
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_point_outside_polygon() {
+        let mut request = HashMap::new();
+        request.insert("point".to_string(), "0,0".to_string());
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "spatial_bbox".to_string(),
+            "52.4,13.4,52.6,13.6".to_string(),
+        );
+        metadata.insert(
+            "spatial_geometry".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        assert!(!matches_notification_filters(
+            &request,
+            Some(&metadata),
+            "{}"
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_wildcard_polygon_and_point() {
+        let mut request = HashMap::new();
+        request.insert("polygon".to_string(), "*".to_string());
+        request.insert("point".to_string(), "52.55,13.5".to_string());
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "spatial_bbox".to_string(),
+            "52.4,13.4,52.6,13.6".to_string(),
+        );
+        metadata.insert(
+            "spatial_geometry".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        assert!(matches_notification_filters(
+            &request,
+            Some(&metadata),
+            "{}"
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_point_and_payload_geometry() {
+        let mut request = HashMap::new();
+        request.insert("point".to_string(), "52.55,13.5".to_string());
+
+        let mut metadata = HashMap::new();
+        metadata.insert(
+            "spatial_bbox".to_string(),
+            "52.4,13.4,52.6,13.6".to_string(),
+        );
+
+        let payload = serde_json::json!({
+            "note": "inside",
+            "spatial_geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [52.5, 13.4],
+                    [52.6, 13.5],
+                    [52.5, 13.6],
+                    [52.4, 13.5],
+                    [52.5, 13.4]
+                ]]
+            }
+        })
+        .to_string();
+
+        assert!(matches_notification_filters(
+            &request,
+            Some(&metadata),
+            &payload
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_point_and_payload_geometry_without_bbox() {
+        let mut request = HashMap::new();
+        request.insert("point".to_string(), "52.55,13.5".to_string());
+
+        let payload = serde_json::json!({
+            "note": "inside",
+            "spatial_geometry": {
+                "type": "Polygon",
+                "coordinates": [[
+                    [52.5, 13.4],
+                    [52.6, 13.5],
+                    [52.5, 13.6],
+                    [52.4, 13.5],
+                    [52.5, 13.4]
+                ]]
+            }
+        })
+        .to_string();
+
+        assert!(matches_notification_filters(&request, None, &payload));
     }
 }

@@ -48,3 +48,14 @@ impl BatchParams {
         self
     }
 }
+
+impl StartAt {
+    /// Convert replay start selection into wire control fields.
+    pub fn as_replay_cursor(self) -> (Option<u64>, Option<DateTime<Utc>>) {
+        match self {
+            StartAt::Sequence(seq) => (Some(seq), None),
+            StartAt::Date(date) => (None, Some(date)),
+            StartAt::LiveOnly => (None, None),
+        }
+    }
+}
