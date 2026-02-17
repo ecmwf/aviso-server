@@ -99,6 +99,9 @@ pub async fn shutdown(backend: &JetStreamBackend) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::build_connection_policy;
+    use crate::configuration::{
+        JetStreamDiscardPolicy, JetStreamRetentionPolicy, JetStreamStorageType,
+    };
     use crate::notification_backend::jetstream::config::JetStreamConfig;
 
     fn base_config() -> JetStreamConfig {
@@ -110,10 +113,10 @@ mod tests {
             max_messages: None,
             max_bytes: None,
             retention_days: None,
-            storage_type: "file".to_string(),
+            storage_type: JetStreamStorageType::File,
             replicas: None,
-            retention_policy: "limits".to_string(),
-            discard_policy: "old".to_string(),
+            retention_policy: JetStreamRetentionPolicy::Limits,
+            discard_policy: JetStreamDiscardPolicy::Old,
             enable_auto_reconnect: true,
             max_reconnect_attempts: 5,
             reconnect_delay_ms: 2000,

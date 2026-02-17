@@ -1,4 +1,7 @@
-use crate::configuration::NotificationBackendSettings;
+use crate::configuration::{
+    JetStreamDiscardPolicy, JetStreamRetentionPolicy, JetStreamSettings, JetStreamStorageType,
+    NotificationBackendSettings,
+};
 use anyhow::{Result, bail};
 
 /// Configuration for JetStream backend
@@ -19,14 +22,14 @@ pub struct JetStreamConfig {
     pub max_bytes: Option<i64>,
     /// Maximum age of messages in seconds
     pub retention_days: Option<u32>,
-    /// Storage type: "file" or "memory"
-    pub storage_type: String,
+    /// Storage type for streams
+    pub storage_type: JetStreamStorageType,
     /// Number of replicas for high availability
     pub replicas: Option<usize>,
-    /// Retention policy: "limits", "interest", or "workqueue"
-    pub retention_policy: String,
-    /// Discard policy when limits are reached: "old" or "new"
-    pub discard_policy: String,
+    /// Retention policy
+    pub retention_policy: JetStreamRetentionPolicy,
+    /// Discard policy when limits are reached
+    pub discard_policy: JetStreamDiscardPolicy,
     /// Enable automatic reconnection on failures
     pub enable_auto_reconnect: bool,
     /// Maximum reconnection attempts before giving up temporarily
@@ -53,16 +56,10 @@ impl JetStreamConfig {
             max_messages: js_settings.and_then(|js| js.max_messages),
             max_bytes: js_settings.and_then(|js| js.max_bytes),
             retention_days: js_settings.and_then(|js| js.retention_days),
-            storage_type: js_settings
-                .and_then(|js| js.storage_type.clone())
-                .unwrap_or_else(|| "file".to_string()),
+            storage_type: get_storage_type(js_settings),
             replicas: js_settings.and_then(|js| js.replicas),
-            retention_policy: js_settings
-                .and_then(|js| js.retention_policy.clone())
-                .unwrap_or_else(|| "limits".to_string()),
-            discard_policy: js_settings
-                .and_then(|js| js.discard_policy.clone())
-                .unwrap_or_else(|| "old".to_string()),
+            retention_policy: get_retention_policy(js_settings),
+            discard_policy: get_discard_policy(js_settings),
             enable_auto_reconnect: js_settings
                 .and_then(|js| js.enable_auto_reconnect)
                 .unwrap_or(true),
@@ -86,6 +83,8 @@ impl JetStreamConfig {
         }
 
         if self.retry_attempts == 0 {
+            // Connection code defensively clamps with `.max(1)`, but config keeps
+            // strict semantics so users cannot rely on implicit clamping.
             bail!("notification_backend.jetstream.retry_attempts must be > 0");
         }
 
@@ -93,30 +92,35 @@ impl JetStreamConfig {
             bail!("notification_backend.jetstream.reconnect_delay_ms must be > 0");
         }
 
-        match self.storage_type.to_lowercase().as_str() {
-            "file" | "memory" => {}
-            _ => bail!("notification_backend.jetstream.storage_type must be one of: file, memory"),
-        }
-
-        match self.retention_policy.to_lowercase().as_str() {
-            "limits" | "interest" | "workqueue" => {}
-            _ => bail!(
-                "notification_backend.jetstream.retention_policy must be one of: limits, interest, workqueue"
-            ),
-        }
-
-        match self.discard_policy.to_lowercase().as_str() {
-            "old" | "new" => {}
-            _ => bail!("notification_backend.jetstream.discard_policy must be one of: old, new"),
-        }
-
         Ok(())
     }
+}
+
+fn get_storage_type(settings: Option<&JetStreamSettings>) -> JetStreamStorageType {
+    settings
+        .and_then(|js| js.storage_type.clone())
+        .unwrap_or(JetStreamStorageType::File)
+}
+
+fn get_retention_policy(settings: Option<&JetStreamSettings>) -> JetStreamRetentionPolicy {
+    settings
+        .and_then(|js| js.retention_policy.clone())
+        .unwrap_or(JetStreamRetentionPolicy::Limits)
+}
+
+fn get_discard_policy(settings: Option<&JetStreamSettings>) -> JetStreamDiscardPolicy {
+    settings
+        .and_then(|js| js.discard_policy.clone())
+        .unwrap_or(JetStreamDiscardPolicy::Old)
 }
 
 #[cfg(test)]
 mod tests {
     use super::JetStreamConfig;
+    use crate::configuration::{
+        JetStreamDiscardPolicy, JetStreamRetentionPolicy, JetStreamSettings, JetStreamStorageType,
+        NotificationBackendSettings,
+    };
 
     fn base_config() -> JetStreamConfig {
         JetStreamConfig {
@@ -127,10 +131,10 @@ mod tests {
             max_messages: None,
             max_bytes: None,
             retention_days: None,
-            storage_type: "file".to_string(),
+            storage_type: JetStreamStorageType::File,
             replicas: None,
-            retention_policy: "limits".to_string(),
-            discard_policy: "old".to_string(),
+            retention_policy: JetStreamRetentionPolicy::Limits,
+            discard_policy: JetStreamDiscardPolicy::Old,
             enable_auto_reconnect: true,
             max_reconnect_attempts: 5,
             reconnect_delay_ms: 2000,
@@ -172,23 +176,34 @@ mod tests {
     }
 
     #[test]
-    fn validate_rejects_invalid_storage_type() {
-        let mut cfg = base_config();
-        cfg.storage_type = "disk".to_string();
-        assert!(cfg.validate().is_err());
-    }
+    fn from_backend_settings_uses_typed_defaults_for_policy_fields() {
+        let backend_settings = NotificationBackendSettings {
+            kind: "jetstream".to_string(),
+            in_memory: None,
+            jetstream: Some(JetStreamSettings {
+                nats_url: None,
+                token: None,
+                timeout_seconds: None,
+                retry_attempts: None,
+                max_messages: None,
+                max_bytes: None,
+                retention_days: None,
+                storage_type: None,
+                replicas: None,
+                retention_policy: None,
+                discard_policy: None,
+                enable_auto_reconnect: None,
+                max_reconnect_attempts: None,
+                reconnect_delay_ms: None,
+            }),
+        };
 
-    #[test]
-    fn validate_rejects_invalid_retention_policy() {
-        let mut cfg = base_config();
-        cfg.retention_policy = "retain_all".to_string();
-        assert!(cfg.validate().is_err());
-    }
-
-    #[test]
-    fn validate_rejects_invalid_discard_policy() {
-        let mut cfg = base_config();
-        cfg.discard_policy = "drop".to_string();
-        assert!(cfg.validate().is_err());
+        let cfg = JetStreamConfig::from_backend_settings(&backend_settings);
+        assert!(matches!(cfg.storage_type, JetStreamStorageType::File));
+        assert!(matches!(
+            cfg.retention_policy,
+            JetStreamRetentionPolicy::Limits
+        ));
+        assert!(matches!(cfg.discard_policy, JetStreamDiscardPolicy::Old));
     }
 }

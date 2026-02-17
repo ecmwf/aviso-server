@@ -99,6 +99,28 @@ pub struct LoggingSettings {
 
 // NOTIFICATION BACKEND SETTINGS
 #[derive(serde::Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum JetStreamStorageType {
+    File,
+    Memory,
+}
+
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum JetStreamRetentionPolicy {
+    Limits,
+    Interest,
+    Workqueue,
+}
+
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
+#[serde(rename_all = "lowercase")]
+pub enum JetStreamDiscardPolicy {
+    Old,
+    New,
+}
+
+#[derive(serde::Deserialize, Serialize, Clone, Debug)]
 pub struct JetStreamSettings {
     pub nats_url: Option<String>,
     pub token: Option<String>,
@@ -107,10 +129,10 @@ pub struct JetStreamSettings {
     pub max_messages: Option<i64>,
     pub max_bytes: Option<i64>,
     pub retention_days: Option<u32>,
-    pub storage_type: Option<String>,
+    pub storage_type: Option<JetStreamStorageType>,
     pub replicas: Option<usize>,
-    pub retention_policy: Option<String>,
-    pub discard_policy: Option<String>,
+    pub retention_policy: Option<JetStreamRetentionPolicy>,
+    pub discard_policy: Option<JetStreamDiscardPolicy>,
     /// Enable automatic reconnection on failures
     pub enable_auto_reconnect: Option<bool>,
     /// Maximum reconnection attempts before giving up temporarily
@@ -326,4 +348,25 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     );
 
     Ok(settings)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{JetStreamSettings, JetStreamStorageType};
+
+    #[test]
+    fn jetstream_settings_accept_lowercase_storage_type() {
+        let settings: JetStreamSettings =
+            serde_json::from_str(r#"{"storage_type":"file"}"#).expect("should deserialize");
+        assert!(matches!(
+            settings.storage_type,
+            Some(JetStreamStorageType::File)
+        ));
+    }
+
+    #[test]
+    fn jetstream_settings_reject_invalid_storage_type() {
+        let result = serde_json::from_str::<JetStreamSettings>(r#"{"storage_type":"disk"}"#);
+        assert!(result.is_err());
+    }
 }

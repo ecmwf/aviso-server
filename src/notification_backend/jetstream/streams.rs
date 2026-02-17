@@ -1,6 +1,9 @@
+use crate::configuration::{
+    JetStreamDiscardPolicy, JetStreamRetentionPolicy, JetStreamStorageType,
+};
 use crate::notification::topic_parser::derive_event_type_from_topic;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result};
 use async_nats::jetstream::stream::{
     Config as StreamConfig, DiscardPolicy, RetentionPolicy, StorageType,
 };
@@ -85,32 +88,20 @@ fn build_stream_config_for_base(
     stream_name: &str,
     subject_pattern: &str,
 ) -> Result<StreamConfig> {
-    // Parse storage type from configuration
-    let storage_type = match backend.config.storage_type.to_lowercase().as_str() {
-        "file" => StorageType::File,
-        "memory" => StorageType::Memory,
-        _ => bail!("Invalid storage type: '{}'", backend.config.storage_type),
+    let storage_type = match backend.config.storage_type {
+        JetStreamStorageType::File => StorageType::File,
+        JetStreamStorageType::Memory => StorageType::Memory,
     };
 
-    // Parse retention policy from configuration
-    let retention = match backend.config.retention_policy.to_lowercase().as_str() {
-        "limits" => RetentionPolicy::Limits,
-        "interest" => RetentionPolicy::Interest,
-        "workqueue" => RetentionPolicy::WorkQueue,
-        _ => bail!(
-            "Invalid retention policy: '{}'",
-            backend.config.retention_policy
-        ),
+    let retention = match backend.config.retention_policy {
+        JetStreamRetentionPolicy::Limits => RetentionPolicy::Limits,
+        JetStreamRetentionPolicy::Interest => RetentionPolicy::Interest,
+        JetStreamRetentionPolicy::Workqueue => RetentionPolicy::WorkQueue,
     };
 
-    // Parse discard policy from configuration
-    let discard = match backend.config.discard_policy.to_lowercase().as_str() {
-        "old" => DiscardPolicy::Old,
-        "new" => DiscardPolicy::New,
-        _ => bail!(
-            "Invalid discard policy: '{}'",
-            backend.config.discard_policy
-        ),
+    let discard = match backend.config.discard_policy {
+        JetStreamDiscardPolicy::Old => DiscardPolicy::Old,
+        JetStreamDiscardPolicy::New => DiscardPolicy::New,
     };
 
     // Create base stream configuration with per-subject message limiting

@@ -45,7 +45,7 @@ geo-types = "0.7"
 
 [dependencies.reqwest]
 version = "0.13"
-default-features = false
+default-features = true
 # `json` feature flag to serialize/deserialize JSON payloads
 features = ["json"]
 
