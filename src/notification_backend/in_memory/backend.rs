@@ -79,10 +79,17 @@ impl InMemoryBackend {
             "Initializing in-memory backend with configuration"
         );
 
-        let channel_capacity = (config
+        let requested_channel_capacity = config
             .max_history_per_topic
-            .saturating_mul(config.max_topics))
-        .clamp(1024, 65536);
+            .saturating_mul(config.max_topics);
+        let channel_capacity = requested_channel_capacity.clamp(1024, 65536);
+        if requested_channel_capacity > channel_capacity {
+            warn!(
+                requested_channel_capacity,
+                effective_channel_capacity = channel_capacity,
+                "Broadcast channel capacity clamped to upper bound; lagged consumers may miss notifications under high throughput"
+            );
+        }
         let (live_notifications_tx, _) = broadcast::channel(channel_capacity);
 
         Self {
@@ -153,31 +160,21 @@ impl InMemoryBackend {
             }
         }
     }
-}
 
-#[async_trait]
-impl NotificationBackend for InMemoryBackend {
-    /// Store a notification message for the specified topic
-    /// Automatically manages memory limits by pruning old messages and topics
-    /// Creates new topics on-demand and assigns unique message IDs per topic
-    ///
-    /// # Arguments
-    /// * `topic` - Topic name to store the message under
-    /// * `payload` - Notification payload as JSON string
-    ///
-    /// # Returns
-    /// * `anyhow::Result<()>` - Success or error if timestamp generation fails
-    async fn put_messages(&self, topic: &str, payload: String) -> Result<()> {
+    async fn store_message(
+        &self,
+        topic: &str,
+        payload: String,
+        metadata: Option<HashMap<String, String>>,
+    ) -> Result<()> {
         let mut state = self.state.lock().await;
         let sequence = state.next_sequence;
         state.next_sequence += 1;
 
-        // Enforce topic limit before potentially creating a new topic
         if !state.topics.contains_key(topic) {
             self.enforce_topic_limit(&mut state.topics);
         }
 
-        // Get or create topic state with configured capacity
         let topic_state = state.topics.entry(topic.to_string()).or_insert_with(|| {
             info!(
                 topic = %topic,
@@ -187,19 +184,15 @@ impl NotificationBackend for InMemoryBackend {
             TopicState::new(self.config.max_history_per_topic)
         });
 
-        // Create message with optional fields populated for in-memory backend
         let msg = NotificationMessage {
             sequence,
             topic: topic.to_string(),
             payload,
             timestamp: Some(Utc::now()),
-            metadata: None,
+            metadata,
         };
 
-        // Update topic state counters
         topic_state.total_messages_received += 1;
-
-        // Enforce per-topic message history limit (FIFO eviction)
         if topic_state.messages.len() >= self.config.max_history_per_topic {
             let removed_msg = topic_state.messages.pop_front();
             debug!(
@@ -210,10 +203,8 @@ impl NotificationBackend for InMemoryBackend {
             );
         }
 
-        // Add new message to the back of the queue
         topic_state.messages.push_back(msg.clone());
 
-        // Log with optional detailed metrics
         if self.config.enable_metrics {
             debug!(
                 topic = %topic,
@@ -230,10 +221,25 @@ impl NotificationBackend for InMemoryBackend {
             );
         }
 
-        // Live-only fanout: subscribers receive only notifications published after subscription.
         let _ = self.live_notifications_tx.send(msg);
-
         Ok(())
+    }
+}
+
+#[async_trait]
+impl NotificationBackend for InMemoryBackend {
+    /// Store a notification message for the specified topic
+    /// Automatically manages memory limits by pruning old messages and topics
+    /// Creates new topics on-demand and assigns unique message IDs per topic
+    ///
+    /// # Arguments
+    /// * `topic` - Topic name to store the message under
+    /// * `payload` - Notification payload as JSON string
+    ///
+    /// # Returns
+    /// * `anyhow::Result<()>` - Success or error if timestamp generation fails
+    async fn put_messages(&self, topic: &str, payload: String) -> Result<()> {
+        self.store_message(topic, payload, None).await
     }
 
     async fn put_message_with_headers(
@@ -242,35 +248,7 @@ impl NotificationBackend for InMemoryBackend {
         headers: Option<HashMap<String, String>>,
         payload: String,
     ) -> Result<()> {
-        let mut state = self.state.lock().await;
-        let sequence = state.next_sequence;
-        state.next_sequence += 1;
-
-        if !state.topics.contains_key(topic) {
-            self.enforce_topic_limit(&mut state.topics);
-        }
-
-        let topic_state = state
-            .topics
-            .entry(topic.to_string())
-            .or_insert_with(|| TopicState::new(self.config.max_history_per_topic));
-
-        let msg = NotificationMessage {
-            sequence,
-            topic: topic.to_string(),
-            payload,
-            timestamp: Some(Utc::now()),
-            metadata: headers,
-        };
-        topic_state.total_messages_received += 1;
-
-        if topic_state.messages.len() >= self.config.max_history_per_topic {
-            topic_state.messages.pop_front();
-        }
-        topic_state.messages.push_back(msg.clone());
-
-        let _ = self.live_notifications_tx.send(msg);
-        Ok(())
+        self.store_message(topic, payload, headers).await
     }
 
     /// Remove all notifications from topics matching a stream pattern
