@@ -2,10 +2,9 @@
 
 use actix_web::{HttpResponse, web};
 use anyhow::Result;
-use chrono::{DateTime, Utc};
+use chrono::Utc;
 use futures_util::StreamExt as FuturesStreamExt;
 use futures_util::stream::unfold;
-use serde_json::json;
 use std::sync::Arc;
 use tokio::time::Duration;
 use tokio_stream::StreamExt as TokioStreamExt;
@@ -13,51 +12,52 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use super::helpers::{
-    apply_graceful_shutdown, create_heartbeat_stream, create_sse_response,
-    notification_to_sse_event,
+    apply_stream_lifecycle, create_heartbeat_stream, create_sse_response, frame_to_sse_bytes,
 };
-use super::types::{SseEventType, format_sse_event};
+use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
 use crate::notification::wildcard_matcher::matches_notification_filters;
-use crate::notification_backend::{NotificationBackend, NotificationMessage, replay::BatchParams};
+use crate::notification_backend::{
+    NotificationBackend, NotificationMessage,
+    replay::{BatchParams, StartAt},
+};
+
+fn split_start_at(start_at: StartAt) -> (Option<u64>, Option<chrono::DateTime<chrono::Utc>>) {
+    match start_at {
+        StartAt::Sequence(seq) => (Some(seq), None),
+        StartAt::Date(date) => (None, Some(date)),
+        StartAt::LiveOnly => (None, None),
+    }
+}
 
 /// Create a stream that replays historical messages using tokio_stream
 ///
-/// - Fetches batch_size, batch_delay_ms, and base_url from global configuration
+/// - Fetches batch_size and batch_delay_ms from global configuration
 /// - Performs paginated fetch of notifications from the backend
-/// - Applies spatial and parameter filtering using canonicalized request params
+/// - Applies request-level filtering (including optional spatial filtering)
 pub fn create_historical_replay_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
-    from_sequence: Option<u64>,
-    from_date: Option<DateTime<Utc>>,
+    start_at: StartAt,
     request_params: Arc<std::collections::HashMap<String, String>>,
-) -> impl tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>> {
+) -> impl tokio_stream::Stream<Item = StreamFrame> {
     // Fetch configuration values from global settings
     let watch_config = Settings::get_global_watch_settings();
-    let app_settings = Settings::get_global_application_settings();
 
     // Build the initial pagination params based on either sequence or date
-    let initial_params = BatchParams::new(topic.clone(), watch_config.replay_batch_size);
-    let initial_params = if let Some(seq) = from_sequence {
-        initial_params.with_sequence(seq)
-    } else if let Some(date) = from_date {
-        initial_params.with_date(date)
-    } else {
-        initial_params
-    };
+    let initial_params =
+        BatchParams::new(topic.clone(), watch_config.replay_batch_size).with_start_at(start_at);
 
-    // All state is in the tuple: (backend, params, has_more, base_url, delay_ms, request_params)
+    // All state is in the tuple: (backend, params, has_more, delay_ms, request_params)
     unfold(
         (
             backend,
             initial_params,
             true,
-            app_settings.base_url.clone(),
             watch_config.replay_batch_delay_ms,
             request_params,
         ),
-        move |(backend, mut params, mut has_more, base_url, delay_ms, request_params)| async move {
+        move |(backend, mut params, mut has_more, delay_ms, request_params)| async move {
             if !has_more {
                 // End of stream: terminate unfold
                 return None;
@@ -81,7 +81,7 @@ pub fn create_historical_replay_stream(
                     }
 
                     // Filter and convert batch to SSE events
-                    let mut sse_events = Vec::new();
+                    let mut frames = Vec::new();
 
                     for message in batch_result.messages {
                         // Filtering: Only send if message matches request fields (including spatial)
@@ -93,31 +93,19 @@ pub fn create_historical_replay_stream(
                             continue;
                         }
                         // Passed all filters: convert to SSE event
-                        let sse_event = notification_to_sse_event(
-                            &message,
-                            &base_url,
-                            SseEventType::ReplayNotification,
-                        );
-                        sse_events.push(sse_event);
+                        frames.push(StreamFrame::Notification {
+                            notification: message,
+                            kind: DeliveryKind::Replay,
+                        });
                     }
 
                     // If there was a replay limit, inform client with control event
                     if let Some(replay_limit_info) = &batch_result.replay_limit {
-                        let replay_limit_event = format_sse_event(
-                            SseEventType::ReplayControl,
-                            json!({
-                                "type": "notification_replay_limit_reached",
-                                "topic": params.topic,
-                                "max_allowed": replay_limit_info.max_allowed,
-                                "message": format!(
-                                    "Historical replay limited to {} messages. \
-                                    Additional historical messages may be available but were not retrieved.",
-                                    replay_limit_info.max_allowed
-                                ),
-                                "timestamp": Utc::now().to_rfc3339()
-                             }),
-                        );
-                        sse_events.push(Ok(web::Bytes::from(replay_limit_event)));
+                        frames.push(StreamFrame::Control(ControlEvent::ReplayLimitReached {
+                            topic: params.topic.clone(),
+                            max_allowed: replay_limit_info.max_allowed,
+                            timestamp: Utc::now(),
+                        }));
                     }
 
                     // Optional batch delay for rate limiting
@@ -125,10 +113,10 @@ pub fn create_historical_replay_stream(
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
                     }
 
-                    // Return the stream of SSE events and updated state tuple (including filtering params)
+                    // Return current batch frames and updated replay state.
                     Some((
-                        tokio_stream::iter(sse_events),
-                        (backend, params, has_more, base_url, delay_ms, request_params), // always 6 elements!
+                        tokio_stream::iter(frames),
+                        (backend, params, has_more, delay_ms, request_params),
                     ))
                 }
                 Err(e) => {
@@ -137,34 +125,27 @@ pub fn create_historical_replay_stream(
                         topic = %params.topic,
                         "Failed to retrieve historical message batch"
                     );
-                    // On error: yield an SSE error event and mark stream as completed (has_more = false)
-                    let error_event = format_sse_event(
-                        SseEventType::Error,
-                        json!({
-                            "error": "Historical replay failed",
-                            "message": e.to_string(),
-                            "topic": params.topic
-                        }),
-                    );
-                    let error_events = vec![Ok(web::Bytes::from(error_event))];
-                    // Again, return updated state with the filtering params included
+                    // On error: emit one error frame and stop replay iteration.
+                    let error_frames = vec![StreamFrame::Error {
+                        topic: params.topic.clone(),
+                        message: e.to_string(),
+                    }];
                     Some((
-                        tokio_stream::iter(error_events),
-                        (backend, params, false, base_url, delay_ms, request_params),
+                        tokio_stream::iter(error_frames),
+                        (backend, params, false, delay_ms, request_params),
                     ))
                 }
             }
         },
     )
-        .flatten() // Flatten nested batch streams into one continuous SSE stream
+    .flatten() // Flatten nested batch streams into one continuous stream
 }
 
 /// Create a combined stream that transitions from historical to live messages
 pub async fn create_historical_then_live_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
-    from_sequence: Option<u64>,
-    from_date: Option<DateTime<Utc>>,
+    start_at: StartAt,
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
 ) -> Result<HttpResponse> {
@@ -175,35 +156,26 @@ pub async fn create_historical_then_live_stream(
     let historical_stream = create_historical_replay_stream(
         topic.clone(),
         backend.clone(),
-        from_sequence,
-        from_date,
+        start_at,
         request_params.clone(),
     );
 
-    // Create control events for replay lifecycle
-    let start_event = format_sse_event(
-        SseEventType::ReplayControl,
-        json!({
-            "type": "replay_started",
-            "topic": topic,
-            "from_sequence": from_sequence,
-            "from_date": from_date,
-            "batch_size": watch_config.replay_batch_size,
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        }),
-    );
+    let (from_sequence, from_date) = split_start_at(start_at);
 
-    let completion_event = format_sse_event(
-        SseEventType::ReplayControl,
-        json!({
-            "type": "replay_completed",
-            "topic": topic,
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        }),
-    );
+    // Create control events for replay lifecycle.
+    let start_event = StreamFrame::Control(ControlEvent::ReplayStarted {
+        topic: topic.clone(),
+        from_sequence,
+        from_date,
+        batch_size: watch_config.replay_batch_size,
+        timestamp: chrono::Utc::now(),
+    });
+    let completion_event = StreamFrame::Control(ControlEvent::ReplayCompleted {
+        topic: topic.clone(),
+        timestamp: chrono::Utc::now(),
+    });
 
-    // Create live subscription stream
-    // Create live subscription stream with filtering
+    // Create live subscription stream with request filtering.
     let notification_stream = backend.subscribe_to_topic(&topic).await?;
     let request_params_clone = request_params.clone();
     let filtered_stream = futures_util::StreamExt::filter_map(
@@ -215,7 +187,6 @@ pub async fn create_historical_then_live_stream(
 
     let live_notification_sse_stream = super::live::create_live_notification_stream(
         filtered_stream,
-        app_settings.base_url.clone(),
         watch_config.concurrent_notification_processing,
     );
 
@@ -223,16 +194,11 @@ pub async fn create_historical_then_live_stream(
     let heartbeat_stream =
         create_heartbeat_stream(topic.clone(), watch_config.sse_heartbeat_interval_sec);
 
-    // Combine streams with proper event sequencing
+    // Sequence: replay_started -> replay frames -> replay_completed -> live frames.
     let combined_notification_stream = FuturesStreamExt::chain(
+        FuturesStreamExt::chain(tokio_stream::once(start_event), historical_stream),
         FuturesStreamExt::chain(
-            tokio_stream::once(Ok::<_, actix_web::Error>(web::Bytes::from(start_event))),
-            historical_stream,
-        ),
-        FuturesStreamExt::chain(
-            tokio_stream::once(Ok::<_, actix_web::Error>(web::Bytes::from(
-                completion_event,
-            ))),
+            tokio_stream::once(completion_event),
             live_notification_sse_stream,
         ),
     );
@@ -240,29 +206,38 @@ pub async fn create_historical_then_live_stream(
     // Merge with heartbeat stream
     let merged_stream = TokioStreamExt::merge(combined_notification_stream, heartbeat_stream);
 
-    // Apply graceful shutdown
-    let stream_with_closing = apply_graceful_shutdown(merged_stream, shutdown.get_ref().clone());
+    // Apply lifecycle and convert typed frames to SSE bytes.
+    let stream_with_lifecycle = apply_stream_lifecycle(
+        merged_stream,
+        topic.clone(),
+        shutdown.get_ref().clone(),
+        Some(Duration::from_secs(
+            watch_config.connection_max_duration_sec,
+        )),
+    );
+    let base_url = app_settings.base_url.clone();
+    let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
+        frame_to_sse_bytes(frame, &base_url)
+    });
 
     tracing::info!(
         topic = %topic,
         from_sequence = ?from_sequence,
         from_date = ?from_date,
         batch_size = watch_config.replay_batch_size,
-        "Created combined historical-then-live SSE stream with proper event types"
+        "Created combined historical-then-live SSE stream"
     );
 
-    Ok(create_sse_response(stream_with_closing))
+    Ok(create_sse_response(byte_stream))
 }
 
 /// Create a replay-only stream (historical messages then close)
 ///
-/// This function creates a stream that replays historical messages and then
-/// terminates the connection, unlike the watch endpoint which transitions to live streaming.
+/// This stream ends after replay completion; it does not transition to live notifications.
 pub async fn create_replay_only_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
-    from_sequence: Option<u64>,
-    from_date: Option<DateTime<Utc>>,
+    start_at: StartAt,
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
 ) -> Result<HttpResponse> {
@@ -272,46 +247,43 @@ pub async fn create_replay_only_stream(
     let historical_stream = create_historical_replay_stream(
         topic.clone(),
         backend.clone(),
-        from_sequence,
-        from_date,
+        start_at,
         request_params.clone(),
     );
 
-    // Create control events for replay lifecycle
-    let start_event = format_sse_event(
-        SseEventType::ReplayControl,
-        json!({
-            "type": "replay_started",
-            "topic": topic,
-            "from_sequence": from_sequence,
-            "from_date": from_date,
-            "batch_size": watch_config.replay_batch_size,
-            "timestamp": Utc::now().to_rfc3339()
-        }),
-    );
+    let (from_sequence, from_date) = split_start_at(start_at);
 
-    let completion_event = format_sse_event(
-        SseEventType::ReplayControl,
-        json!({
-            "type": "replay_completed",
-            "topic": topic,
-            "timestamp": chrono::Utc::now().to_rfc3339()
-        }),
-    );
+    // Create control events for replay lifecycle.
+    let start_event = StreamFrame::Control(ControlEvent::ReplayStarted {
+        topic: topic.clone(),
+        from_sequence,
+        from_date,
+        batch_size: watch_config.replay_batch_size,
+        timestamp: Utc::now(),
+    });
+    let completion_event = StreamFrame::Control(ControlEvent::ReplayCompleted {
+        topic: topic.clone(),
+        timestamp: chrono::Utc::now(),
+    });
 
     // Chain: start -> historical -> completion
     let replay_stream = FuturesStreamExt::chain(
-        FuturesStreamExt::chain(
-            tokio_stream::once(Ok::<_, actix_web::Error>(web::Bytes::from(start_event))),
-            historical_stream,
-        ),
-        tokio_stream::once(Ok::<_, actix_web::Error>(web::Bytes::from(
-            completion_event,
-        ))),
+        FuturesStreamExt::chain(tokio_stream::once(start_event), historical_stream),
+        tokio_stream::once(completion_event),
     );
 
-    // Apply shutdown handling
-    let stream_with_closing = apply_graceful_shutdown(replay_stream, shutdown.get_ref().clone());
+    // Replay endpoint is finite; close reason is end_of_stream unless interrupted.
+    let stream_with_lifecycle = apply_stream_lifecycle(
+        replay_stream,
+        topic.clone(),
+        shutdown.get_ref().clone(),
+        None,
+    );
+    let app_settings = Settings::get_global_application_settings();
+    let base_url = app_settings.base_url.clone();
+    let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
+        frame_to_sse_bytes(frame, &base_url)
+    });
 
     tracing::info!(
         topic = %topic,
@@ -322,5 +294,5 @@ pub async fn create_replay_only_stream(
     );
 
     // Use existing helper for response creation
-    Ok(create_sse_response(stream_with_closing))
+    Ok(create_sse_response(byte_stream))
 }

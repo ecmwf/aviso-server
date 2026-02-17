@@ -1,7 +1,6 @@
 //! JetStream-specific implementation of replay functionality using pull consumers
 
 use anyhow::{Context, Result};
-use chrono::{DateTime, Utc};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
@@ -11,7 +10,7 @@ use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch
 use crate::notification_backend::jetstream::{
     backend::JetStreamBackend, subscriber_utils::transform_jetstream_message,
 };
-use crate::notification_backend::replay::BatchParams;
+use crate::notification_backend::replay::{BatchParams, StartAt};
 use crate::types::{BatchResult, ReplayLimitInfo};
 
 /// Retrieve a batch of historical messages from JetStream using pull consumer
@@ -27,7 +26,7 @@ pub async fn get_messages_batch(
     debug!(
         topic = %params.topic,
         backend_pattern = %backend_pattern,
-        from_sequence = ?params.from_sequence,
+        start_at = ?params.start_at,
         limit = params.limit,
         "Starting JetStream batch retrieval with deterministic approach"
     );
@@ -65,14 +64,8 @@ pub async fn get_messages_batch(
     }
 
     // Create ephemeral pull consumer
-    let consumer = create_pull_consumer(
-        backend,
-        &stream_name,
-        &backend_pattern,
-        params.from_sequence,
-        params.from_date,
-    )
-    .await?;
+    let consumer =
+        create_pull_consumer(backend, &stream_name, &backend_pattern, params.start_at).await?;
 
     // Fetch messages using batch method
     let mut messages = consumer
@@ -187,13 +180,12 @@ async fn create_pull_consumer(
     backend: &JetStreamBackend,
     stream_name: &str,
     backend_pattern: &str,
-    from_sequence: Option<u64>,
-    from_date: Option<DateTime<Utc>>,
+    start_at: StartAt,
 ) -> Result<async_nats::jetstream::consumer::Consumer<async_nats::jetstream::consumer::pull::Config>>
 {
     use async_nats::jetstream::consumer::{AckPolicy, ReplayPolicy};
 
-    let deliver_policy = determine_deliver_policy(from_sequence, from_date)?;
+    let deliver_policy = determine_deliver_policy(start_at)?;
 
     // Create consumer configuration for batch retrieval
     let consumer_config = async_nats::jetstream::consumer::pull::Config {
@@ -235,38 +227,41 @@ async fn create_pull_consumer(
 }
 
 fn determine_deliver_policy(
-    from_sequence: Option<u64>,
-    from_date: Option<DateTime<Utc>>,
+    start_at: StartAt,
 ) -> Result<async_nats::jetstream::consumer::DeliverPolicy> {
     use async_nats::jetstream::consumer::DeliverPolicy;
 
-    match from_sequence {
-        Some(0) | None => match from_date {
-            Some(start_date) => {
-                let nanos = start_date
-                    .timestamp_nanos_opt()
-                    .context("from_date is outside supported timestamp range")?;
-                let start_time = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos))
-                    .context("from_date could not be converted to JetStream start time")?;
-                debug!(
-                    start_time = ?start_time,
-                    "Using ByStartTime delivery policy"
-                );
-                Ok(DeliverPolicy::ByStartTime { start_time })
-            }
-            None => {
+    match start_at {
+        StartAt::Date(start_date) => {
+            let nanos = start_date
+                .timestamp_nanos_opt()
+                .context("from_date is outside supported timestamp range")?;
+            let start_time = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos))
+                .context("from_date could not be converted to JetStream start time")?;
+            debug!(
+                start_time = ?start_time,
+                "Using ByStartTime delivery policy"
+            );
+            Ok(DeliverPolicy::ByStartTime { start_time })
+        }
+        StartAt::Sequence(seq) => match seq {
+            0 => {
                 debug!("Using DeliverPolicy::All for no replay start parameter");
                 Ok(DeliverPolicy::All)
             }
+            _ => {
+                debug!(
+                    start_sequence = seq,
+                    "Using ByStartSequence delivery policy"
+                );
+                Ok(DeliverPolicy::ByStartSequence {
+                    start_sequence: seq,
+                })
+            }
         },
-        Some(seq) => {
-            debug!(
-                start_sequence = seq,
-                "Using ByStartSequence delivery policy"
-            );
-            Ok(DeliverPolicy::ByStartSequence {
-                start_sequence: seq,
-            })
+        StartAt::LiveOnly => {
+            debug!("Using DeliverPolicy::All for no replay start parameter");
+            Ok(DeliverPolicy::All)
         }
     }
 }
@@ -274,16 +269,13 @@ fn determine_deliver_policy(
 #[cfg(test)]
 mod tests {
     use super::determine_deliver_policy;
+    use crate::notification_backend::replay::StartAt;
     use chrono::{DateTime, Utc};
 
     #[test]
     fn policy_prefers_sequence_when_both_sequence_and_date_present() {
-        // This can occur internally after the first replay batch, when pagination
-        // adds `from_sequence` while `from_date` remains set in the carried params.
-        let boundary = DateTime::parse_from_rfc3339("2025-06-09T13:15:00Z")
-            .unwrap()
-            .with_timezone(&Utc);
-        let deliver_policy = determine_deliver_policy(Some(42), Some(boundary)).unwrap();
+        // Internal replay pagination advances with sequence once batches begin.
+        let deliver_policy = determine_deliver_policy(StartAt::Sequence(42)).unwrap();
 
         assert!(matches!(
             deliver_policy,
@@ -296,7 +288,7 @@ mod tests {
         let boundary = DateTime::parse_from_rfc3339("2025-06-09T13:15:00Z")
             .unwrap()
             .with_timezone(&Utc);
-        let deliver_policy = determine_deliver_policy(None, Some(boundary)).unwrap();
+        let deliver_policy = determine_deliver_policy(StartAt::Date(boundary)).unwrap();
 
         assert!(matches!(
             deliver_policy,
@@ -306,7 +298,7 @@ mod tests {
 
     #[test]
     fn policy_uses_all_when_no_replay_parameters_are_present() {
-        let deliver_policy = determine_deliver_policy(None, None).unwrap();
+        let deliver_policy = determine_deliver_policy(StartAt::LiveOnly).unwrap();
 
         assert!(matches!(
             deliver_policy,

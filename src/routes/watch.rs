@@ -1,6 +1,7 @@
 use crate::error::{sse_error_response, validation_error_response};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
 use crate::notification_backend::NotificationBackend;
+use crate::notification_backend::replay::StartAt;
 use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
@@ -59,30 +60,31 @@ pub async fn watch(
 
     // Update tracing context
     tracing::Span::current().record("event_type", &context.event_type);
-    if let Some(id) = context.from_id {
-        tracing::Span::current().record("from_id", id);
-    }
-    if let Some(date) = &context.from_date {
-        tracing::Span::current().record("from_date", date.to_rfc3339());
+    match context.start_at {
+        StartAt::Sequence(id) => {
+            tracing::Span::current().record("from_id", id);
+        }
+        StartAt::Date(date) => {
+            tracing::Span::current().record("from_date", date.to_rfc3339());
+        }
+        StartAt::LiveOnly => {}
     }
 
     // Prepare filtering parameters - use ORIGINAL request parameters for spatial filtering
     let original_request_params = Arc::new(notification_request.identifier.clone());
 
     // Determine streaming mode and create appropriate stream
-    let sse_response = if context.from_id.is_some() || context.from_date.is_some() {
+    let sse_response = if !matches!(context.start_at, StartAt::LiveOnly) {
         info!(
             topic = %context.topic,
-            from_id = ?context.from_id,
-            from_date = ?context.from_date,
+            start_at = ?context.start_at,
             "Creating historical replay + live stream"
         );
 
         create_historical_then_live_stream(
             context.topic.clone(),
             notification_backend.get_ref().clone(),
-            context.from_id,
-            context.from_date,
+            context.start_at,
             shutdown.clone(),
             original_request_params.clone(),
         )

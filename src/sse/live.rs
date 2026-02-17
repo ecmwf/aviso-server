@@ -3,35 +3,30 @@
 use actix_web::{HttpResponse, web};
 use anyhow::Result;
 use futures_util::StreamExt as FuturesStreamExt;
-use serde_json::json;
 use std::sync::Arc;
 use tokio::time::Duration;
 use tokio_stream::StreamExt as TokioStreamExt;
 use tokio_util::sync::CancellationToken;
 
 use super::helpers::{
-    apply_graceful_shutdown, create_heartbeat_stream, create_sse_response,
-    notification_to_sse_event,
+    apply_stream_lifecycle, create_heartbeat_stream, create_sse_response, frame_to_sse_bytes,
 };
-use super::types::{SseEventType, format_sse_event};
+use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 
 /// Create a live notification stream from a backend subscription
 pub fn create_live_notification_stream(
     notification_stream: impl tokio_stream::Stream<Item = NotificationMessage> + Send + 'static,
-    base_url: String,
-    concurrent_limit: usize,
-) -> impl tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>> {
-    FuturesStreamExt::buffer_unordered(
-        FuturesStreamExt::map(notification_stream, move |notification| {
-            let base_url = base_url.clone();
-            async move {
-                notification_to_sse_event(&notification, &base_url, SseEventType::LiveNotification)
-            }
-        }),
-        concurrent_limit,
-    )
+    _concurrent_limit: usize,
+) -> impl tokio_stream::Stream<Item = StreamFrame> {
+    // Preserve backend emission order. This path intentionally avoids unordered buffering.
+    FuturesStreamExt::map(notification_stream, move |notification| {
+        StreamFrame::Notification {
+            notification,
+            kind: DeliveryKind::Live,
+        }
+    })
 }
 
 /// Create a live SSE stream for the watch endpoint, applying field/spatial filtering
@@ -43,7 +38,7 @@ pub async fn create_watch_sse_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     shutdown: web::Data<CancellationToken>,
-    request_params: Arc<std::collections::HashMap<String, String>>, // NEW: filtering params
+    request_params: Arc<std::collections::HashMap<String, String>>,
 ) -> Result<HttpResponse> {
     let app_settings = Settings::get_global_application_settings();
     let watch_config = Settings::get_global_watch_settings();
@@ -59,26 +54,20 @@ pub async fn create_watch_sse_stream(
         },
     );
 
-    // Convert filtered notifications into SSE events (Cloudevents)
+    // Convert filtered notifications into typed live frames.
     let notification_sse_stream = create_live_notification_stream(
         filtered_stream,
-        app_settings.base_url.clone(),
         watch_config.concurrent_notification_processing,
     );
 
-    // Send initial connection established event (one-shot SSE)
+    // Send initial connection established event.
     let connection_timeout = Duration::from_secs(watch_config.connection_max_duration_sec);
-    let initial_event = format_sse_event(
-        SseEventType::LiveNotification,
-        json!({
-            "type": "connection_established",
-            "topic": topic,
-            "timestamp": chrono::Utc::now().to_rfc3339(),
-            "connection_will_close_in_seconds": connection_timeout.as_secs()
-        }),
-    );
     let initial_stream =
-        tokio_stream::once(Ok::<_, actix_web::Error>(web::Bytes::from(initial_event)));
+        tokio_stream::once(StreamFrame::Control(ControlEvent::ConnectionEstablished {
+            topic: topic.clone(),
+            timestamp: chrono::Utc::now(),
+            connection_will_close_in_seconds: connection_timeout.as_secs(),
+        }));
 
     // Create heartbeat stream
     let heartbeat_stream =
@@ -90,8 +79,17 @@ pub async fn create_watch_sse_stream(
         heartbeat_stream,
     );
 
-    // Apply graceful shutdown
-    let stream_with_closing = apply_graceful_shutdown(merged_stream, shutdown.get_ref().clone());
+    // Apply lifecycle and convert typed frames to SSE bytes.
+    let stream_with_lifecycle = apply_stream_lifecycle(
+        merged_stream,
+        topic.clone(),
+        shutdown.get_ref().clone(),
+        Some(connection_timeout),
+    );
+    let base_url = app_settings.base_url.clone();
+    let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
+        frame_to_sse_bytes(frame, &base_url)
+    });
 
     tracing::info!(
         timeout_seconds = connection_timeout.as_secs(),
@@ -99,7 +97,7 @@ pub async fn create_watch_sse_stream(
         "SSE stream created with graceful-shutdown support and filtering"
     );
 
-    Ok(create_sse_response(stream_with_closing))
+    Ok(create_sse_response(byte_stream))
 }
 
 pub async fn filter_notification_message(

@@ -1,7 +1,11 @@
-//! Server-Sent Events (SSE) streaming infrastructure for watch endpoint
+//! Server-Sent Events (SSE) streaming infrastructure.
 //!
-//! This module provides SSE event formatting and streaming capabilities
-//! for real-time notification delivery to clients.
+//! The SSE implementation uses a typed internal stream model:
+//! - producers emit `StreamFrame` values (control, notifications, heartbeat, errors, close)
+//! - helpers apply lifecycle rules (shutdown/timeout/end-of-stream)
+//! - a single renderer converts frames to wire-format SSE bytes
+//!
+//! This keeps endpoint behavior stable while making stream lifecycle easier to reason about.
 
 pub mod helpers;
 pub mod live;
