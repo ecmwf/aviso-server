@@ -72,6 +72,13 @@ Once the server is running, execute:
 ./scripts/smoke_test.sh
 ```
 
+The smoke script covers:
+
+- health endpoint,
+- replay/watch baseline flows (`test_polygon`),
+- `mars` replay with dot-containing identifier values,
+- `dissemination` watch+`from_date` flow with dot-containing identifier values.
+
 Useful overrides:
 
 ```bash

@@ -1,40 +1,16 @@
-//! Topic string generation for notification routing
-//!
-//! The topic builder creates routing strings used by the notification backend
-//! to organize and route messages. It supports both schema-driven topic
-//! construction and generic fallback for unknown event types.
+//! Topic subject construction for routing.
 
 use anyhow::{Context, Result};
 use std::collections::HashMap;
 
 use crate::configuration::EventSchema;
+use crate::notification::topic_codec::encode_subject;
 
-/// Builder for notification topic strings
-///
-/// Topics are hierarchical strings used for routing notifications in the backend.
-/// The format depends on whether a schema is available:
-/// - Schema-based: Uses configured base and key order (e.g., "diss.FOO.E1.od.0001")
-/// - Generic: Uses event type and sorted parameters (e.g., "unknown.param1.param2")
+/// Build topic subjects from canonicalized parameters.
 pub struct TopicBuilder;
 
 impl TopicBuilder {
-    /// Build topic string using schema configuration
-    ///
-    /// Uses the schema's topic configuration to build a structured topic string
-    /// with the specified base, separator, and key ordering.
-    ///
-    /// # Arguments
-    /// * `event_type` - The event type name
-    /// * `schema` - The schema definition containing topic configuration
-    /// * `canonicalized_params` - The validated and canonicalized parameters
-    ///
-    /// # Returns
-    /// * `Ok(String)` - The constructed topic string
-    /// * `Err(anyhow::Error)` - Missing required parameter for topic building
-    ///
-    /// # Example
-    /// For a dissemination schema with base "diss" and key_order ["destination", "target"],
-    /// parameters {"destination": "FOO", "target": "E1"} would produce "diss.FOO.E1"
+    /// Build a schema-driven topic subject.
     pub fn build_topic_with_schema(
         event_type: &str,
         schema: &EventSchema,
@@ -43,7 +19,6 @@ impl TopicBuilder {
         if let Some(topic_config) = &schema.topic {
             let mut topic_parts = vec![topic_config.base.clone()];
 
-            // Add parameters in the order specified by the schema
             for key in &topic_config.key_order {
                 let value = canonicalized_params
                     .get(key)
@@ -51,29 +26,13 @@ impl TopicBuilder {
                 topic_parts.push(value.clone());
             }
 
-            Ok(topic_parts.join(&topic_config.separator))
+            Ok(encode_subject(&topic_parts))
         } else {
-            // Fallback to generic topic format if no topic config in schema
             Ok(Self::build_generic_topic(event_type, canonicalized_params))
         }
     }
 
-    /// Build generic topic string when no schema is available
-    ///
-    /// Creates a simple topic format using the event type and all parameter
-    /// values in sorted key order. This ensures consistent topic generation
-    /// for unknown event types.
-    ///
-    /// # Arguments
-    /// * `event_type` - The event type name
-    /// * `canonicalized_params` - The validated parameters
-    ///
-    /// # Returns
-    /// The constructed topic string in format: "{event_type}.{value1}.{value2}..."
-    ///
-    /// # Example
-    /// For event_type "custom" with parameters {"b": "two", "a": "one"},
-    /// this would produce "custom.one.two" (sorted by key name)
+    /// Build a generic topic subject for event types without schema.
     pub fn build_generic_topic(
         event_type: &str,
         canonicalized_params: &HashMap<String, String>,
@@ -82,20 +41,19 @@ impl TopicBuilder {
             return event_type.to_string();
         }
 
-        // Sort keys to ensure consistent topic ordering
+        // Stable key ordering keeps subject generation deterministic.
         let mut sorted_keys: Vec<_> = canonicalized_params.keys().collect();
         sorted_keys.sort();
 
         let mut topic_parts = vec![event_type.to_string()];
 
-        // Add parameter values in sorted key order
         for key in sorted_keys {
             if let Some(value) = canonicalized_params.get(key) {
                 topic_parts.push(value.clone());
             }
         }
 
-        topic_parts.join(".")
+        encode_subject(&topic_parts)
     }
 }
 
@@ -131,7 +89,6 @@ mod tests {
 
         let topic_config = TopicConfig {
             base: "diss".to_string(),
-            separator: ".".to_string(),
             key_order: vec![
                 "destination".to_string(),
                 "target".to_string(),
@@ -159,7 +116,6 @@ mod tests {
 
         let topic_config = TopicConfig {
             base: "diss".to_string(),
-            separator: ".".to_string(),
             key_order: vec!["destination".to_string(), "target".to_string()],
         };
 
@@ -188,10 +144,10 @@ mod tests {
         params.insert("field3".to_string(), "value.with.dots".to_string());
 
         let topic = TopicBuilder::build_generic_topic("test", &params);
-        // Should preserve special characters in values
+        // Non-reserved characters are preserved; reserved ones are encoded.
         assert!(topic.contains("value-with-dash"));
         assert!(topic.contains("value_with_underscore"));
-        assert!(topic.contains("value.with.dots"));
+        assert!(topic.contains("value%2Ewith%2Edots"));
     }
 
     #[test]
@@ -210,14 +166,13 @@ mod tests {
     }
 
     #[test]
-    fn test_custom_separator_in_schema() {
+    fn test_schema_topic_encodes_reserved_tokens() {
         let mut params = HashMap::new();
-        params.insert("a".to_string(), "1".to_string());
-        params.insert("b".to_string(), "2".to_string());
+        params.insert("a".to_string(), "1.2".to_string());
+        params.insert("b".to_string(), "3*4".to_string());
 
         let topic_config = TopicConfig {
             base: "test".to_string(),
-            separator: "/".to_string(), // Custom separator
             key_order: vec!["a".to_string(), "b".to_string()],
         };
 
@@ -229,7 +184,7 @@ mod tests {
         };
 
         let topic = TopicBuilder::build_topic_with_schema("test", &schema, &params).unwrap();
-        assert_eq!(topic, "test/1/2");
+        assert_eq!(topic, "test.1%2E2.3%2A4");
     }
 
     #[test]

@@ -3,27 +3,16 @@ use serde::Serialize;
 use std::collections::HashMap;
 use std::str::FromStr;
 
-/// Operation type for different validation modes
-///
-/// The notification system supports three distinct operation modes:
-/// - **Notify**: Strict validation where all schema fields are required
-/// - **Watch**: Flexible validation where only required fields are validated,
-///   missing optional fields are filled with "*" for wildcard matching
-/// - **Replay**: Similar to watch but for retrieving historical messages
+/// Processing mode for schema validation.
 #[derive(Debug, Clone, Copy, Serialize, PartialEq)]
 pub enum OperationType {
-    /// All schema fields must be present and valid
-    /// Used when storing notifications in the backend
+    /// All schema fields must be present.
     Notify,
 
-    /// Only required fields must be present and valid
-    /// Missing optional fields get "*" for pattern matching
-    /// Used when setting up watches/subscriptions
+    /// Required fields are enforced; optional fields may be wildcarded.
     Watch,
 
-    /// Only required fields must be present and valid
-    /// Missing optional fields get "*" for pattern matching
-    /// Used when retrieving historical messages
+    /// Same field rules as watch; used for historical retrieval.
     Replay,
 }
 
@@ -41,7 +30,7 @@ impl FromStr for OperationType {
 }
 
 impl OperationType {
-    /// Convert OperationType to string
+    /// Return operation as static string.
     pub fn as_str(&self) -> &'static str {
         match self {
             OperationType::Notify => "notify",
@@ -50,7 +39,7 @@ impl OperationType {
         }
     }
 
-    /// Get all supported operation types
+    /// List all operation variants.
     pub fn all_operations() -> Vec<Self> {
         vec![
             OperationType::Notify,
@@ -59,7 +48,7 @@ impl OperationType {
         ]
     }
 
-    /// Get all supported operation type strings
+    /// List all operation strings.
     pub fn all_operation_strings() -> Vec<&'static str> {
         Self::all_operations()
             .iter()
@@ -68,14 +57,14 @@ impl OperationType {
     }
 }
 
-/// Aviso CloudEvent type utilities
+/// Aviso CloudEvent type helpers.
 pub struct AvisoCloudEventTypes;
 
 impl AvisoCloudEventTypes {
-    /// Expected prefix for all Aviso CloudEvent types
+    /// Prefix for Aviso CloudEvent types.
     pub const AVISO_TYPE_PREFIX: &'static str = "int.ecmwf.aviso";
 
-    /// Get all supported Aviso CloudEvent types dynamically
+    /// Build all supported Aviso CloudEvent type strings.
     pub fn get_supported_types() -> Vec<String> {
         OperationType::all_operations()
             .iter()
@@ -83,7 +72,7 @@ impl AvisoCloudEventTypes {
             .collect()
     }
 
-    /// Get a formatted error message for unsupported types
+    /// Build error text for unsupported CloudEvent types.
     pub fn get_unsupported_type_error(actual_type: &str) -> String {
         let supported_types = Self::get_supported_types();
         format!(
@@ -93,16 +82,15 @@ impl AvisoCloudEventTypes {
         )
     }
 
-    /// Check if a CloudEvent type is an Aviso type (without validating operation)
+    /// Check only prefix, not operation suffix validity.
     pub fn is_aviso_type(cloudevent_type: &str) -> bool {
         cloudevent_type.starts_with(Self::AVISO_TYPE_PREFIX)
     }
 
-    /// Validate CloudEvent type and extract operation type
+    /// Validate type and parse operation suffix.
     pub fn validate_and_extract_operation(
         cloudevent_type: &str,
     ) -> Result<OperationType, anyhow::Error> {
-        // Check if the type starts with the expected Aviso prefix
         if !cloudevent_type.starts_with(Self::AVISO_TYPE_PREFIX) {
             anyhow::bail!(
                 "Invalid Aviso CloudEvent type '{}'. Must start with '{}'",
@@ -111,13 +99,11 @@ impl AvisoCloudEventTypes {
             );
         }
 
-        // Extract the operation suffix after the prefix
         let operation_part = cloudevent_type
             .strip_prefix(Self::AVISO_TYPE_PREFIX)
             .and_then(|s| s.strip_prefix('.'))
             .unwrap_or("");
 
-        // Try to parse the operation using the dynamic OperationType
         match OperationType::from_str(operation_part) {
             Ok(operation) => {
                 tracing::debug!(
@@ -140,19 +126,15 @@ impl AvisoCloudEventTypes {
     }
 }
 
-/// Result of notification processing
-///
-/// Contains all the information needed to store or route a notification:
-/// - **topic**: The routing topic for the backend (e.g., "diss.FOO.E1.od.0001")
-/// - **canonicalized_params**: All request parameters in their canonical form
+/// Result returned by notification processing.
 #[derive(Debug, Clone)]
 pub struct ProcessingResult {
-    /// The event type for this notification (e.g., "dissemination", "mars")
+    /// Event type name.
     pub event_type: String,
-    /// The topic string used for routing in the notification backend
+    /// Routed topic subject.
     pub topic: String,
-    /// All request parameters after validation and canonicalization
+    /// Canonicalized request parameters.
     pub canonicalized_params: HashMap<String, String>,
-    /// Optional spatial metadata extracted from polygon fields
+    /// Optional spatial metadata from polygon fields.
     pub spatial_metadata: Option<SpatialMetadata>,
 }

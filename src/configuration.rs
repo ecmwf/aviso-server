@@ -56,7 +56,6 @@ pub struct PayloadConfig {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct TopicConfig {
     pub base: String,
-    pub separator: String,
     pub key_order: Vec<String>,
 }
 

@@ -14,6 +14,7 @@
 - Connects to configured NATS server.
 - Creates streams on demand by topic base.
 - Publishes notifications directly to JetStream subjects.
+- Uses a fixed `.`-separated wire subject format with token encoding for reserved characters.
 - Uses pull consumers for replay batching.
 - Uses consumer-based subscription for live watch streams.
 

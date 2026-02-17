@@ -89,6 +89,8 @@ Streaming endpoints (`watch` and `replay`) work with both backends.
   - Data is persisted in NATS JetStream.
   - Replay survives server restarts (subject to JetStream retention settings).
 
+Topic wire format and reserved-character handling are documented in [Topic Encoding](./topic-encoding.md).
+
 ## SSE Implementation Model
 
 Internally, streaming is implemented as a typed pipeline:

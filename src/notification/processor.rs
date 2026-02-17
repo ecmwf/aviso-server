@@ -1,8 +1,4 @@
-//! Core notification processing logic
-//!
-//! The processor handles the validation, canonicalization, and topic building
-//! for notification requests. It supports both schema-driven processing for
-//! known event types and generic fallback processing for unknown types.
+//! Core notification validation and topic construction.
 
 use anyhow::{Context, Result, bail};
 use std::collections::HashMap;
@@ -16,41 +12,19 @@ use aviso_validators::{
     DateHandler, EnumHandler, ExpverHandler, IntHandler, PolygonHandler, StringHandler, TimeHandler,
 };
 
-/// Main processor for notification validation and canonicalization
-///
-/// The processor orchestrates the complete validation pipeline:
-/// - Determines if schema-based or generic processing should be used
-/// - Validates and canonicalizes all request parameters
-/// - Builds appropriate topic strings for backend routing
-/// - Extracts payload data if configured
+/// Notification request processor.
 pub struct NotificationProcessor<'a> {
-    /// Reference to the schema registry for rule lookup
+    /// Schema registry for event lookups.
     registry: &'a NotificationRegistry,
 }
 
 impl<'a> NotificationProcessor<'a> {
-    /// Create a new processor with access to the schema registry
-    ///
-    /// # Arguments
-    /// * `registry` - Reference to the schema registry
+    /// Create processor with schema registry.
     pub fn new(registry: &'a NotificationRegistry) -> Self {
         Self { registry }
     }
 
-    /// Process request parameters based on event type and operation mode
-    ///
-    /// This is the main entry point for processing. It determines whether to use
-    /// schema-based validation or generic processing based on whether a schema
-    /// exists for the given event type.
-    ///
-    /// # Arguments
-    /// * `event_type` - The type of event being processed
-    /// * `request_params` - The request parameters to validate
-    /// * `operation` - Whether this is a notify or watch operation
-    ///
-    /// # Returns
-    /// * `Ok(ProcessingResult)` - Successfully processed with topic
-    /// * `Err(anyhow::Error)` - Validation or processing failed
+    /// Validate request fields and build topic for the selected operation.
     pub fn process_request(
         &self,
         event_type: &str,
@@ -58,7 +32,7 @@ impl<'a> NotificationProcessor<'a> {
         payload: &Option<serde_json::Value>,
         operation: OperationType,
     ) -> Result<ProcessingResult> {
-        // Determine processing strategy based on schema availability
+        // Schema-driven when available; generic fallback otherwise.
         let (canonicalized_params, spatial_metadata) = if self.registry.has_schema(event_type) {
             let schema = self.registry.get_schema(event_type).unwrap();
             match operation {
@@ -77,7 +51,7 @@ impl<'a> NotificationProcessor<'a> {
             )
         };
 
-        // Build topic string based on schema or generic rules
+        // Topic always comes from canonicalized values.
         let topic = if let Some(schema) = self.registry.get_schema(event_type) {
             TopicBuilder::build_topic_with_schema(event_type, schema, &canonicalized_params)?
         } else {
@@ -92,18 +66,7 @@ impl<'a> NotificationProcessor<'a> {
         })
     }
 
-    /// Process request for notify operation with schema validation
-    ///
-    /// For notify operations, ALL fields defined in the schema must be present
-    /// and valid. This ensures complete data for storage in the backend.
-    ///
-    /// # Arguments
-    /// * `schema` - The schema definition for this event type
-    /// * `request_params` - The request parameters to validate
-    ///
-    /// # Returns
-    /// * `Ok(HashMap)` - All fields validated and canonicalized
-    /// * `Err(anyhow::Error)` - Missing required field or validation failed
+    /// Notify mode: every schema field must be present and valid.
     fn process_notify_request(
         &self,
         schema: &EventSchema,
@@ -114,7 +77,6 @@ impl<'a> NotificationProcessor<'a> {
         let mut spatial_metadata = None;
         let mut has_polygon_field = false;
 
-        // For notify operations, ALL schema fields must be present and valid
         for (field_name, rules) in &schema.identifier {
             let value = request_params.get(field_name).context(format!(
                 "Required field '{}' missing for notify operation",
@@ -124,7 +86,7 @@ impl<'a> NotificationProcessor<'a> {
             let canonicalized_value =
                 self.validate_and_canonicalize_field(field_name, value, rules)?;
 
-            // Check if this is a polygon field and extract spatial metadata
+            // Polygon fields attach spatial metadata for downstream filtering.
             if matches!(rules.first(), Some(ValidationRules::PolygonHandler { .. })) {
                 has_polygon_field = true;
                 let coordinates = PolygonHandler::parse_polygon_coordinates(value)?;
@@ -142,7 +104,7 @@ impl<'a> NotificationProcessor<'a> {
             canonicalized.insert(field_name.clone(), canonicalized_value);
         }
 
-        // Validate payload type if polygon field is present
+        // Polygon notifications require object payload for spatial data.
         if has_polygon_field {
             self.validate_polygon_payload_type(payload)?;
         }
@@ -150,13 +112,10 @@ impl<'a> NotificationProcessor<'a> {
         Ok((canonicalized, spatial_metadata))
     }
 
-    /// Validate that payload type is HashMap when polygon field is present
+    /// Polygon payload must be a JSON object.
     fn validate_polygon_payload_type(&self, payload: &Option<serde_json::Value>) -> Result<()> {
         match payload {
-            Some(serde_json::Value::Object(_)) => {
-                // Payload is HashMap/Object - this is correct
-                Ok(())
-            }
+            Some(serde_json::Value::Object(_)) => Ok(()),
             Some(_) => {
                 anyhow::bail!(
                     "When polygon field is specified, payload must be a HashMap/Object, not a primitive type"
@@ -170,18 +129,7 @@ impl<'a> NotificationProcessor<'a> {
         }
     }
 
-    /// Process request for watch operation with schema validation
-    ///
-    /// For watch operations, only fields marked as required must be present.
-    /// Missing optional fields are filled with "*" for wildcard matching.
-    ///
-    /// # Arguments
-    /// * `schema` - The schema definition for this event type
-    /// * `request_params` - The request parameters to validate
-    ///
-    /// # Returns
-    /// * `Ok(HashMap)` - Required fields validated, optional fields as "*"
-    /// * `Err(anyhow::Error)` - Missing required field or validation failed
+    /// Watch mode: required fields are enforced, optional fields become `"*"`.
     fn process_watch_request(
         &self,
         schema: &EventSchema,
@@ -193,18 +141,16 @@ impl<'a> NotificationProcessor<'a> {
             let is_required = rules.iter().any(|rule| rule.is_required());
 
             if let Some(value) = request_params.get(field_name) {
-                // Field is provided, validate and canonicalize it
                 let canonicalized_value =
                     self.validate_and_canonicalize_field(field_name, value, rules)?;
                 canonicalized.insert(field_name.clone(), canonicalized_value);
             } else if is_required {
-                // Required field is missing - this is an error
                 bail!(
                     "Required field '{}' missing for watch operation",
                     field_name
                 );
             } else {
-                // Optional field not provided, use "*" for wildcard matching
+                // `"*"` keeps positional matching while representing "any value".
                 canonicalized.insert(field_name.clone(), "*".to_string());
             }
         }
@@ -212,11 +158,7 @@ impl<'a> NotificationProcessor<'a> {
         Ok(canonicalized)
     }
 
-    /// Process request for replay operation with schema validation
-    ///
-    /// For replay operations, only fields marked as required must be present.
-    /// Missing optional fields are filled with "*" for wildcard matching.
-    /// This is similar to watch operations but intended for historical data retrieval.
+    /// Replay mode: same schema field rules as watch mode.
     fn process_replay_request(
         &self,
         schema: &EventSchema,
@@ -228,18 +170,15 @@ impl<'a> NotificationProcessor<'a> {
             let is_required = rules.iter().any(|rule| rule.is_required());
 
             if let Some(value) = request_params.get(field_name) {
-                // Field is provided, validate and canonicalize it
                 let canonicalized_value =
                     self.validate_and_canonicalize_field(field_name, value, rules)?;
                 canonicalized.insert(field_name.clone(), canonicalized_value);
             } else if is_required {
-                // Required field is missing - this is an error
                 bail!(
                     "Required field '{}' missing for replay operation",
                     field_name
                 );
             } else {
-                // Optional field not provided, use "*" for wildcard matching
                 canonicalized.insert(field_name.clone(), "*".to_string());
             }
         }
@@ -247,19 +186,7 @@ impl<'a> NotificationProcessor<'a> {
         Ok(canonicalized)
     }
 
-    /// Process request without schema using generic validation
-    ///
-    /// Generic processing provides basic validation without schema rules:
-    /// - Notify: All provided values must be non-empty
-    /// - Listen: All provided values are accepted as-is
-    ///
-    /// # Arguments
-    /// * `request_params` - The request parameters to validate
-    /// * `operation` - Whether this is a notify or watch operation
-    ///
-    /// # Returns
-    /// * `Ok(HashMap)` - Parameters validated according to generic rules
-    /// * `Err(anyhow::Error)` - Generic validation failed
+    /// Fallback validation for event types without schema.
     fn process_generic_request(
         &self,
         request_params: &HashMap<String, String>,
@@ -269,7 +196,6 @@ impl<'a> NotificationProcessor<'a> {
 
         match operation {
             OperationType::Notify => {
-                // For notify without schema, ensure all values are non-empty
                 for (key, value) in request_params {
                     if value.is_empty() {
                         bail!("Field '{}' cannot be empty", key);
@@ -278,7 +204,6 @@ impl<'a> NotificationProcessor<'a> {
                 }
             }
             OperationType::Watch | OperationType::Replay => {
-                // For watch/replay without schema, accept any values including empty
                 for (key, value) in request_params {
                     canonicalized.insert(key.clone(), value.clone());
                 }
@@ -288,27 +213,14 @@ impl<'a> NotificationProcessor<'a> {
         Ok(canonicalized)
     }
 
-    /// Validate and canonicalize a single field using its schema rules
-    ///
-    /// Applies the first validation rule found for the field. Multiple rules
-    /// per field are supported in the schema but currently only the first
-    /// rule is applied.
-    ///
-    /// # Arguments
-    /// * `field_name` - Name of the field being validated
-    /// * `value` - The value to validate
-    /// * `rules` - List of validation rules for this field
-    ///
-    /// # Returns
-    /// * `Ok(String)` - Validated and canonicalized value
-    /// * `Err(anyhow::Error)` - Validation failed with detailed error
+    /// Validate one field with its configured rule.
     fn validate_and_canonicalize_field(
         &self,
         field_name: &str,
         value: &str,
         rules: &[ValidationRules],
     ) -> Result<String> {
-        // Apply the first rule (schema design assumes one rule per field)
+        // Current schema model uses one effective rule per field.
         let rule = rules.first().context(format!(
             "No validation rules found for field '{}'",
             field_name
@@ -378,7 +290,6 @@ mod tests {
             }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
-                separator: ".".to_string(),
                 key_order: vec!["class".to_string(), "destination".to_string()],
             }),
             endpoint: None,
@@ -411,7 +322,6 @@ mod tests {
             }),
             topic: Some(TopicConfig {
                 base: "polygon".to_string(),
-                separator: ".".to_string(),
                 key_order: vec!["date".to_string(), "time".to_string()],
             }),
             endpoint: None,
@@ -802,7 +712,6 @@ mod tests {
             }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
-                separator: ".".to_string(),
                 key_order: vec!["class".to_string(), "destination".to_string()],
             }),
             endpoint: None,

@@ -1,55 +1,38 @@
-//! Wildcard pattern analysis and matching for watch endpoint subscriptions
-//!
-//! This module provides intelligent wildcard pattern analysis that optimizes
-//! backend subscriptions while maintaining flexible application-level filtering.
-//! It implements a hybrid approach where the backend handles coarse filtering
-//! and the application handles fine-grained pattern matching.
+//! Wildcard analysis and matching for watch/replay.
 
+use anyhow::{Context, Result};
 use aviso_validators::polygon::PolygonHandler;
 use geo::{BoundingRect, Intersects};
 use std::collections::HashMap;
 use tracing::debug;
 
-/// Analyze a watch pattern to determine optimal backend subscription and application filter
-///
-/// This function implements the hybrid wildcard strategy:
-/// 1. Find the first wildcard position in the watch pattern
-/// 2. Generate the most specific backend pattern possible (up to first wildcard)
-/// 3. Return the full watch pattern for application-level filtering
-///
-/// # Arguments
-/// * `watch_topic` - The topic pattern from the watch request (e.g., "diss.FOO.*.od.*.*.*.*.*.*")
-///
-/// # Returns
-/// * `(String, Vec<String>)` - (backend subscription pattern, full watch pattern as Vec)
-pub fn analyze_watch_pattern(watch_topic: &str) -> (String, Vec<String>) {
-    let parts: Vec<&str> = watch_topic.split('.').collect();
+use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
 
-    // Convert to owned strings for the full pattern
-    let full_watch_pattern: Vec<String> = parts.iter().map(|s| s.to_string()).collect();
+/// Build backend coarse pattern plus decoded full pattern.
+pub fn analyze_watch_pattern(watch_topic: &str) -> Result<(String, Vec<String>)> {
+    let full_watch_pattern = decode_subject(watch_topic)
+        .with_context(|| format!("Failed to decode watch topic pattern '{}'", watch_topic))?;
 
-    // Find the first wildcard position
-    let first_wildcard_pos = parts.iter().position(|&part| part == "*");
+    let first_wildcard_pos = full_watch_pattern.iter().position(|part| part == "*");
 
     let backend_subscription_pattern = match first_wildcard_pos {
         Some(pos) if pos > 1 => {
-            // Use JetStream '>' wildcard for everything after first wildcard position
-            let specific_parts = &parts[..pos];
-            format!("{}.>", specific_parts.join(".")) // Use > instead of .*
+            let specific_parts = &full_watch_pattern[..pos];
+            format!("{}.>", encode_subject(specific_parts))
         }
         Some(_) => {
-            // Wildcard at position 0 or 1, use broad pattern with just the base
-            let base = parts.first().map_or("unknown", |v| *v);
-            format!("{}.>", base) // Use > instead of .*
+            let base = full_watch_pattern
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "unknown".to_string());
+            format!("{}.>", encode_token(&base))
         }
         None => {
-            // No wildcards present, use specific pattern with > for potential sub-topics
-            if parts.len() > 1 {
-                let without_last = &parts[..parts.len() - 1];
-                format!("{}.>", without_last.join(".")) // Use > instead of .*
+            if full_watch_pattern.len() > 1 {
+                let without_last = &full_watch_pattern[..full_watch_pattern.len() - 1];
+                format!("{}.>", encode_subject(without_last))
             } else {
-                // Single part topic, use > wildcard
-                format!("{}.>", watch_topic) // Use > instead of .*
+                format!("{}.>", watch_topic)
             }
         }
     };
@@ -58,30 +41,27 @@ pub fn analyze_watch_pattern(watch_topic: &str) -> (String, Vec<String>) {
         watch_topic = %watch_topic,
         backend_subscription_pattern = %backend_subscription_pattern,
         first_wildcard_pos = ?first_wildcard_pos,
-        pattern_parts = parts.len(),
+        pattern_parts = full_watch_pattern.len(),
         "Analyzed watch pattern for hybrid filtering"
     );
 
-    (backend_subscription_pattern, full_watch_pattern)
+    Ok((backend_subscription_pattern, full_watch_pattern))
 }
 
-/// Check if a notification topic matches a watch pattern
-///
-/// This function performs position-based pattern matching where:
-/// - Non-wildcard parts must match exactly
-/// - Wildcard parts ("*") match any value
-/// - Both topic and pattern must have the same number of parts
-///
-/// # Arguments
-/// * `notification_topic` - The actual topic from a notification (e.g., "diss.FOO.E1.od.0001.g.20260706.0000.enfo.1")
-/// * `watch_pattern` - The watch pattern as a Vec of parts (e.g., ["diss", "FOO", "*", "od", "*", "*", "*", "*", "*", "*"])
-///
-/// # Returns
-/// * `bool` - true if the notification topic matches the watch pattern
+/// Position-based wildcard match on decoded topic tokens.
 pub fn matches_watch_pattern(notification_topic: &str, watch_pattern: &[String]) -> bool {
-    let notification_parts: Vec<&str> = notification_topic.split('.').collect();
+    let notification_parts = match decode_subject(notification_topic) {
+        Ok(parts) => parts,
+        Err(error) => {
+            debug!(
+                notification_topic = %notification_topic,
+                error = %error,
+                "Failed to decode notification topic"
+            );
+            return false;
+        }
+    };
 
-    // Must have the same number of parts
     if notification_parts.len() != watch_pattern.len() {
         debug!(
             notification_topic = %notification_topic,
@@ -92,7 +72,6 @@ pub fn matches_watch_pattern(notification_topic: &str, watch_pattern: &[String])
         return false;
     }
 
-    // Check each position
     for (i, (notif_part, pattern_part)) in notification_parts
         .iter()
         .zip(watch_pattern.iter())
@@ -118,28 +97,13 @@ pub fn matches_watch_pattern(notification_topic: &str, watch_pattern: &[String])
     true
 }
 
-/// Determines if a notification matches the given filters, supporting spatial (polygon) filtering.
-///
-/// This function applies spatial filtering when a polygon is specified in the request.
-/// It performs efficient two-stage filtering:
-/// 1. Fast bounding box intersection check to eliminate obvious non-matches
-/// 2. Precise polygon intersection for candidates that pass the bbox test
-///
-/// # Arguments
-/// * `request` - Request parameters including optional polygon filter
-/// * `metadata` - Optional notification metadata containing spatial bounding box
-/// * `payload` - Notification payload as JSON string (must contain HashMap for spatial data)
-///
-/// # Returns
-/// * `bool` - true if notification matches all filters, false otherwise
+/// Apply optional polygon filter against metadata/payload geometry.
 pub fn matches_notification_filters(
     request: &HashMap<String, String>,
     metadata: Option<&HashMap<String, String>>,
     payload: &str,
 ) -> bool {
-    // Only apply spatial filtering if a polygon is specified in the request
     let Some(request_polygon) = request.get("polygon") else {
-        // No spatial filtering requested - notification matches
         return true;
     };
 
@@ -148,7 +112,6 @@ pub fn matches_notification_filters(
         request_polygon
     );
 
-    // Parse and validate the request polygon coordinates
     let coords_latlon = match PolygonHandler::parse_polygon_coordinates(request_polygon) {
         Ok(coords) => {
             debug!("Parsed request polygon: {} coordinate pairs", coords.len());
@@ -156,11 +119,10 @@ pub fn matches_notification_filters(
         }
         Err(e) => {
             debug!("Invalid request polygon format: {}", e);
-            return false; // Malformed request polygon, treat as non-match
+            return false;
         }
     };
 
-    // Build geo::Polygon from coordinates
     let filter_poly = {
         let coords_lonlat: Vec<(f64, f64)> = coords_latlon
             .iter()
@@ -169,7 +131,6 @@ pub fn matches_notification_filters(
         geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
     };
 
-    // Calculate bounding box for the filter polygon
     let filter_bbox = match filter_poly.bounding_rect() {
         Some(bbox) => {
             debug!("Request polygon bounding box calculated successfully");
@@ -177,15 +138,13 @@ pub fn matches_notification_filters(
         }
         None => {
             debug!("Failed to calculate bounding box for request polygon");
-            return false; // Degenerate polygon
+            return false;
         }
     };
 
-    // Extract candidate's bounding box from metadata
     let candidate_bbox = metadata
         .and_then(|m| m.get("spatial_bbox"))
         .and_then(|bbox_str| {
-            // Parse bbox string: "min_lat,min_lon,max_lat,max_lon"
             let coords: Vec<f64> = bbox_str
                 .split(',')
                 .map(|part| part.trim().parse().ok())
@@ -201,7 +160,6 @@ pub fn matches_notification_filters(
 
             let (min_lat, min_lon, max_lat, max_lon) = (coords[0], coords[1], coords[2], coords[3]);
 
-            // Create geo::Rect (expects lon,lat coordinates)
             Some(geo::Rect::new(
                 geo::Coord {
                     x: min_lon,
@@ -219,7 +177,6 @@ pub fn matches_notification_filters(
         return false;
     };
 
-    // Fast filtering: check if bounding boxes intersect
     if !candidate_bbox.intersects(&filter_bbox) {
         debug!("Bounding boxes do not intersect - filtering out notification");
         return false;
@@ -227,7 +184,6 @@ pub fn matches_notification_filters(
 
     debug!("Bounding boxes intersect - proceeding to polygon intersection check");
 
-    // Extract candidate polygon geometry from metadata or payload
     let candidate_poly = extract_candidate_polygon(metadata, payload);
 
     let Some(candidate_poly) = candidate_poly else {
@@ -235,7 +191,6 @@ pub fn matches_notification_filters(
         return false;
     };
 
-    // Perform precise polygon intersection check
     let polygons_intersect = candidate_poly.intersects(&filter_poly);
 
     if polygons_intersect {
@@ -247,84 +202,58 @@ pub fn matches_notification_filters(
     polygons_intersect
 }
 
-/// Extract candidate polygon from metadata or payload
-///
-/// Tries to find polygon geometry in this order:
-/// 1. spatial_geometry field in metadata (as coordinate string)
-/// 2. spatial_geometry field in payload (as GeoJSON object)
-///
-/// # Arguments
-/// * `metadata` - Optional notification metadata
-/// * `payload` - Notification payload as JSON string
-///
-/// # Returns
-/// * `Option<geo::Polygon>` - Parsed polygon or None if not found/invalid
+/// Parse candidate polygon from metadata first, then payload.
 fn extract_candidate_polygon(
     metadata: Option<&HashMap<String, String>>,
     payload: &str,
 ) -> Option<geo::Polygon<f64>> {
-    // First, try to get polygon from metadata
     if let Some(candidate_poly) = try_polygon_from_metadata(metadata) {
         return Some(candidate_poly);
     }
 
-    // Fallback: try to extract from payload (HashMap only)
     try_polygon_from_payload(payload)
 }
 
-/// Try to extract polygon from metadata spatial_geometry field
+/// Parse polygon from metadata `spatial_geometry`.
 fn try_polygon_from_metadata(
     metadata: Option<&HashMap<String, String>>,
 ) -> Option<geo::Polygon<f64>> {
     metadata
         .and_then(|m| m.get("spatial_geometry"))
-        .and_then(|geom_str| {
-            PolygonHandler::parse_polygon_coordinates(geom_str)
-                .ok()
-                .map(|coords_latlon| {
-                    // Convert (lat,lon) to (lon,lat) for geo crate
-                    let coords_lonlat: Vec<(f64, f64)> = coords_latlon
-                        .iter()
-                        .map(|(lat, lon)| (*lon, *lat))
-                        .collect();
-                    geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
-                })
-        })
+        .and_then(|geom_str| parse_polygon_geometry_str(geom_str))
 }
 
-/// Try to extract polygon from payload spatial_geometry field
-///
-/// Since your code only works with HashMap payloads, this function assumes
-/// the payload contains a JSON object with a spatial_geometry field.
+/// Parse polygon from payload `spatial_geometry`.
 fn try_polygon_from_payload(payload: &str) -> Option<geo::Polygon<f64>> {
-    // Parse payload as JSON object (HashMap only)
     let json: serde_json::Value = serde_json::from_str(payload).ok()?;
     let spatial_geometry = json.get("spatial_geometry")?;
 
-    // Handle GeoJSON-style geometry object
     if let Some(geom_obj) = spatial_geometry.as_object() {
         extract_polygon_from_geojson(geom_obj)
     } else {
-        // Handle geometry as coordinate string
-        spatial_geometry.as_str().and_then(|geom_str| {
-            PolygonHandler::parse_polygon_coordinates(geom_str)
-                .ok()
-                .map(|coords_latlon| {
-                    let coords_lonlat: Vec<(f64, f64)> = coords_latlon
-                        .iter()
-                        .map(|(lat, lon)| (*lon, *lat))
-                        .collect();
-                    geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
-                })
-        })
+        spatial_geometry
+            .as_str()
+            .and_then(parse_polygon_geometry_str)
     }
 }
 
-/// Extract polygon from GeoJSON-style geometry object
+/// Parse coordinate string to geo polygon.
+fn parse_polygon_geometry_str(geom_str: &str) -> Option<geo::Polygon<f64>> {
+    PolygonHandler::parse_polygon_coordinates(geom_str)
+        .ok()
+        .map(|coords_latlon| {
+            let coords_lonlat: Vec<(f64, f64)> = coords_latlon
+                .iter()
+                .map(|(lat, lon)| (*lon, *lat))
+                .collect();
+            geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
+        })
+}
+
+/// Extract polygon from GeoJSON object.
 fn extract_polygon_from_geojson(
     geom_obj: &serde_json::Map<String, serde_json::Value>,
 ) -> Option<geo::Polygon<f64>> {
-    // Check if this is a Polygon type
     let geo_type = geom_obj.get("type")?.as_str()?;
     if geo_type != "Polygon" {
         debug!(
@@ -334,12 +263,10 @@ fn extract_polygon_from_geojson(
         return None;
     }
 
-    // Extract coordinates array
     let coords_json = geom_obj.get("coordinates")?;
-    let coords_outer = coords_json.as_array()?.first()?; // Get outer ring
+    let coords_outer = coords_json.as_array()?.first()?;
     let coords_inner = coords_outer.as_array()?;
 
-    // Parse coordinate pairs (assuming lat,lon order in your GeoJSON)
     let coords_latlon: Vec<(f64, f64)> = coords_inner
         .iter()
         .filter_map(|pair| {
@@ -357,7 +284,6 @@ fn extract_polygon_from_geojson(
         return None;
     }
 
-    // Convert to geo::Polygon (swap to lon,lat for geo crate)
     let coords_lonlat: Vec<(f64, f64)> = coords_latlon
         .iter()
         .map(|(lat, lon)| (*lon, *lat))
@@ -369,31 +295,14 @@ fn extract_polygon_from_geojson(
     ))
 }
 
-/// Generate backend-compatible wildcard pattern from a topic pattern
-///
-/// This is a convenience function that extracts just the backend subscription pattern
-/// from the analysis, useful when you only need the subscription pattern.
-///
-/// # Arguments
-/// * `watch_topic` - The topic pattern from the watch request
-///
-/// # Returns
-/// * `String` - The backend subscription pattern
+/// Return backend coarse pattern for a watch topic.
 pub fn generate_backend_subscription_pattern(watch_topic: &str) -> String {
-    let (backend_pattern, _) = analyze_watch_pattern(watch_topic);
-    backend_pattern
+    analyze_watch_pattern(watch_topic)
+        .map(|(backend_pattern, _)| backend_pattern)
+        .unwrap_or_else(|_| format!("{}.>", watch_topic))
 }
 
-/// Create a pattern matcher function for a specific watch pattern
-///
-/// This function returns a closure that can be used to efficiently test
-/// multiple notification topics against the same watch pattern.
-///
-/// # Arguments
-/// * `watch_pattern` - The watch pattern as a Vec of parts
-///
-/// # Returns
-/// * `impl Fn(&str) -> bool` - A closure that tests notification topics
+/// Build reusable matcher closure for a decoded watch pattern.
 pub fn create_pattern_matcher(watch_pattern: Vec<String>) -> impl Fn(&str) -> bool {
     move |notification_topic: &str| matches_watch_pattern(notification_topic, &watch_pattern)
 }
@@ -404,7 +313,8 @@ mod tests {
 
     #[test]
     fn test_analyze_watch_pattern_early_wildcard() {
-        let (backend_pattern, app_pattern) = analyze_watch_pattern("diss.FOO.*.od.*.*.*.*.*.*");
+        let (backend_pattern, app_pattern) =
+            analyze_watch_pattern("diss.FOO.%2A.od.%2A.%2A.%2A.%2A.%2A.%2A").unwrap();
         assert_eq!(backend_pattern, "diss.FOO.>");
         assert_eq!(
             app_pattern,
@@ -414,7 +324,8 @@ mod tests {
 
     #[test]
     fn test_analyze_watch_pattern_late_wildcard() {
-        let (backend_pattern, app_pattern) = analyze_watch_pattern("diss.FOO.E1.od.*.*.*.*.*.*");
+        let (backend_pattern, app_pattern) =
+            analyze_watch_pattern("diss.FOO.E1.od.%2A.%2A.%2A.%2A.%2A.%2A").unwrap();
         assert_eq!(backend_pattern, "diss.FOO.E1.od.>");
         assert_eq!(
             app_pattern,
@@ -424,7 +335,8 @@ mod tests {
 
     #[test]
     fn test_analyze_watch_pattern_immediate_wildcard() {
-        let (backend_pattern, app_pattern) = analyze_watch_pattern("diss.*.*.*.*.*.*.*.*.*");
+        let (backend_pattern, app_pattern) =
+            analyze_watch_pattern("diss.%2A.%2A.%2A.%2A.%2A.%2A.%2A.%2A.%2A").unwrap();
         assert_eq!(backend_pattern, "diss.>");
         assert_eq!(
             app_pattern,
@@ -435,7 +347,7 @@ mod tests {
     #[test]
     fn test_analyze_watch_pattern_no_wildcards() {
         let (backend_pattern, app_pattern) =
-            analyze_watch_pattern("diss.FOO.E1.od.0001.g.20260706.0000.enfo.1");
+            analyze_watch_pattern("diss.FOO.E1.od.0001.g.20260706.0000.enfo.1").unwrap();
         assert_eq!(
             backend_pattern,
             "diss.FOO.E1.od.0001.g.20260706.0000.enfo.>"
@@ -465,6 +377,17 @@ mod tests {
         assert!(matches_watch_pattern("diss.FOO.E1.od", &pattern));
         assert!(matches_watch_pattern("diss.FOO.E2.od", &pattern));
         assert!(!matches_watch_pattern("diss.FOO.E1.mars", &pattern));
+    }
+
+    #[test]
+    fn test_matches_watch_pattern_with_encoded_notification_tokens() {
+        let pattern = vec![
+            "diss".to_string(),
+            "FOO".to_string(),
+            "1.45".to_string(),
+            "p%q".to_string(),
+        ];
+        assert!(matches_watch_pattern("diss.FOO.1%2E45.p%25q", &pattern));
     }
 
     #[test]

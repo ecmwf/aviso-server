@@ -37,11 +37,7 @@ pub struct TestApp {
     pub address: String,
 }
 
-fn ensure_test_notification_schema(configuration: &mut Settings) {
-    let schema = configuration
-        .notification_schema
-        .get_or_insert_with(HashMap::new);
-
+fn build_test_polygon_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
         "date".to_string(),
@@ -59,22 +55,252 @@ fn ensure_test_notification_schema(configuration: &mut Settings) {
         vec![ValidationRules::PolygonHandler { required: true }],
     );
 
-    schema.insert(
-        "test_polygon".to_string(),
-        EventSchema {
-            payload: Some(PayloadConfig {
-                allowed_types: vec!["String".to_string()],
-                required: true,
-            }),
-            topic: Some(TopicConfig {
-                base: "polygon".to_string(),
-                separator: ".".to_string(),
-                key_order: vec!["date".to_string(), "time".to_string()],
-            }),
-            endpoint: None,
-            identifier,
-        },
+    EventSchema {
+        payload: Some(PayloadConfig {
+            allowed_types: vec!["String".to_string()],
+            required: true,
+        }),
+        topic: Some(TopicConfig {
+            base: "polygon".to_string(),
+            key_order: vec!["date".to_string(), "time".to_string()],
+        }),
+        endpoint: None,
+        identifier,
+    }
+}
+
+fn build_mars_schema() -> EventSchema {
+    let mut identifier = HashMap::new();
+    identifier.insert(
+        "class".to_string(),
+        vec![ValidationRules::StringHandler {
+            max_length: Some(2),
+            required: true,
+        }],
     );
+    identifier.insert(
+        "expver".to_string(),
+        vec![ValidationRules::ExpverHandler {
+            default: Some("0001".to_string()),
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "domain".to_string(),
+        vec![ValidationRules::EnumHandler {
+            values: vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+                "e".to_string(),
+                "f".to_string(),
+                "g".to_string(),
+                "h".to_string(),
+                "i".to_string(),
+                "j".to_string(),
+                "k".to_string(),
+                "l".to_string(),
+                "m".to_string(),
+                "n".to_string(),
+                "o".to_string(),
+                "p".to_string(),
+                "q".to_string(),
+                "r".to_string(),
+                "s".to_string(),
+                "t".to_string(),
+                "u".to_string(),
+                "v".to_string(),
+                "w".to_string(),
+                "x".to_string(),
+                "y".to_string(),
+                "z".to_string(),
+            ],
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "date".to_string(),
+        vec![ValidationRules::DateHandler {
+            canonical_format: "%Y%m%d".to_string(),
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "time".to_string(),
+        vec![ValidationRules::TimeHandler { required: false }],
+    );
+    identifier.insert(
+        "stream".to_string(),
+        vec![ValidationRules::StringHandler {
+            max_length: None,
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "step".to_string(),
+        vec![ValidationRules::IntHandler {
+            range: Some([0, 100000]),
+            required: false,
+        }],
+    );
+
+    EventSchema {
+        payload: Some(PayloadConfig {
+            allowed_types: vec!["String".to_string(), "NoneType".to_string()],
+            required: false,
+        }),
+        topic: Some(TopicConfig {
+            base: "mars".to_string(),
+            key_order: vec![
+                "class".to_string(),
+                "expver".to_string(),
+                "domain".to_string(),
+                "date".to_string(),
+                "time".to_string(),
+                "stream".to_string(),
+                "step".to_string(),
+            ],
+        }),
+        endpoint: None,
+        identifier,
+    }
+}
+
+fn build_dissemination_schema() -> EventSchema {
+    let mut identifier = HashMap::new();
+    identifier.insert(
+        "destination".to_string(),
+        vec![ValidationRules::StringHandler {
+            max_length: None,
+            required: true,
+        }],
+    );
+    identifier.insert(
+        "target".to_string(),
+        vec![ValidationRules::StringHandler {
+            max_length: None,
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "class".to_string(),
+        vec![ValidationRules::StringHandler {
+            max_length: Some(2),
+            required: true,
+        }],
+    );
+    identifier.insert(
+        "expver".to_string(),
+        vec![ValidationRules::ExpverHandler {
+            default: Some("0001".to_string()),
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "domain".to_string(),
+        vec![ValidationRules::EnumHandler {
+            values: vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+                "e".to_string(),
+                "f".to_string(),
+                "g".to_string(),
+                "h".to_string(),
+                "i".to_string(),
+                "j".to_string(),
+                "k".to_string(),
+                "l".to_string(),
+                "m".to_string(),
+                "n".to_string(),
+                "o".to_string(),
+                "p".to_string(),
+                "q".to_string(),
+                "r".to_string(),
+                "s".to_string(),
+                "t".to_string(),
+                "u".to_string(),
+                "v".to_string(),
+                "w".to_string(),
+                "x".to_string(),
+                "y".to_string(),
+                "z".to_string(),
+            ],
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "date".to_string(),
+        vec![ValidationRules::DateHandler {
+            canonical_format: "%Y%m%d".to_string(),
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "time".to_string(),
+        vec![ValidationRules::TimeHandler { required: false }],
+    );
+    identifier.insert(
+        "stream".to_string(),
+        vec![ValidationRules::StringHandler {
+            max_length: None,
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "step".to_string(),
+        vec![ValidationRules::IntHandler {
+            range: Some([0, 100000]),
+            required: false,
+        }],
+    );
+
+    EventSchema {
+        payload: Some(PayloadConfig {
+            allowed_types: vec![
+                "String".to_string(),
+                "HashMap".to_string(),
+                "CloudEvent".to_string(),
+            ],
+            required: true,
+        }),
+        topic: Some(TopicConfig {
+            base: "diss".to_string(),
+            key_order: vec![
+                "destination".to_string(),
+                "target".to_string(),
+                "class".to_string(),
+                "expver".to_string(),
+                "domain".to_string(),
+                "date".to_string(),
+                "time".to_string(),
+                "stream".to_string(),
+                "step".to_string(),
+            ],
+        }),
+        endpoint: None,
+        identifier,
+    }
+}
+
+fn ensure_test_notification_schema(configuration: &mut Settings) {
+    let schema = configuration
+        .notification_schema
+        .get_or_insert_with(HashMap::new);
+
+    schema.insert("test_polygon".to_string(), build_test_polygon_schema());
+    schema.insert("mars".to_string(), build_mars_schema());
+    schema.insert("dissemination".to_string(), build_dissemination_schema());
+}
+
+fn set_streaming_test_notification_schema(configuration: &mut Settings) {
+    let mut schema = HashMap::new();
+    schema.insert("test_polygon".to_string(), build_test_polygon_schema());
+    schema.insert("mars".to_string(), build_mars_schema());
+    schema.insert("dissemination".to_string(), build_dissemination_schema());
+    configuration.notification_schema = Some(schema);
 }
 
 pub async fn spawn_app() -> TestApp {
@@ -127,6 +353,7 @@ pub async fn spawn_streaming_test_app() -> TestApp {
             max_topics: Some(500),
             enable_metrics: Some(false),
         });
+        set_streaming_test_notification_schema(configuration);
     })
     .await
 }

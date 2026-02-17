@@ -1,3 +1,4 @@
+use crate::notification::topic_codec::encode_token;
 use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
 use crate::notification_backend::in_memory::InMemoryConfig;
 use crate::notification_backend::in_memory::InMemoryStats;
@@ -263,7 +264,7 @@ impl NotificationBackend for InMemoryBackend {
     async fn wipe_stream(&self, stream_name: &str) -> Result<()> {
         let mut state = self.state.lock().await;
         let topics = &mut state.topics;
-        let stream_prefix = format!("{}.", stream_name.to_lowercase());
+        let stream_prefix = format!("{}.", encode_token(&stream_name.to_lowercase()));
 
         // Collect all topic keys that match the stream prefix
         // Done separately to avoid borrowing issues during HashMap modification
@@ -326,7 +327,7 @@ impl NotificationBackend for InMemoryBackend {
     }
 
     async fn get_messages_batch(&self, params: BatchParams) -> Result<BatchResult> {
-        let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(&params.topic);
+        let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(&params.topic)?;
 
         let mut messages = {
             let state = self.state.lock().await;
@@ -370,7 +371,7 @@ impl NotificationBackend for InMemoryBackend {
         topic: &str,
     ) -> anyhow::Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
         let receiver = self.live_notifications_tx.subscribe();
-        let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic);
+        let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic)?;
 
         let stream = unfold(
             (receiver, app_filter_pattern),
