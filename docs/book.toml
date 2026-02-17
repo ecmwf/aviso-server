@@ -1,0 +1,11 @@
+[book]
+title = "Aviso Server Documentation"
+description = "Architecture, configuration, and operational behavior for aviso-server"
+authors = ["Samet Demir <samet.demir@ecmwf.int>",
+    "James Hawkes <james.hawkes@ecmwf.int>"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
+

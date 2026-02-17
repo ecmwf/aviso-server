@@ -76,6 +76,7 @@ pub async fn build_backend(
         "jetstream" => {
             tracing::info!("Building JetStream notification backend");
             let cfg = JetStreamConfig::from_backend_settings(config);
+            cfg.validate()?;
             if cfg.token.is_some() {
                 tracing::info!("NATS token configured");
             } else {

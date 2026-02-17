@@ -1,4 +1,5 @@
 use crate::configuration::NotificationBackendSettings;
+use anyhow::{Result, bail};
 
 /// Configuration for JetStream backend
 /// Contains all necessary settings for connecting to NATS and configuring streams
@@ -72,5 +73,122 @@ impl JetStreamConfig {
                 .and_then(|js| js.reconnect_delay_ms)
                 .unwrap_or(2000),
         }
+    }
+
+    /// Validate JetStream settings that should fail fast at startup.
+    pub fn validate(&self) -> Result<()> {
+        if self.nats_url.trim().is_empty() {
+            bail!("notification_backend.jetstream.nats_url must not be empty");
+        }
+
+        if self.timeout_seconds == 0 {
+            bail!("notification_backend.jetstream.timeout_seconds must be > 0");
+        }
+
+        if self.retry_attempts == 0 {
+            bail!("notification_backend.jetstream.retry_attempts must be > 0");
+        }
+
+        if self.reconnect_delay_ms == 0 {
+            bail!("notification_backend.jetstream.reconnect_delay_ms must be > 0");
+        }
+
+        match self.storage_type.to_lowercase().as_str() {
+            "file" | "memory" => {}
+            _ => bail!("notification_backend.jetstream.storage_type must be one of: file, memory"),
+        }
+
+        match self.retention_policy.to_lowercase().as_str() {
+            "limits" | "interest" | "workqueue" => {}
+            _ => bail!(
+                "notification_backend.jetstream.retention_policy must be one of: limits, interest, workqueue"
+            ),
+        }
+
+        match self.discard_policy.to_lowercase().as_str() {
+            "old" | "new" => {}
+            _ => bail!("notification_backend.jetstream.discard_policy must be one of: old, new"),
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::JetStreamConfig;
+
+    fn base_config() -> JetStreamConfig {
+        JetStreamConfig {
+            nats_url: "nats://localhost:4222".to_string(),
+            timeout_seconds: 30,
+            retry_attempts: 3,
+            token: None,
+            max_messages: None,
+            max_bytes: None,
+            retention_days: None,
+            storage_type: "file".to_string(),
+            replicas: None,
+            retention_policy: "limits".to_string(),
+            discard_policy: "old".to_string(),
+            enable_auto_reconnect: true,
+            max_reconnect_attempts: 5,
+            reconnect_delay_ms: 2000,
+        }
+    }
+
+    #[test]
+    fn validate_accepts_valid_configuration() {
+        let cfg = base_config();
+        assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_empty_nats_url() {
+        let mut cfg = base_config();
+        cfg.nats_url = " ".to_string();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_timeout() {
+        let mut cfg = base_config();
+        cfg.timeout_seconds = 0;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_retry_attempts() {
+        let mut cfg = base_config();
+        cfg.retry_attempts = 0;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_reconnect_delay() {
+        let mut cfg = base_config();
+        cfg.reconnect_delay_ms = 0;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_storage_type() {
+        let mut cfg = base_config();
+        cfg.storage_type = "disk".to_string();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_retention_policy() {
+        let mut cfg = base_config();
+        cfg.retention_policy = "retain_all".to_string();
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_invalid_discard_policy() {
+        let mut cfg = base_config();
+        cfg.discard_policy = "drop".to_string();
+        assert!(cfg.validate().is_err());
     }
 }
