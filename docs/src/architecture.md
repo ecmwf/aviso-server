@@ -20,8 +20,8 @@ High-level flow:
 | Capability | JetStream | InMemory |
 |---|---|---|
 | Durable storage | Yes | No |
-| Replay support | Yes | Not implemented |
-| Live watch support | Yes | Not implemented |
+| Replay support | Yes | Yes (node-local, in-memory retention only) |
+| Live watch support | Yes | Yes (live-only, node-local fanout) |
 | Multi-replica suitability | Yes (with clustered NATS) | No |
 
 ## JetStream backend path

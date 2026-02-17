@@ -60,4 +60,5 @@ curl -N -X POST "http://localhost:8000/api/v1/replay" \
 
 ## Backend requirement
 
-Streaming endpoints (`watch` and `replay`) currently require `jetstream` backend.
+Streaming endpoints (`watch` and `replay`) work with both backends.
+With `in_memory`, behavior is node-local and limited to in-process retention.
