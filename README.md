@@ -50,3 +50,7 @@ Aviso Server is a specialized notification system that enables real-time monitor
 - **Operational Workflows:** Trigger downstream processes based on data events
 - **System Integration:** Connect disparate systems through standardized event notifications
 - **Audit and Compliance:** Historical replay for tracking data processing workflows
+
+## Testing Notes
+- JetStream integration tests are opt-in and require a running NATS/JetStream instance.
+- Run them with: `AVISO_RUN_NATS_TESTS=1 cargo test --workspace`

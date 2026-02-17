@@ -1,6 +1,7 @@
 //! JetStream-specific implementation of replay functionality using pull consumers
 
 use anyhow::{Context, Result};
+use chrono::{DateTime, Utc};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
@@ -69,6 +70,7 @@ pub async fn get_messages_batch(
         &stream_name,
         &backend_pattern,
         params.from_sequence,
+        params.from_date,
     )
     .await?;
 
@@ -159,6 +161,7 @@ pub async fn get_messages_batch(
     // Create batch result with replay limiting information
     let mut batch_result = BatchResult::new(filtered_messages, params.limit);
     batch_result.has_more = has_more && !was_replay_limited; // No more if replay limited
+    batch_result.next_sequence = last_processed_sequence.map(|seq| seq + 1);
 
     // Add replay limiting metadata if applicable
     if was_replay_limited {
@@ -185,26 +188,12 @@ async fn create_pull_consumer(
     stream_name: &str,
     backend_pattern: &str,
     from_sequence: Option<u64>,
+    from_date: Option<DateTime<Utc>>,
 ) -> Result<async_nats::jetstream::consumer::Consumer<async_nats::jetstream::consumer::pull::Config>>
 {
-    use async_nats::jetstream::consumer::{AckPolicy, DeliverPolicy, ReplayPolicy};
+    use async_nats::jetstream::consumer::{AckPolicy, ReplayPolicy};
 
-    // Fix: Handle all possible u64 values in the match
-    let deliver_policy = match from_sequence {
-        Some(0) | None => {
-            debug!("Using DeliverPolicy::All for sequence 0 or no sequence");
-            DeliverPolicy::All
-        }
-        Some(seq) => {
-            debug!(
-                start_sequence = seq,
-                "Using ByStartSequence delivery policy"
-            );
-            DeliverPolicy::ByStartSequence {
-                start_sequence: seq,
-            }
-        }
-    };
+    let deliver_policy = determine_deliver_policy(from_sequence, from_date)?;
 
     // Create consumer configuration for batch retrieval
     let consumer_config = async_nats::jetstream::consumer::pull::Config {
@@ -243,4 +232,85 @@ async fn create_pull_consumer(
     );
 
     Ok(consumer)
+}
+
+fn determine_deliver_policy(
+    from_sequence: Option<u64>,
+    from_date: Option<DateTime<Utc>>,
+) -> Result<async_nats::jetstream::consumer::DeliverPolicy> {
+    use async_nats::jetstream::consumer::DeliverPolicy;
+
+    match from_sequence {
+        Some(0) | None => match from_date {
+            Some(start_date) => {
+                let nanos = start_date
+                    .timestamp_nanos_opt()
+                    .context("from_date is outside supported timestamp range")?;
+                let start_time = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos))
+                    .context("from_date could not be converted to JetStream start time")?;
+                debug!(
+                    start_time = ?start_time,
+                    "Using ByStartTime delivery policy"
+                );
+                Ok(DeliverPolicy::ByStartTime { start_time })
+            }
+            None => {
+                debug!("Using DeliverPolicy::All for no replay start parameter");
+                Ok(DeliverPolicy::All)
+            }
+        },
+        Some(seq) => {
+            debug!(
+                start_sequence = seq,
+                "Using ByStartSequence delivery policy"
+            );
+            Ok(DeliverPolicy::ByStartSequence {
+                start_sequence: seq,
+            })
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::determine_deliver_policy;
+    use chrono::{DateTime, Utc};
+
+    #[test]
+    fn policy_prefers_sequence_when_both_sequence_and_date_present() {
+        // This can occur internally after the first replay batch, when pagination
+        // adds `from_sequence` while `from_date` remains set in the carried params.
+        let boundary = DateTime::parse_from_rfc3339("2025-06-09T13:15:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let deliver_policy = determine_deliver_policy(Some(42), Some(boundary)).unwrap();
+
+        assert!(matches!(
+            deliver_policy,
+            async_nats::jetstream::consumer::DeliverPolicy::ByStartSequence { start_sequence: 42 }
+        ));
+    }
+
+    #[test]
+    fn policy_uses_start_time_when_only_date_is_present() {
+        let boundary = DateTime::parse_from_rfc3339("2025-06-09T13:15:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let deliver_policy = determine_deliver_policy(None, Some(boundary)).unwrap();
+
+        assert!(matches!(
+            deliver_policy,
+            async_nats::jetstream::consumer::DeliverPolicy::ByStartTime { .. }
+        ));
+    }
+
+    #[test]
+    fn policy_uses_all_when_no_replay_parameters_are_present() {
+        let deliver_policy = determine_deliver_policy(None, None).unwrap();
+
+        assert!(matches!(
+            deliver_policy,
+            async_nats::jetstream::consumer::DeliverPolicy::All
+        ));
+    }
 }

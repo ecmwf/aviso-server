@@ -187,8 +187,8 @@ impl NotificationRequest {
     /// Validate both from_id and from_date parameters together for watch endpoint
     ///
     /// This method validates both parameters and ensures they are not
-    /// conflicting. While both can be provided, the backend implementation
-    /// will determine precedence (typically from_id takes precedence).
+    /// conflicting. At most one replay parameter may be provided; both may
+    /// be omitted to start a live-only watch stream.
     ///
     /// # Returns
     /// * `Ok((Option<u64>, Option<DateTime<Utc>>))` - Parsed values

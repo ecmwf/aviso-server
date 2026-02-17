@@ -23,10 +23,7 @@ pub enum ValidationRules {
     },
     /// Enumerated value validation against allowed options
     #[cfg_attr(feature = "openapi", schema(title = "EnumHandler"))]
-    EnumHandler {
-        values: Vec<String>,
-        required: bool
-    },
+    EnumHandler { values: Vec<String>, required: bool },
     /// Experiment version field validation with default values
     #[cfg_attr(feature = "openapi", schema(title = "ExpverHandler"))]
     ExpverHandler {
