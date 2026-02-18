@@ -118,6 +118,11 @@ pub fn matches_notification_filters(
         return true;
     };
 
+    if request_polygon == "*" {
+        debug!("Polygon filter is wildcard; skipping polygon intersection filtering");
+        return true;
+    }
+
     debug!(
         "Starting spatial filter check for polygon: {}",
         request_polygon
@@ -617,5 +622,13 @@ mod tests {
         .to_string();
 
         assert!(matches_notification_filters(&request, None, &payload));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_wildcard_polygon_without_point() {
+        let mut request = HashMap::new();
+        request.insert("polygon".to_string(), "*".to_string());
+
+        assert!(matches_notification_filters(&request, None, ""));
     }
 }

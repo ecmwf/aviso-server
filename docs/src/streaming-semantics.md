@@ -9,9 +9,7 @@
 - If both are present:
   - request is rejected with `400`.
 - Spatial filtering:
-  - optional `identifier.polygon` means polygon-intersects-polygon filtering.
-  - optional top-level `point` means point-in-notification-polygon filtering.
-  - `identifier.polygon` and `point` are mutually exclusive (`400` if both are sent).
+  - see [Spatial Filter Model](#spatial-filter-model) below.
 
 Example (live-only watch):
 
@@ -49,8 +47,7 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
 - If both are missing:
   - request is rejected with `400`.
 - Endpoint returns historical replay stream and then closes.
-- Same spatial filter contract as `watch`:
-  - use either `identifier.polygon` or `point`, not both.
+- Same spatial filter contract as `watch` (see [Spatial Filter Model](#spatial-filter-model)).
 
 Example (time-based replay):
 
@@ -66,6 +63,72 @@ curl -N -X POST "http://localhost:8000/api/v1/replay" \
     "from_date": "2025-01-15T10:00:00Z"
   }'
 ```
+
+## Spatial Filter Model
+
+Use this mental model:
+
+- `identifier` picks candidate notifications by topic fields (`time`, `date`, etc.).
+- spatial filters (`identifier.polygon` or top-level `point`) optionally narrow that candidate set.
+
+### Rules
+
+- `identifier.polygon`:
+  - do polygon-intersects-polygon filtering.
+- `point`:
+  - do point-inside-notification-polygon filtering.
+- both `identifier.polygon` and `point`:
+  - invalid request (`400`).
+- neither `identifier.polygon` nor `point`:
+  - no spatial narrowing; filtering uses non-spatial identifier fields only.
+
+### Decision Table
+
+| `identifier.polygon` | `point` | Result |
+|---|---|---|
+| provided | omitted | polygon intersection filter |
+| omitted | provided | point-in-polygon filter |
+| omitted | omitted | no spatial filter |
+| provided | provided | `400 Bad Request` |
+
+### Example: Optional Polygon, No Spatial Filter
+
+Request:
+
+```json
+{
+  "event_type": "test_polygon_optional",
+  "identifier": {
+    "time": "1200"
+  },
+  "from_id": "1"
+}
+```
+
+Behavior:
+
+- replay/watch matches notifications with `time=1200`
+- polygon shape is not used for filtering in this request
+
+### Example: Optional Polygon, Point Filter
+
+Request:
+
+```json
+{
+  "event_type": "test_polygon_optional",
+  "identifier": {
+    "time": "1200"
+  },
+  "point": "52.55,13.50",
+  "from_id": "1"
+}
+```
+
+Behavior:
+
+- replay/watch first matches `time=1200`
+- then keeps only notifications whose polygon contains that point
 
 ## `from_date` behavior
 
