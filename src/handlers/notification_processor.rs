@@ -60,12 +60,12 @@ pub fn process_notification_request(
 
 fn is_notification_validation_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
-        let message = cause.to_string();
-        message.starts_with("Required field ")
+        let message = cause.to_string().to_ascii_lowercase();
+        message.starts_with("required field ")
             || message.contains("unknown event type")
-            || message.starts_with("No validation rules found for field")
-            || message.starts_with("When polygon field is specified")
-            || message.starts_with("Field '")
+            || message.starts_with("no validation rules found for field")
+            || message.starts_with("when polygon field is specified")
+            || message.starts_with("field '")
             || message.contains("must be a valid")
     })
 }

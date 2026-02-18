@@ -51,6 +51,14 @@ pub async fn notify(
         Ok(p) => p,
         Err(e) => return request_parse_error_response(RequestKind::Notification, e),
     };
+    if payload.point.is_some() {
+        return request_validation_error_response(
+            RequestKind::Notification,
+            anyhow::anyhow!(
+                "point is only supported for watch/replay endpoints, not /notification"
+            ),
+        );
+    }
 
     let event_type = &payload.event_type;
     let request_params = &payload.identifier;
