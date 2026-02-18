@@ -266,7 +266,7 @@ impl ResponseError for ApiError {
                     outcome = "error",
                     error_code = code.as_str(),
                     error_chain = ?chain,
-                    topic = display_topic,
+                    topic = %display_topic,
                     request_id = request_id,
                     "SSE stream creation failed"
                 );
