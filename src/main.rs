@@ -1,7 +1,7 @@
 use aviso_server::{
     configuration::get_configuration,
     startup::Application,
-    telemetry::{get_subscriber, init_subscriber},
+    telemetry::{SERVICE_NAME, SERVICE_VERSION, get_subscriber, init_subscriber},
 };
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
@@ -28,7 +28,13 @@ async fn main() -> Result<(), std::io::Error> {
     init_subscriber(subscriber);
 
     // Log a simple message first
-    info!("Starting server with configuration:");
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "startup",
+        event_name = "configuration_loaded",
+        "Starting server with configuration:"
+    );
 
     // Then output the raw JSON configuration directly to stdout
     match serde_json::to_string_pretty(&configuration) {
@@ -73,6 +79,10 @@ async fn main() -> Result<(), std::io::Error> {
     // pass the token into the application builder
     let application = Application::build(configuration, shutdown).await?;
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "startup",
+        event_name = "server_start",
         port = application.port(),
         swagger_url = format!("{}:{}/swagger-ui/", host, port),
         "Server starting with OpenAPI documentation"

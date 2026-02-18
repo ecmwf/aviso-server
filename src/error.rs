@@ -4,6 +4,7 @@
 //! used across different endpoints, validation types, and processing modules.
 
 use crate::notification::decode_subject_for_display;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::HttpResponse;
 use serde_json::json;
 use tracing::{error, warn};
@@ -38,6 +39,11 @@ impl ToHttpResponse for anyhow::Error {
         let error_chain = extract_error_chain(&self);
 
         warn!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "http",
+            event_name = "request_validation_failed",
+            outcome = "error",
             error_chain = ?error_chain,
             error_type = error_type,
             "Request processing failed"
@@ -106,6 +112,11 @@ pub fn processing_error_response(process_type: &str, error: anyhow::Error) -> Ht
     let error_chain = extract_error_chain(&error);
 
     error!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "http",
+        event_name = "request_processing_failed",
+        outcome = "error",
         error_chain = ?error_chain,
         process_type = process_type,
         "Processing failed"
@@ -135,6 +146,11 @@ pub fn sse_error_response(error: anyhow::Error, topic: &str, request_id: &str) -
     let display_topic = decode_subject_for_display(topic);
 
     error!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "streaming",
+        event_name = "sse_stream_creation_failed",
+        outcome = "error",
         error_chain = ?error_chain,
         topic = display_topic,
         request_id = request_id,

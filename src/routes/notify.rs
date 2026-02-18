@@ -7,6 +7,7 @@ use crate::handlers::{
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
@@ -87,6 +88,11 @@ pub async fn notify(
     .await
     {
         error!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "notification",
+            event_name = "notification_storage_failed",
+            outcome = "error",
             error = %e,
             topic = %display_topic,
             "Failed to save notification to backend"
@@ -105,6 +111,11 @@ pub async fn notify(
     let payload_type = get_payload_type_name(&payload.payload).unwrap_or("None");
     if let Some(spatial_metadata) = &notification_result.spatial_metadata {
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "notification",
+            event_name = "notification_processed",
+            outcome = "success",
             topic = %display_topic,
             event_type = %notification_result.event_type,
             param_count = notification_result.canonicalized_params.len(),
@@ -114,6 +125,11 @@ pub async fn notify(
         );
     } else {
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "notification",
+            event_name = "notification_processed",
+            outcome = "success",
             topic = %display_topic,
             event_type = %notification_result.event_type,
             param_count = notification_result.canonicalized_params.len(),
