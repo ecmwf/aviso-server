@@ -9,6 +9,7 @@ use std::sync::{
 };
 use tokio::time::Duration;
 use tokio_util::sync::CancellationToken;
+use tracing::Level;
 use tracing::{debug, warn};
 
 use super::types::{
@@ -30,13 +31,15 @@ pub fn notification_to_sse_event(
 
             let sse_event = format_sse_event(event_type.clone(), event_data);
 
-            let display_topic = decode_subject_for_display(&notification.topic);
-            debug!(
-                topic = %display_topic,
-                sequence = notification.sequence,
-                event_type = %event_type.as_str(),
-                "Converted notification to SSE event"
-            );
+            if tracing::enabled!(Level::DEBUG) {
+                let display_topic = decode_subject_for_display(&notification.topic);
+                debug!(
+                    topic = %display_topic,
+                    sequence = notification.sequence,
+                    event_type = %event_type.as_str(),
+                    "Converted notification to SSE event"
+                );
+            }
 
             Ok(web::Bytes::from(sse_event))
         }

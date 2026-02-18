@@ -3,8 +3,8 @@ use crate::error::{
     request_validation_error_response,
 };
 use crate::handlers::{
-    convert_payload_to_string, get_payload_type_name, parse_and_validate_request,
-    process_notification_request, save_to_backend,
+    NotificationErrorKind, convert_payload_to_string, get_payload_type_name,
+    parse_and_validate_request, process_notification_request, save_to_backend,
 };
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
@@ -13,7 +13,7 @@ use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
-use tracing::{error, info};
+use tracing::info;
 use tracing_actix_web::RequestId;
 
 /// Notification endpoint handler
@@ -68,9 +68,14 @@ pub async fn notify(
         OperationType::Notify,
     ) {
         Ok(result) => result,
-        Err(e) => {
-            return request_validation_error_response(RequestKind::Notification, e);
-        }
+        Err(e) => match e.kind {
+            NotificationErrorKind::Validation => {
+                return request_validation_error_response(RequestKind::Notification, e.source);
+            }
+            NotificationErrorKind::Processing => {
+                return processing_error_response(ProcessingKind::NotificationProcessing, e.source);
+            }
+        },
     };
 
     let display_topic = decode_subject_for_display(&notification_result.topic);
@@ -91,16 +96,6 @@ pub async fn notify(
     )
     .await
     {
-        error!(
-            service_name = SERVICE_NAME,
-            service_version = SERVICE_VERSION,
-            event_domain = "notification",
-            event_name = "notification_storage_failed",
-            outcome = "error",
-            error = %e,
-            topic = %display_topic,
-            "Failed to save notification to backend"
-        );
         return processing_error_response(ProcessingKind::NotificationStorage, e);
     }
 
