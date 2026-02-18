@@ -1,4 +1,7 @@
-use crate::error::{sse_error_response, validation_error_response};
+use crate::error::{
+    RequestKind, request_parse_error_response, request_validation_error_response,
+    sse_error_response,
+};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
@@ -49,7 +52,7 @@ pub async fn watch(
     // Parse and validate request structure
     let notification_request = match parse_and_validate_request(&body) {
         Ok(req) => req,
-        Err(e) => return validation_error_response("Watch Request", e),
+        Err(e) => return request_parse_error_response(RequestKind::Watch, e),
     };
     // Process request using shared processor
     let context = match StreamingRequestProcessor::process_request(
@@ -58,7 +61,7 @@ pub async fn watch(
         ValidationConfig::for_watch(),
     ) {
         Ok(ctx) => ctx,
-        Err(e) => return validation_error_response("Watch Request", e),
+        Err(e) => return request_validation_error_response(RequestKind::Watch, e),
     };
 
     // Update tracing context

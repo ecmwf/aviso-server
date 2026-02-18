@@ -1,7 +1,5 @@
 use crate::configuration::Settings;
-use crate::error::processing_error_response;
 use crate::notification::{NotificationHandler, OperationType, ProcessingResult};
-use actix_web::HttpResponse;
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -26,7 +24,7 @@ pub fn process_notification_request(
     request_params: &HashMap<String, String>,
     payload: &Option<serde_json::Value>,
     operation: OperationType,
-) -> Result<ProcessingResult, HttpResponse> {
+) -> Result<ProcessingResult> {
     let handler =
         NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
 
@@ -38,7 +36,7 @@ pub fn process_notification_request(
                 error = %e,
                 "Notification processing failed"
             );
-            Err(processing_error_response("Notification Processing", e))
+            Err(e)
         }
     }
 }

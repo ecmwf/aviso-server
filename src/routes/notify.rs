@@ -1,5 +1,7 @@
-use crate::error::processing_error_response;
-use crate::error::validation_error_response;
+use crate::error::{
+    ProcessingKind, RequestKind, processing_error_response, request_parse_error_response,
+    request_validation_error_response,
+};
 use crate::handlers::{
     convert_payload_to_string, get_payload_type_name, parse_and_validate_request,
     process_notification_request, save_to_backend,
@@ -47,7 +49,7 @@ pub async fn notify(
     // Parse and validate request structure
     let payload = match parse_and_validate_request(&body) {
         Ok(p) => p,
-        Err(e) => return validation_error_response("Request Validation", e),
+        Err(e) => return request_parse_error_response(RequestKind::Notification, e),
     };
 
     let event_type = &payload.event_type;
@@ -66,7 +68,9 @@ pub async fn notify(
         OperationType::Notify,
     ) {
         Ok(result) => result,
-        Err(response) => return response,
+        Err(e) => {
+            return request_validation_error_response(RequestKind::Notification, e);
+        }
     };
 
     let display_topic = decode_subject_for_display(&notification_result.topic);
@@ -97,7 +101,7 @@ pub async fn notify(
             topic = %display_topic,
             "Failed to save notification to backend"
         );
-        return processing_error_response("Notification Storage", e);
+        return processing_error_response(ProcessingKind::NotificationStorage, e);
     }
 
     // Build success response

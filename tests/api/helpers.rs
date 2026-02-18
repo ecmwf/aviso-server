@@ -12,6 +12,8 @@ use aviso_server::{
 use aviso_validators::ValidationRules;
 use std::collections::HashMap;
 use std::sync::LazyLock;
+use tokio::sync::OnceCell;
+use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 
 static TRACING: LazyLock<()> = LazyLock::new(|| {
@@ -33,6 +35,16 @@ static TRACING: LazyLock<()> = LazyLock::new(|| {
     }
 });
 
+static DEFAULT_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
+static STREAMING_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
+
+struct RunningServer {
+    address: String,
+    _shutdown_token: CancellationToken,
+    _server_handle: JoinHandle<Result<(), std::io::Error>>,
+}
+
+#[derive(Clone)]
 pub struct TestApp {
     pub address: String,
 }
@@ -343,12 +355,8 @@ fn set_streaming_test_notification_schema(configuration: &mut Settings) {
     configuration.notification_schema = Some(schema);
 }
 
-pub async fn spawn_app() -> TestApp {
+async fn spawn_server(mut configuration: Settings) -> RunningServer {
     LazyLock::force(&TRACING);
-    let mut configuration = {
-        // overrides should be set here
-        get_configuration().expect("Failed to read configuration")
-    };
     configuration.application.port = 0;
     ensure_test_notification_schema(&mut configuration);
 
@@ -359,41 +367,45 @@ pub async fn spawn_app() -> TestApp {
         .await
         .expect("Failed to build server");
     let address = format!("http://127.0.0.1:{}", application.port());
-    std::mem::drop(tokio::spawn(application.run_until_stopped()));
-    TestApp { address }
+    let server_handle = tokio::spawn(application.run_until_stopped());
+    RunningServer {
+        address,
+        _shutdown_token: shutdown_token,
+        _server_handle: server_handle,
+    }
 }
 
-pub async fn spawn_app_with_config<F>(configure: F) -> TestApp
-where
-    F: FnOnce(&mut Settings),
-{
-    LazyLock::force(&TRACING);
-    let mut configuration = get_configuration().expect("Failed to read configuration");
-    configuration.application.port = 0;
-    configure(&mut configuration);
-    ensure_test_notification_schema(&mut configuration);
+pub async fn spawn_app() -> TestApp {
+    let running = DEFAULT_SERVER
+        .get_or_init(|| async {
+            let configuration = get_configuration().expect("Failed to read configuration");
+            spawn_server(configuration).await
+        })
+        .await;
 
-    aviso_server::configuration::Settings::init_global_config(&configuration.clone());
-    let shutdown_token = CancellationToken::new();
-
-    let application = Application::build(configuration.clone(), shutdown_token.clone())
-        .await
-        .expect("Failed to build server");
-    let address = format!("http://127.0.0.1:{}", application.port());
-    std::mem::drop(tokio::spawn(application.run_until_stopped()));
-    TestApp { address }
+    TestApp {
+        address: running.address.clone(),
+    }
 }
 
 pub async fn spawn_streaming_test_app() -> TestApp {
-    spawn_app_with_config(|configuration| {
-        configuration.notification_backend.kind = "in_memory".to_string();
-        configuration.notification_backend.jetstream = None;
-        configuration.notification_backend.in_memory = Some(InMemorySettings {
-            max_history_per_topic: Some(100),
-            max_topics: Some(500),
-            enable_metrics: Some(false),
-        });
-        set_streaming_test_notification_schema(configuration);
-    })
-    .await
+    let running = STREAMING_SERVER
+        .get_or_init(|| async {
+            let mut configuration = get_configuration().expect("Failed to read configuration");
+            configuration.notification_backend.kind = "in_memory".to_string();
+            configuration.notification_backend.jetstream = None;
+            configuration.notification_backend.in_memory = Some(InMemorySettings {
+                max_history_per_topic: Some(100),
+                max_topics: Some(500),
+                enable_metrics: Some(false),
+            });
+            set_streaming_test_notification_schema(&mut configuration);
+
+            spawn_server(configuration).await
+        })
+        .await;
+
+    TestApp {
+        address: running.address.clone(),
+    }
 }
