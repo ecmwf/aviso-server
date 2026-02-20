@@ -10,20 +10,16 @@ use aviso_server::{
 use serde_json::{Map, Value, json};
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info};
+use tracing::info;
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     let configuration = match get_configuration() {
         Ok(cfg) => cfg,
         Err(e) => {
-            error!(
-                service_name = SERVICE_NAME,
-                service_version = SERVICE_VERSION,
-                event_domain = "startup",
-                event_name = "startup.configuration.load.failed",
-                error = %e,
-                "Failed to load configuration"
+            eprintln!(
+                "Failed to load configuration (service_name={}, service_version={}): {}",
+                SERVICE_NAME, SERVICE_VERSION, e
             );
             return Err(std::io::Error::other(e));
         }

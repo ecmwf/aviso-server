@@ -135,11 +135,9 @@ fn enhance_payload_with_polygon(
 fn find_polygon_geometry(
     canonicalized_params: &HashMap<String, String>,
 ) -> Option<(String, Vec<(f64, f64)>)> {
-    canonicalized_params.values().find_map(|value| {
-        PolygonHandler::parse_polygon_coordinates(value)
-            .ok()
-            .map(|coordinates| (value.clone(), coordinates))
-    })
+    let polygon = canonicalized_params.get("polygon")?;
+    let coordinates = PolygonHandler::parse_polygon_coordinates(polygon).ok()?;
+    Some((polygon.clone(), coordinates))
 }
 
 #[cfg(test)]
@@ -161,6 +159,17 @@ mod tests {
         let (raw, coordinates) = found.expect("must find polygon geometry");
         assert!(raw.starts_with('(') && raw.ends_with(')'));
         assert_eq!(coordinates.len(), 5);
+    }
+
+    #[test]
+    fn does_not_extract_polygon_from_non_polygon_key() {
+        let mut params = HashMap::new();
+        params.insert(
+            "shape".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        assert!(find_polygon_geometry(&params).is_none());
     }
 
     #[test]
