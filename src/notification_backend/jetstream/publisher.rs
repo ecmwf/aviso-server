@@ -1,4 +1,5 @@
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result};
 use async_nats::HeaderMap;
 use std::collections::HashMap;
@@ -29,6 +30,10 @@ pub async fn put_messages(backend: &JetStreamBackend, topic: &str, payload: Stri
         .context("Failed to receive publish acknowledgment from JetStream")?;
 
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "backend",
+        event_name = "backend.jetstream.publish.succeeded",
         topic = %topic,
         stream_name = %stream_name,
         sequence = ack.sequence,
@@ -77,6 +82,10 @@ pub async fn put_message_with_headers(
             .context("Failed to receive publish acknowledgment from JetStream")?;
 
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "backend",
+            event_name = "backend.jetstream.publish_with_headers.succeeded",
             topic = %topic,
             stream_name = %stream_name,
             sequence = ack.sequence,

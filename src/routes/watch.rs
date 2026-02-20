@@ -78,7 +78,7 @@ pub async fn watch(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_domain = "streaming",
-            event_name = "watch_stream_start",
+            event_name = "api.watch.stream.started",
             outcome = "in_progress",
             topic = %display_topic,
             start_at = ?context.start_at,
@@ -98,7 +98,7 @@ pub async fn watch(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_domain = "streaming",
-            event_name = "watch_stream_start",
+            event_name = "api.watch.stream.started",
             outcome = "in_progress",
             topic = %display_topic,
             "Creating live-only stream"
@@ -119,7 +119,7 @@ pub async fn watch(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_domain = "streaming",
-                event_name = "watch_stream_established",
+                event_name = "api.watch.stream.established",
                 outcome = "success",
                 topic = %display_topic,
                 "SSE stream established successfully"

@@ -8,6 +8,7 @@ use tracing::debug;
 
 use super::{NotificationProcessor, NotificationRegistry, OperationType, ProcessingResult};
 use crate::configuration::Settings;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 /// Public facade over registry + processor.
 pub struct NotificationHandler {
@@ -74,6 +75,10 @@ pub fn extract_aviso_notification(
     processing_result.event_type = event_type;
 
     tracing::info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "notification",
+        event_name = "notification.aviso.processed",
         operation = ?operation,
         aviso_event_type = processing_result.event_type,
         "Aviso notification processed with operation"

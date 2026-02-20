@@ -16,6 +16,7 @@ use crate::{
     configuration::Settings,
     notification_backend::{NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify},
+    telemetry::{SERVICE_NAME, SERVICE_VERSION},
 };
 use actix_files as fs;
 use utoipa::OpenApi;
@@ -46,7 +47,14 @@ impl Application {
         let notification_backend = match build_backend(&configuration.notification_backend).await {
             Ok(backend) => backend,
             Err(e) => {
-                error!("Failed to initialize notification backend: {e}");
+                error!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "startup",
+                    event_name = "startup.backend.initialization.failed",
+                    error = %e,
+                    "Failed to initialize notification backend"
+                );
                 return Err(std::io::Error::other(e));
             }
         };
@@ -61,18 +69,43 @@ impl Application {
             async move {
                 token.cancelled().await;
 
-                info!("Shutdown signal received, stopping Actix server");
+                info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "startup",
+                    event_name = "startup.shutdown.received",
+                    "Shutdown signal received, stopping Actix server"
+                );
 
                 // First, stop accepting new connections
                 handle.stop(true).await;
 
-                info!("Actix server stopped, shutting down backend");
+                info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "startup",
+                    event_name = "startup.server.stopped",
+                    "Actix server stopped, shutting down backend"
+                );
 
                 // Then shutdown the backend
                 if let Err(e) = shutdown_backend(backend_for_shutdown).await {
-                    error!("Error during backend shutdown: {}", e);
+                    error!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "startup",
+                        event_name = "startup.backend.shutdown.failed",
+                        error = %e,
+                        "Error during backend shutdown"
+                    );
                 } else {
-                    info!("Backend shutdown completed successfully");
+                    info!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "startup",
+                        event_name = "startup.backend.shutdown.succeeded",
+                        "Backend shutdown completed successfully"
+                    );
                 }
             }
         });
@@ -102,12 +135,24 @@ impl Application {
 /// This function calls the shutdown method on the NotificationBackend trait object,
 /// allowing all backend implementations to handle their own cleanup.
 async fn shutdown_backend(backend: Arc<dyn NotificationBackend>) -> anyhow::Result<()> {
-    info!("Shutting down notification backend");
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "startup",
+        event_name = "startup.backend.shutdown.started",
+        "Shutting down notification backend"
+    );
 
     // Call the shutdown method defined in the trait
     backend.shutdown().await?;
 
-    info!("Notification backend shutdown completed");
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "startup",
+        event_name = "startup.backend.shutdown.completed",
+        "Notification backend shutdown completed"
+    );
     Ok(())
 }
 

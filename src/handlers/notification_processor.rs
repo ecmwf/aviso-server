@@ -1,5 +1,6 @@
 use crate::configuration::Settings;
 use crate::notification::{NotificationHandler, OperationType, ProcessingResult};
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::Result;
 use std::collections::HashMap;
 
@@ -48,6 +49,10 @@ pub fn process_notification_request(
                 NotificationErrorKind::Processing
             };
             tracing::warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "notification",
+                event_name = "notification.processing.failed",
                 event_type = %event_type,
                 error_kind = ?kind,
                 error = %e,

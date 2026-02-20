@@ -4,6 +4,7 @@ use std::time::Duration;
 use tracing::{info, warn};
 
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 struct ConnectionPolicy {
@@ -49,7 +50,14 @@ fn build_connect_options(
 }
 
 pub async fn connect(config: JetStreamConfig) -> Result<JetStreamBackend> {
-    info!(url = %config.nats_url, "Connecting to NATS");
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "backend",
+        event_name = "backend.jetstream.connection.started",
+        url = %config.nats_url,
+        "Connecting to NATS"
+    );
 
     let policy = build_connection_policy(&config);
     let mut connected_client = None;
@@ -66,6 +74,10 @@ pub async fn connect(config: JetStreamConfig) -> Result<JetStreamBackend> {
                 }
 
                 warn!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "backend",
+                    event_name = "backend.jetstream.connection.retry",
                     url = %config.nats_url,
                     attempt = attempt,
                     max_attempts = policy.initial_connect_attempts,

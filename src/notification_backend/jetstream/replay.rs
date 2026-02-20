@@ -5,12 +5,14 @@ use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
 use crate::configuration::Settings;
+use crate::notification::decode_subject_for_display;
 use crate::notification::topic_parser::derive_stream_name_from_topic;
 use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
 use crate::notification_backend::jetstream::{
     backend::JetStreamBackend, subscriber_utils::transform_jetstream_message,
 };
 use crate::notification_backend::replay::{BatchParams, StartAt};
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{BatchResult, ReplayLimitInfo};
 
 /// Retrieve a batch of historical messages from JetStream using pull consumer
@@ -95,7 +97,15 @@ pub async fn get_messages_batch(
                         }
                     }
                     Err(e) => {
-                        warn!(error = %e, subject = %msg.subject, "Failed to transform message");
+                        warn!(
+                            service_name = SERVICE_NAME,
+                            service_version = SERVICE_VERSION,
+                            event_domain = "backend",
+                            event_name = "backend.jetstream.replay.message_transform.failed",
+                            error = %e,
+                            subject = %msg.subject,
+                            "Failed to transform message"
+                        );
                     }
                 }
             }
@@ -142,9 +152,13 @@ pub async fn get_messages_batch(
 
     if was_replay_limited {
         warn!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "backend",
+            event_name = "backend.jetstream.replay.limit.reached",
             retrieved_messages = filtered_messages.len(),
             max_allowed = effective_limit,
-            topic = %params.topic,
+            topic = %decode_subject_for_display(&params.topic),
             "Replay message count limit is reached"
         );
     }
@@ -164,7 +178,11 @@ pub async fn get_messages_batch(
     }
 
     info!(
-        topic = %params.topic,
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "backend",
+        event_name = "backend.jetstream.replay.batch.succeeded",
+        topic = %decode_subject_for_display(&params.topic),
         stream_name = %stream_name,
         retrieved_count = batch_result.batch_size,
         has_more = batch_result.has_more,
@@ -216,6 +234,10 @@ async fn create_pull_consumer(
         .context("Failed to create JetStream consumer for batch retrieval")?;
 
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "backend",
+        event_name = "backend.jetstream.replay.consumer.created",
         stream_name = %stream_name,
         backend_pattern = %backend_pattern,
         deliver_policy = ?deliver_policy,

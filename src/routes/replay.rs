@@ -64,7 +64,7 @@ pub async fn replay(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
         event_domain = "streaming",
-        event_name = "replay_stream_start",
+        event_name = "api.replay.stream.started",
         outcome = "in_progress",
         topic = %display_topic,
         start_at = ?context.start_at,
@@ -88,7 +88,7 @@ pub async fn replay(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_domain = "streaming",
-                event_name = "replay_stream_established",
+                event_name = "api.replay.stream.established",
                 outcome = "success",
                 topic = %display_topic,
                 "Replay-only SSE stream established successfully"

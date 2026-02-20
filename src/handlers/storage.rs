@@ -1,6 +1,7 @@
 use crate::notification::ProcessingResult;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::Result;
 use aviso_validators::PolygonHandler;
 use std::collections::HashMap;
@@ -60,6 +61,10 @@ pub async fn save_to_backend(
             .await?;
 
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "notification",
+            event_name = "notification.storage.spatial.succeeded",
             topic = %display_topic,
             event_type = %result.event_type,
             bounding_box = %spatial_metadata.bounding_box,
@@ -72,6 +77,10 @@ pub async fn save_to_backend(
             .await?;
 
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "notification",
+            event_name = "notification.storage.succeeded",
             topic = %display_topic,
             event_type = %result.event_type,
             "Notification saved to backend successfully"

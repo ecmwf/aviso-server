@@ -6,6 +6,7 @@ pub use jetstream::backend::JetStreamBackend;
 pub use jetstream::config::JetStreamConfig;
 use std::collections::HashMap;
 
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -69,18 +70,42 @@ pub async fn build_backend(
 ) -> Result<Arc<dyn NotificationBackend>> {
     match config.kind.as_str() {
         "in_memory" => {
-            tracing::info!("Building in-memory notification backend");
+            tracing::info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "backend",
+                event_name = "backend.in_memory.initialization.started",
+                "Building in-memory notification backend"
+            );
             let cfg = in_memory::InMemoryConfig::from_backend_settings(config);
             Ok(Arc::new(in_memory::InMemoryBackend::new(cfg)))
         }
         "jetstream" => {
-            tracing::info!("Building JetStream notification backend");
+            tracing::info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "backend",
+                event_name = "backend.jetstream.initialization.started",
+                "Building JetStream notification backend"
+            );
             let cfg = JetStreamConfig::from_backend_settings(config);
             cfg.validate()?;
             if cfg.token.is_some() {
-                tracing::info!("NATS token configured");
+                tracing::info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "backend",
+                    event_name = "backend.jetstream.auth.token_configured",
+                    "NATS token configured"
+                );
             } else {
-                tracing::info!("No NATS token configured - using unauthenticated connection");
+                tracing::info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "backend",
+                    event_name = "backend.jetstream.auth.unauthenticated",
+                    "No NATS token configured - using unauthenticated connection"
+                );
             }
             Ok(Arc::new(JetStreamBackend::new(cfg).await?))
         }

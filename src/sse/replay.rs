@@ -22,6 +22,7 @@ use crate::notification_backend::{
     NotificationBackend, NotificationMessage,
     replay::{BatchParams, StartAt},
 };
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 /// Create a stream that replays historical messages using tokio_stream
 ///
@@ -114,6 +115,10 @@ pub fn create_historical_replay_stream(
                 }
                 Err(e) => {
                     warn!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "streaming",
+                        event_name = "stream.replay.batch.failed",
                         error = %e,
                         topic = %decode_subject_for_display(&params.topic),
                         "Failed to retrieve historical message batch"
@@ -214,6 +219,10 @@ pub async fn create_historical_then_live_stream(
     });
 
     tracing::info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "streaming",
+        event_name = "stream.watch.replay_live.created",
         topic = %decode_subject_for_display(&topic),
         from_sequence = ?from_sequence,
         from_date = ?from_date,
@@ -279,6 +288,10 @@ pub async fn create_replay_only_stream(
     });
 
     tracing::info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "streaming",
+        event_name = "stream.replay.created",
         topic = %decode_subject_for_display(&topic),
         from_sequence = ?from_sequence,
         from_date = ?from_date,

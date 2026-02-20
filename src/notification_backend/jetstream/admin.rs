@@ -1,5 +1,6 @@
 use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use tracing::{info, warn};
@@ -29,6 +30,10 @@ pub async fn wipe_stream(backend: &JetStreamBackend, stream_name: &str) -> Resul
     stream.purge().await.context("Failed to purge stream")?;
 
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "admin",
+        event_name = "admin.stream.wipe.succeeded",
         stream_name = %stream_name,
         messages_purged = total_messages,
         "Wiped entire stream - all messages removed but stream configuration preserved"
@@ -45,7 +50,13 @@ pub async fn wipe_stream(backend: &JetStreamBackend, stream_name: &str) -> Resul
 /// # Returns
 /// * `anyhow::Result<()>` - Success or error if stream doesn't exist or purge fails
 pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
-    info!("Starting complete wipe of all JetStream data");
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "admin",
+        event_name = "admin.all.wipe.started",
+        "Starting complete wipe of all JetStream data"
+    );
 
     // Get iterator over all streams in the JetStream context
     let mut streams = backend.jetstream.streams();
@@ -65,6 +76,10 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
                         total_streams_purged += 1;
                         total_messages_purged += message_count;
                         info!(
+                            service_name = SERVICE_NAME,
+                            service_version = SERVICE_VERSION,
+                            event_domain = "admin",
+                            event_name = "admin.stream.wipe.succeeded",
                             stream = %stream_name,
                             messages = message_count,
                             "Successfully purged stream"
@@ -72,6 +87,10 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
                     }
                     Err(e) => {
                         warn!(
+                            service_name = SERVICE_NAME,
+                            service_version = SERVICE_VERSION,
+                            event_domain = "admin",
+                            event_name = "admin.stream.wipe.failed",
                             stream = %stream_name,
                             error = %e,
                             "Failed to purge stream during wipe_all operation"
@@ -81,6 +100,10 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
             }
             Err(e) => {
                 warn!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "admin",
+                    event_name = "admin.stream.info.failed",
                     error = %e,
                     "Failed to get stream info during wipe_all operation"
                 );
@@ -89,6 +112,10 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
     }
 
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "admin",
+        event_name = "admin.all.wipe.completed",
         streams_purged = total_streams_purged,
         messages_purged = total_messages_purged,
         "Completed wipe_all operation - all JetStream data removed"
