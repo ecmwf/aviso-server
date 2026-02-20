@@ -345,7 +345,7 @@ fn redact_json_value(key: &str, value: Value) -> Value {
     }
 }
 
-fn is_sensitive_key(key: &str) -> bool {
+pub fn is_sensitive_key(key: &str) -> bool {
     let lower_key = key.to_ascii_lowercase();
     lower_key.contains("password")
         || lower_key.contains("secret")

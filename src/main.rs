@@ -2,7 +2,7 @@ use aviso_server::{
     configuration::Settings,
     configuration::get_configuration,
     startup::Application,
-    telemetry::{SERVICE_NAME, SERVICE_VERSION, get_subscriber, init_subscriber},
+    telemetry::{SERVICE_NAME, SERVICE_VERSION, get_subscriber, init_subscriber, is_sensitive_key},
 };
 use serde_json::{Map, Value, json};
 use tokio::signal;
@@ -153,13 +153,4 @@ fn redact_value_recursive(value: Value) -> Value {
         }
         other => other,
     }
-}
-
-fn is_sensitive_key(key: &str) -> bool {
-    let normalized = key.to_ascii_lowercase();
-    normalized.contains("password")
-        || normalized.contains("secret")
-        || normalized.contains("token")
-        || normalized.contains("authorization")
-        || normalized.contains("api_key")
 }
