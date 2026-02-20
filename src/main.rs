@@ -2,7 +2,10 @@ use aviso_server::{
     configuration::Settings,
     configuration::get_configuration,
     startup::Application,
-    telemetry::{SERVICE_NAME, SERVICE_VERSION, get_subscriber, init_subscriber, is_sensitive_key},
+    telemetry::{
+        SERVICE_NAME, SERVICE_VERSION, get_subscriber, init_subscriber, is_sensitive_key,
+        redact_url_userinfo,
+    },
 };
 use serde_json::{Map, Value, json};
 use tokio::signal;
@@ -150,6 +153,13 @@ fn redact_value_recursive(value: Value) -> Value {
         }
         Value::Array(items) => {
             Value::Array(items.into_iter().map(redact_value_recursive).collect())
+        }
+        Value::String(s) => {
+            if let Some(redacted_url) = redact_url_userinfo(&s) {
+                Value::String(redacted_url)
+            } else {
+                Value::String(s)
+            }
         }
         other => other,
     }

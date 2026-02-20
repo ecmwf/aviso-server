@@ -337,7 +337,10 @@ fn redact_json_value(key: &str, value: Value) -> Value {
             if key == "config"
                 && let Ok(parsed) = serde_json::from_str::<Value>(&s)
             {
-                return parsed;
+                return redact_embedded_json(parsed);
+            }
+            if let Some(redacted_url) = redact_url_userinfo(&s) {
+                return Value::String(redacted_url);
             }
             Value::String(redact_message(&s))
         }
@@ -352,6 +355,49 @@ pub fn is_sensitive_key(key: &str) -> bool {
         || lower_key.contains("token")
         || lower_key.contains("authorization")
         || lower_key.contains("api_key")
+}
+
+fn redact_embedded_json(value: Value) -> Value {
+    match value {
+        Value::Object(obj) => {
+            let mut redacted = Map::new();
+            for (key, child) in obj {
+                if is_sensitive_key(&key) {
+                    redacted.insert(key, json!("[REDACTED]"));
+                } else {
+                    redacted.insert(key, redact_embedded_json(child));
+                }
+            }
+            Value::Object(redacted)
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(redact_embedded_json).collect()),
+        Value::String(s) => {
+            if let Some(redacted_url) = redact_url_userinfo(&s) {
+                Value::String(redacted_url)
+            } else {
+                Value::String(redact_message(&s))
+            }
+        }
+        other => other,
+    }
+}
+
+pub fn redact_url_userinfo(raw: &str) -> Option<String> {
+    let scheme_pos = raw.find("://")?;
+    let authority_start = scheme_pos + 3;
+    let authority_end_rel = raw[authority_start..]
+        .find(['/', '?', '#'])
+        .unwrap_or(raw.len() - authority_start);
+    let authority_end = authority_start + authority_end_rel;
+    let authority = &raw[authority_start..authority_end];
+    let at_pos = authority.find('@')?;
+
+    let mut redacted = String::with_capacity(raw.len());
+    redacted.push_str(&raw[..authority_start]);
+    redacted.push_str("[REDACTED]@");
+    redacted.push_str(&authority[at_pos + 1..]);
+    redacted.push_str(&raw[authority_end..]);
+    Some(redacted)
 }
 
 fn redact_message(message: &str) -> String {
@@ -414,5 +460,24 @@ mod tests {
         assert!(!attrs.contains_key("service.name"));
         assert!(!attrs.contains_key("service.version"));
         assert_eq!(attrs.get("trace_id"), Some(&json!("trace")));
+    }
+
+    #[test]
+    fn redact_url_userinfo_redacts_credentials_in_authority() {
+        let redacted =
+            redact_url_userinfo("nats://user:pass@localhost:4222").expect("must redact userinfo");
+        assert_eq!(redacted, "nats://[REDACTED]@localhost:4222");
+        assert_eq!(redact_url_userinfo("nats://localhost:4222"), None);
+    }
+
+    #[test]
+    fn config_redaction_parses_json_and_sanitizes_url_userinfo() {
+        let config_json = r#"{"nats_url":"nats://user:pass@localhost:4222","token":"secret"}"#;
+        let value = redact_json_value("config", Value::String(config_json.to_string()));
+        assert_eq!(
+            value.get("nats_url"),
+            Some(&json!("nats://[REDACTED]@localhost:4222"))
+        );
+        assert_eq!(value.get("token"), Some(&json!("[REDACTED]")));
     }
 }
