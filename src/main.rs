@@ -1,18 +1,27 @@
 use aviso_server::{
+    configuration::Settings,
     configuration::get_configuration,
     startup::Application,
     telemetry::{SERVICE_NAME, SERVICE_VERSION, get_subscriber, init_subscriber},
 };
+use serde_json::{Map, Value, json};
 use tokio::signal;
 use tokio_util::sync::CancellationToken;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 
 #[tokio::main]
 async fn main() -> Result<(), std::io::Error> {
     let configuration = match get_configuration() {
         Ok(cfg) => cfg,
         Err(e) => {
-            error!("Failed to load configuration: {e}");
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "startup",
+                event_name = "startup.configuration.load.failed",
+                error = %e,
+                "Failed to load configuration"
+            );
             return Err(std::io::Error::other(e));
         }
     };
@@ -27,20 +36,28 @@ async fn main() -> Result<(), std::io::Error> {
     );
     init_subscriber(subscriber);
 
-    // Log a simple message first
+    let redacted_config = redacted_config_json(&configuration);
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
         event_domain = "startup",
-        event_name = "configuration_loaded",
-        "Starting server with configuration:"
+        event_name = "startup.configuration.dumped",
+        config = %redacted_config,
+        "Server effective configuration (redacted)"
     );
 
-    // Then output the raw JSON configuration directly to stdout
-    match serde_json::to_string_pretty(&configuration) {
-        Ok(config_json) => println!("{config_json}"),
-        Err(e) => warn!(error = %e, "Failed to serialize configuration to JSON"),
-    }
+    // Log startup configuration summary without dumping raw config values.
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "startup",
+        event_name = "startup.configuration.loaded",
+        bind_host = %configuration.application.host,
+        bind_port = configuration.application.port,
+        backend_kind = %configuration.notification_backend.kind,
+        has_notification_schema = configuration.notification_schema.is_some(),
+        "Server configuration loaded"
+    );
 
     // create a global cancellation token that all components can observe
     let shutdown = CancellationToken::new();
@@ -56,10 +73,22 @@ async fn main() -> Result<(), std::io::Error> {
 
             tokio::select! {
                 _ = signal::ctrl_c() => {
-                    info!("Received SIGINT (Ctrl+C), initiating graceful shutdown");
+                    info!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "startup",
+                        event_name = "startup.signal.sigint.received",
+                        "Received SIGINT (Ctrl+C), initiating graceful shutdown"
+                    );
                 },
                 _ = term_stream.recv() => {
-                    info!("Received SIGTERM, initiating graceful shutdown");
+                    info!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "startup",
+                        event_name = "startup.signal.sigterm.received",
+                        "Received SIGTERM, initiating graceful shutdown"
+                    );
                 },
             }
         }
@@ -67,10 +96,22 @@ async fn main() -> Result<(), std::io::Error> {
         #[cfg(not(unix))]
         {
             let _ = signal::ctrl_c().await;
-            info!("Received Ctrl+C, initiating graceful shutdown");
+            info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "startup",
+                event_name = "startup.signal.ctrlc.received",
+                "Received Ctrl+C, initiating graceful shutdown"
+            );
         }
 
-        info!("Shutdown signal received – cancelling token");
+        info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "startup",
+            event_name = "startup.shutdown.token.cancelled",
+            "Shutdown signal received – cancelling token"
+        );
         shutdown_signal.cancel();
     });
 
@@ -81,10 +122,44 @@ async fn main() -> Result<(), std::io::Error> {
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
         event_domain = "startup",
-        event_name = "server_start",
+        event_name = "startup.server.started",
         port = application.port(),
         swagger_url = format!("{}:{}/swagger-ui/", host, application.port()),
         "Server starting with OpenAPI documentation"
     );
     application.run_until_stopped().await
+}
+
+fn redacted_config_json(configuration: &Settings) -> Value {
+    let value = serde_json::to_value(configuration).unwrap_or_else(|_| json!({}));
+    redact_value_recursive(value)
+}
+
+fn redact_value_recursive(value: Value) -> Value {
+    match value {
+        Value::Object(obj) => {
+            let mut redacted = Map::new();
+            for (key, child) in obj {
+                if is_sensitive_key(&key) {
+                    redacted.insert(key, json!("[REDACTED]"));
+                } else {
+                    redacted.insert(key, redact_value_recursive(child));
+                }
+            }
+            Value::Object(redacted)
+        }
+        Value::Array(items) => {
+            Value::Array(items.into_iter().map(redact_value_recursive).collect())
+        }
+        other => other,
+    }
+}
+
+fn is_sensitive_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    normalized.contains("password")
+        || normalized.contains("secret")
+        || normalized.contains("token")
+        || normalized.contains("authorization")
+        || normalized.contains("api_key")
 }
