@@ -1,5 +1,5 @@
-use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
+use crate::notification_backend::{DeleteMessageResult, NotificationBackend};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result};
 use futures::StreamExt;
@@ -122,4 +122,42 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
     );
 
     Ok(())
+}
+
+/// Delete a single message from a stream by sequence.
+pub async fn delete_message(
+    backend: &JetStreamBackend,
+    stream_key: &str,
+    sequence: u64,
+) -> Result<DeleteMessageResult> {
+    let stream_name = stream_key.to_ascii_uppercase();
+    let stream = match backend.jetstream.get_stream(&stream_name).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            let message = error.to_string().to_ascii_lowercase();
+            if message.contains("stream not found") {
+                return Ok(DeleteMessageResult::NotFound);
+            }
+            return Err(error).with_context(|| format!("Failed to get stream {stream_name}"));
+        }
+    };
+
+    let deleted = stream.delete_message(sequence).await.with_context(|| {
+        format!("Failed to delete sequence {sequence} from stream {stream_name}")
+    })?;
+
+    if deleted {
+        info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "admin",
+            event_name = "admin.notification.delete.succeeded",
+            stream_name = %stream_name,
+            sequence,
+            "Deleted notification from JetStream stream"
+        );
+        Ok(DeleteMessageResult::Deleted)
+    } else {
+        Ok(DeleteMessageResult::NotFound)
+    }
 }

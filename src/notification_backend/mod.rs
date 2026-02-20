@@ -32,6 +32,12 @@ pub struct NotificationMessage {
     pub metadata: Option<HashMap<String, String>>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeleteMessageResult {
+    Deleted,
+    NotFound,
+}
+
 /// Trait defining the interface for notification backends
 ///
 /// This abstraction allows different storage backends (in-memory, JetStream etc.)
@@ -47,6 +53,7 @@ pub trait NotificationBackend: Send + Sync {
     ) -> Result<()>;
     async fn wipe_stream(&self, stream_name: &str) -> Result<()>;
     async fn wipe_all(&self) -> Result<()>;
+    async fn delete_message(&self, stream_key: &str, sequence: u64) -> Result<DeleteMessageResult>;
     async fn get_messages_batch(
         &self,
         params: replay::BatchParams,

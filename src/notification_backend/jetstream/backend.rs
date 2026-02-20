@@ -2,7 +2,7 @@ use crate::notification_backend::jetstream::{
     admin, connection, publisher, replay, streams, subscriber,
 };
 use crate::notification_backend::replay::BatchParams;
-use crate::notification_backend::{NotificationBackend, NotificationMessage};
+use crate::notification_backend::{DeleteMessageResult, NotificationBackend, NotificationMessage};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::Stream;
@@ -50,6 +50,10 @@ impl NotificationBackend for JetStreamBackend {
 
     async fn wipe_all(&self) -> Result<()> {
         admin::wipe_all(self).await
+    }
+
+    async fn delete_message(&self, stream_key: &str, sequence: u64) -> Result<DeleteMessageResult> {
+        admin::delete_message(self, stream_key, sequence).await
     }
 
     async fn get_messages_batch(&self, params: BatchParams) -> Result<crate::types::BatchResult> {
