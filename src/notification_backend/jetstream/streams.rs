@@ -4,12 +4,36 @@ use crate::configuration::{
 };
 use crate::notification::topic_parser::derive_event_type_from_topic;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
+use crate::notification_backend::jetstream::config::JetStreamConfig;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result, bail};
 use async_nats::jetstream::stream::{
     Compression, Config as StreamConfig, DiscardPolicy, RetentionPolicy, StorageType,
 };
 use tracing::{debug, info, warn};
+
+#[derive(Debug, Clone, Default)]
+struct StreamPolicyContext {
+    // Snapshot both policy layers so create/reconcile logs can explain
+    // how final stream settings were derived.
+    backend_default_max_messages: Option<i64>,
+    backend_default_max_bytes: Option<i64>,
+    backend_default_max_age_seconds: Option<u64>,
+    backend_default_replicas: Option<usize>,
+    schema_retention_time: Option<String>,
+    schema_max_messages: Option<i64>,
+    schema_max_size: Option<String>,
+    schema_allow_duplicates: Option<bool>,
+    schema_compression: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
+struct ReconcileContext<'a> {
+    // Bundle reconcile metadata to keep the reconcile function signature compact.
+    policy_context: &'a StreamPolicyContext,
+    schema_policy_applied: bool,
+    schema_policy_owner: &'a str,
+}
 
 /// Ensure a stream exists for the given topic
 /// Creates streams on-demand based on topic base (e.g., "diss.foo.bar" -> "DISS" stream)
@@ -39,7 +63,7 @@ pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) ->
     );
 
     // Build desired stream configuration for this base.
-    let (stream_config, schema_policy_owner) =
+    let (stream_config, schema_policy_owner, policy_context) =
         build_stream_config_for_base(backend, &stream_name, &subject_pattern)?;
     let max_age_seconds = stream_config.max_age.as_secs();
     let schema_policy_applied = schema_policy_owner.is_some();
@@ -55,14 +79,18 @@ pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) ->
                 subject_pattern = %subject_pattern,
                 "Stream already exists; checking configuration drift"
             );
+            let reconcile_context = ReconcileContext {
+                policy_context: &policy_context,
+                schema_policy_applied,
+                schema_policy_owner: schema_policy_owner_field,
+            };
             return reconcile_existing_stream_config(
                 backend,
                 stream,
                 &stream_name,
                 &subject_pattern,
                 &stream_config,
-                schema_policy_applied,
-                schema_policy_owner_field,
+                &reconcile_context,
             )
             .await;
         }
@@ -111,6 +139,15 @@ pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) ->
         max_messages_per_subject = stream_config.max_messages_per_subject,
         replicas = stream_config.num_replicas,
         compression = ?stream_config.compression,
+        backend_default_max_messages = policy_context.backend_default_max_messages,
+        backend_default_max_bytes = policy_context.backend_default_max_bytes,
+        backend_default_max_age_seconds = policy_context.backend_default_max_age_seconds,
+        backend_default_replicas = policy_context.backend_default_replicas,
+        schema_retention_time = policy_context.schema_retention_time.as_deref().unwrap_or(""),
+        schema_max_messages = policy_context.schema_max_messages,
+        schema_max_size = policy_context.schema_max_size.as_deref().unwrap_or(""),
+        schema_allow_duplicates = policy_context.schema_allow_duplicates,
+        schema_compression = policy_context.schema_compression,
         schema_policy_applied = schema_policy_applied,
         schema_policy_owner = schema_policy_owner_field,
         "Applying effective stream configuration"
@@ -208,8 +245,7 @@ async fn reconcile_existing_stream_config(
     stream_name: &str,
     subject_pattern: &str,
     desired_config: &StreamConfig,
-    schema_policy_applied: bool,
-    schema_policy_owner: &str,
+    reconcile_context: &ReconcileContext<'_>,
 ) -> Result<String> {
     let current_config = &stream.cached_info().config;
 
@@ -235,8 +271,17 @@ async fn reconcile_existing_stream_config(
         stream_name = %stream_name,
         subject_pattern = %subject_pattern,
         changed_fields = ?changes,
-        schema_policy_applied = schema_policy_applied,
-        schema_policy_owner = schema_policy_owner,
+        backend_default_max_messages = reconcile_context.policy_context.backend_default_max_messages,
+        backend_default_max_bytes = reconcile_context.policy_context.backend_default_max_bytes,
+        backend_default_max_age_seconds = reconcile_context.policy_context.backend_default_max_age_seconds,
+        backend_default_replicas = reconcile_context.policy_context.backend_default_replicas,
+        schema_retention_time = reconcile_context.policy_context.schema_retention_time.as_deref().unwrap_or(""),
+        schema_max_messages = reconcile_context.policy_context.schema_max_messages,
+        schema_max_size = reconcile_context.policy_context.schema_max_size.as_deref().unwrap_or(""),
+        schema_allow_duplicates = reconcile_context.policy_context.schema_allow_duplicates,
+        schema_compression = reconcile_context.policy_context.schema_compression,
+        schema_policy_applied = reconcile_context.schema_policy_applied,
+        schema_policy_owner = reconcile_context.schema_policy_owner,
         "Reconciling existing stream mutable configuration"
     );
 
@@ -249,8 +294,8 @@ async fn reconcile_existing_stream_config(
             stream_name = %stream_name,
             subject_pattern = %subject_pattern,
             changed_fields = ?changes,
-            schema_policy_applied = schema_policy_applied,
-            schema_policy_owner = schema_policy_owner,
+            schema_policy_applied = reconcile_context.schema_policy_applied,
+            schema_policy_owner = reconcile_context.schema_policy_owner,
             error = %error,
             "Stream reconciliation failed; continuing with existing stream configuration"
         );
@@ -265,8 +310,8 @@ async fn reconcile_existing_stream_config(
         stream_name = %stream_name,
         subject_pattern = %subject_pattern,
         changed_fields = ?changes,
-        schema_policy_applied = schema_policy_applied,
-        schema_policy_owner = schema_policy_owner,
+        schema_policy_applied = reconcile_context.schema_policy_applied,
+        schema_policy_owner = reconcile_context.schema_policy_owner,
         "Stream mutable configuration reconciled"
     );
 
@@ -325,7 +370,7 @@ fn build_stream_config_for_base(
     backend: &JetStreamBackend,
     stream_name: &str,
     subject_pattern: &str,
-) -> Result<(StreamConfig, Option<String>)> {
+) -> Result<(StreamConfig, Option<String>, StreamPolicyContext)> {
     let storage_type = match backend.config.storage_type {
         JetStreamStorageType::File => StorageType::File,
         JetStreamStorageType::Memory => StorageType::Memory,
@@ -352,12 +397,24 @@ fn build_stream_config_for_base(
         max_messages_per_subject: 1, // Keep only the latest message per subject
         ..Default::default()
     };
+    let mut policy_context = StreamPolicyContext {
+        backend_default_max_messages: backend.config.max_messages,
+        backend_default_max_bytes: backend.config.max_bytes,
+        backend_default_max_age_seconds: backend.config.retention_time.map(|d| d.as_secs()),
+        backend_default_replicas: backend.config.replicas,
+        ..Default::default()
+    };
 
-    apply_backend_defaults(&mut config, backend);
+    apply_backend_defaults(&mut config, &backend.config);
 
     let mut schema_policy_owner = None;
     if let Some((owner, policy)) = resolve_storage_policy_for_base(stream_name)? {
         schema_policy_owner = Some(owner);
+        policy_context.schema_retention_time = policy.retention_time.clone();
+        policy_context.schema_max_messages = policy.max_messages;
+        policy_context.schema_max_size = policy.max_size.clone();
+        policy_context.schema_allow_duplicates = policy.allow_duplicates;
+        policy_context.schema_compression = policy.compression;
         apply_storage_policy_overrides(&mut config, &policy)?;
     }
 
@@ -377,20 +434,20 @@ fn build_stream_config_for_base(
         "Built effective stream configuration"
     );
 
-    Ok((config, schema_policy_owner))
+    Ok((config, schema_policy_owner, policy_context))
 }
 
-fn apply_backend_defaults(config: &mut StreamConfig, backend: &JetStreamBackend) {
-    if let Some(max_messages) = backend.config.max_messages {
+fn apply_backend_defaults(config: &mut StreamConfig, backend_config: &JetStreamConfig) {
+    if let Some(max_messages) = backend_config.max_messages {
         config.max_messages = max_messages;
     }
-    if let Some(max_bytes) = backend.config.max_bytes {
+    if let Some(max_bytes) = backend_config.max_bytes {
         config.max_bytes = max_bytes;
     }
-    if let Some(retention_time) = backend.config.retention_time {
+    if let Some(retention_time) = backend_config.retention_time {
         config.max_age = retention_time;
     }
-    if let Some(replicas) = backend.config.replicas {
+    if let Some(replicas) = backend_config.replicas {
         config.num_replicas = replicas;
     }
 }
@@ -478,6 +535,20 @@ mod tests {
     use std::collections::HashMap;
     use std::time::Duration;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn baseline_stream_config() -> StreamConfig {
+        StreamConfig {
+            name: "TEST".to_string(),
+            subjects: vec!["test.>".to_string()],
+            max_messages: 100,
+            max_bytes: 1024,
+            max_age: Duration::from_secs(3600),
+            max_messages_per_subject: 1,
+            num_replicas: 1,
+            compression: Some(Compression::None),
+            ..Default::default()
+        }
+    }
 
     fn should_run_nats_tests() -> bool {
         std::env::var("AVISO_RUN_NATS_TESTS")
@@ -649,17 +720,7 @@ mod tests {
 
     #[test]
     fn merged_reconciled_config_noop_when_already_matching() {
-        let current = StreamConfig {
-            name: "MARS".to_string(),
-            subjects: vec!["mars.>".to_string()],
-            max_messages: 100,
-            max_bytes: 1024,
-            max_age: Duration::from_secs(3600),
-            max_messages_per_subject: 1,
-            num_replicas: 1,
-            compression: Some(Compression::None),
-            ..Default::default()
-        };
+        let current = baseline_stream_config();
         let desired = current.clone();
 
         let (merged, changed) = merged_reconciled_config(&current, &desired);
@@ -667,6 +728,100 @@ mod tests {
         assert_eq!(merged.max_messages, current.max_messages);
         assert_eq!(merged.max_bytes, current.max_bytes);
         assert_eq!(merged.max_age, current.max_age);
+    }
+
+    #[test]
+    fn merged_reconciled_config_updates_max_messages_in_isolation() {
+        let current = baseline_stream_config();
+        let mut desired = current.clone();
+        desired.max_messages = 200;
+
+        let (merged, changed) = merged_reconciled_config(&current, &desired);
+        assert_eq!(changed, vec!["max_messages"]);
+        assert_eq!(merged.max_messages, 200);
+    }
+
+    #[test]
+    fn merged_reconciled_config_updates_max_bytes_in_isolation() {
+        let current = baseline_stream_config();
+        let mut desired = current.clone();
+        desired.max_bytes = 4096;
+
+        let (merged, changed) = merged_reconciled_config(&current, &desired);
+        assert_eq!(changed, vec!["max_bytes"]);
+        assert_eq!(merged.max_bytes, 4096);
+    }
+
+    #[test]
+    fn merged_reconciled_config_updates_max_age_in_isolation() {
+        let current = baseline_stream_config();
+        let mut desired = current.clone();
+        desired.max_age = Duration::from_secs(7200);
+
+        let (merged, changed) = merged_reconciled_config(&current, &desired);
+        assert_eq!(changed, vec!["max_age"]);
+        assert_eq!(merged.max_age, Duration::from_secs(7200));
+    }
+
+    #[test]
+    fn merged_reconciled_config_updates_duplicates_policy_in_isolation() {
+        let current = baseline_stream_config();
+        let mut desired = current.clone();
+        desired.max_messages_per_subject = -1;
+
+        let (merged, changed) = merged_reconciled_config(&current, &desired);
+        assert_eq!(changed, vec!["max_messages_per_subject"]);
+        assert_eq!(merged.max_messages_per_subject, -1);
+    }
+
+    #[test]
+    fn merged_reconciled_config_updates_compression_in_isolation() {
+        let current = baseline_stream_config();
+        let mut desired = current.clone();
+        desired.compression = Some(Compression::S2);
+
+        let (merged, changed) = merged_reconciled_config(&current, &desired);
+        assert_eq!(changed, vec!["compression"]);
+        assert_eq!(merged.compression, Some(Compression::S2));
+    }
+
+    #[test]
+    fn schema_storage_policy_overrides_backend_defaults() {
+        let mut config = StreamConfig::default();
+        let backend = JetStreamConfig {
+            nats_url: "nats://localhost:4222".to_string(),
+            timeout_seconds: 10,
+            retry_attempts: 3,
+            token: None,
+            max_messages: Some(100),
+            max_bytes: Some(10_000),
+            retention_time: Some(Duration::from_secs(24 * 3600)),
+            storage_type: crate::configuration::JetStreamStorageType::File,
+            replicas: Some(1),
+            retention_policy: crate::configuration::JetStreamRetentionPolicy::Limits,
+            discard_policy: crate::configuration::JetStreamDiscardPolicy::Old,
+            enable_auto_reconnect: true,
+            max_reconnect_attempts: 5,
+            reconnect_delay_ms: 200,
+            publish_retry_attempts: 5,
+            publish_retry_base_delay_ms: 150,
+        };
+        super::apply_backend_defaults(&mut config, &backend);
+
+        let policy = EventStoragePolicy {
+            retention_time: Some("2h".to_string()),
+            max_messages: Some(250),
+            max_size: Some("2Mi".to_string()),
+            allow_duplicates: Some(true),
+            compression: Some(true),
+        };
+        apply_storage_policy_overrides(&mut config, &policy).expect("policy should apply");
+
+        assert_eq!(config.max_age, Duration::from_secs(7200));
+        assert_eq!(config.max_messages, 250);
+        assert_eq!(config.max_bytes, 2_097_152);
+        assert_eq!(config.max_messages_per_subject, -1);
+        assert_eq!(config.compression, Some(Compression::S2));
     }
 
     #[tokio::test]
