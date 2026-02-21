@@ -56,8 +56,10 @@ pub const JETSTREAM_CAPABILITIES: BackendCapabilities = BackendCapabilities {
 };
 
 pub const IN_MEMORY_CAPABILITIES: BackendCapabilities = BackendCapabilities {
+    // In-memory backend intentionally rejects schema storage_policy fields.
+    // Capacity/eviction behavior is controlled only by backend-level in_memory settings.
     retention_time: false,
-    max_messages: true,
+    max_messages: false,
     max_size: false,
     allow_duplicates: false,
     compression: false,
@@ -169,7 +171,7 @@ mod tests {
 
         let in_memory = capabilities_for_backend_kind("in_memory").expect("in_memory exists");
         assert!(!in_memory.retention_time);
-        assert!(in_memory.max_messages);
+        assert!(!in_memory.max_messages);
         assert!(!in_memory.max_size);
         assert!(!in_memory.allow_duplicates);
         assert!(!in_memory.compression);

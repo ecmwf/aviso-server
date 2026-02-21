@@ -155,6 +155,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_max_messages_for_in_memory_backend() {
+        let settings = settings_with_policy(
+            "in_memory",
+            EventStoragePolicy {
+                max_messages: Some(10),
+                ..EventStoragePolicy::default()
+            },
+            "mars",
+        );
+        let err = validate_schema_storage_policy_support(&settings)
+            .expect_err("in_memory should reject max_messages");
+        assert!(err.to_string().contains(
+            "Schema 'mars' storage_policy.max_messages is not supported by backend 'in_memory'"
+        ));
+    }
+
+    #[test]
+    fn rejects_retention_time_for_in_memory_backend() {
+        let settings = settings_with_policy(
+            "in_memory",
+            EventStoragePolicy {
+                retention_time: Some("1h".to_string()),
+                ..EventStoragePolicy::default()
+            },
+            "mars",
+        );
+        let err = validate_schema_storage_policy_support(&settings)
+            .expect_err("in_memory should reject retention_time");
+        assert!(err.to_string().contains(
+            "Schema 'mars' storage_policy.retention_time is not supported by backend 'in_memory'"
+        ));
+    }
+
+    #[test]
     fn accepts_supported_fields_for_jetstream_backend() {
         let settings = settings_with_policy(
             "jetstream",

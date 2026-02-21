@@ -27,6 +27,8 @@ Available knobs:
 - `max_topics` (default `10000`)
 - `enable_metrics` (default `false`)
 
+Per-schema `storage_policy` fields are currently not supported on `in_memory` and are rejected at startup.
+
 ## Production suitability
 
 Not recommended for production because:

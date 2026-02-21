@@ -103,6 +103,7 @@ Startup behavior:
 - Invalid `retention_time`/`max_size` format fails startup.
 - Unsupported fields for selected backend fail startup.
 - Validation happens before backend initialization.
+- With `in_memory`, all `storage_policy` fields are currently unsupported (startup fails if provided).
 
 Runtime application behavior:
 
