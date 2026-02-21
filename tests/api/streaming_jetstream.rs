@@ -1,7 +1,8 @@
-use crate::helpers::spawn_jetstream_test_app;
+use crate::helpers::{spawn_jetstream_test_app, spawn_jetstream_test_app_with_backend_defaults};
 use crate::test_utils::{
     post_polygon_notification_for_event_with_identifier, test_polygon, unique_suffix,
 };
+use async_nats::jetstream::stream::Compression;
 use reqwest::StatusCode;
 use serde_json::json;
 use std::sync::LazyLock;
@@ -75,6 +76,20 @@ async fn assert_status_ok_or_panic(response: reqwest::Response, context: &str) {
             .unwrap_or_else(|_| "<failed to read body>".to_string());
         panic!("{context} failed with status {status}: {body}");
     }
+}
+
+async fn fetch_stream_config(stream_name: &str) -> async_nats::jetstream::stream::Config {
+    let nats_url =
+        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    let client = async_nats::connect(nats_url)
+        .await
+        .expect("failed to connect to NATS for stream inspection");
+    let jetstream = async_nats::jetstream::new(client);
+    let stream = jetstream
+        .get_stream(stream_name)
+        .await
+        .expect("stream should exist for inspection");
+    stream.cached_info().config.clone()
 }
 
 #[tokio::test]
@@ -312,4 +327,53 @@ async fn jetstream_publish_after_replay_still_succeeds() {
     )
     .await;
     assert_status_ok_or_panic(post_replay_response, "post-replay publish").await;
+}
+
+#[tokio::test]
+async fn jetstream_schema_storage_policy_overrides_backend_defaults() {
+    if !should_run_nats_tests() {
+        return;
+    }
+    let _guard = JETSTREAM_TEST_LOCK.lock().await;
+
+    let app = spawn_jetstream_test_app_with_backend_defaults(Some(5), Some(2048), Some("1h")).await;
+    let client = reqwest::Client::new();
+    assert_jetstream_test_schema_is_available(&client, &app.address).await;
+
+    let note = format!("SCHEMA_POLICY_PRECEDENCE_{}", unique_suffix());
+    let response = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        JETSTREAM_TEST_EVENT_TYPE,
+        &note,
+        test_polygon(),
+        JETSTREAM_TEST_DATE,
+        "1510",
+    )
+    .await;
+    assert_status_ok_or_panic(response, "precedence seed notification").await;
+
+    let stream_config = fetch_stream_config("POLYGON_JS_TEST").await;
+    assert_eq!(
+        stream_config.max_messages, 5000,
+        "schema storage_policy.max_messages should override backend default"
+    );
+    assert_eq!(
+        stream_config.max_bytes, 67_108_864,
+        "schema storage_policy.max_size=64Mi should override backend default"
+    );
+    assert_eq!(
+        stream_config.max_age.as_secs(),
+        7 * 24 * 60 * 60,
+        "schema storage_policy.retention_time=7d should override backend default"
+    );
+    assert_eq!(
+        stream_config.max_messages_per_subject, -1,
+        "schema storage_policy.allow_duplicates=true should override backend default"
+    );
+    assert_eq!(
+        stream_config.compression,
+        Some(Compression::S2),
+        "schema storage_policy.compression=true should override backend default"
+    );
 }

@@ -82,6 +82,41 @@ Notes:
 - `wipe_stream` removes messages but preserves stream configuration.
 - Recreate is only needed when you want historical data physically rewritten.
 
+### Verifying effective stream policy
+
+Use `nats` CLI to inspect the effective stream config after publish/reconcile:
+
+```bash
+# Example for test_polygon stream base -> POLYGON stream
+nats --server nats://localhost:4222 stream info POLYGON
+```
+
+Look at these fields:
+
+- `Max Age` (`retention_time`)
+- `Max Messages` (`max_messages`)
+- `Max Bytes` (`max_bytes` / per-schema `max_size`)
+- `Max Messages Per Subject` (`allow_duplicates`: `1` = disabled, `-1` = enabled)
+- `Compression` (`None` or `S2`)
+
+Precedence rule:
+
+- backend defaults (`notification_backend.jetstream.*`) apply first
+- per-schema `storage_policy` overrides backend defaults for that stream base
+
+Smoke script tip (JetStream mode):
+
+```bash
+BACKEND=jetstream \
+NATS_URL=nats://localhost:4222 \
+JETSTREAM_POLICY_STREAM_NAME=POLYGON \
+EXPECT_MAX_MESSAGES=500000 \
+EXPECT_MAX_BYTES=2147483648 \
+EXPECT_MAX_MESSAGES_PER_SUBJECT=1 \
+EXPECT_COMPRESSION=None \
+./scripts/smoke_test.sh
+```
+
 ## Replay behavior
 
 - Sequence replay: start from `from_id`.

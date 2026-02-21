@@ -2,6 +2,8 @@
 set -euo pipefail
 
 BASE_URL="${BASE_URL:-http://127.0.0.1:8000}"
+BACKEND="${BACKEND:-in_memory}" # in_memory | jetstream
+NATS_URL="${NATS_URL:-nats://localhost:4222}"
 TIMEOUT_SECONDS="${TIMEOUT_SECONDS:-8}"
 PASS_COUNT=0
 FAIL_COUNT=0
@@ -359,13 +361,85 @@ watch_diss_from_date_with_dot_identifier() {
     [[ "$has_live" -eq 1 && "$has_historical" -eq 0 ]]
 }
 
+jetstream_stream_policy_visible_and_optional_checks() {
+    if [[ "${BACKEND}" != "jetstream" ]]; then
+        note "Skipping JetStream policy check because BACKEND=${BACKEND}"
+        return 0
+    fi
+
+    if ! command -v nats >/dev/null 2>&1; then
+        note "Skipping JetStream policy check because nats CLI is not installed"
+        return 0
+    fi
+
+    local stream_name="${JETSTREAM_POLICY_STREAM_NAME:-POLYGON}"
+    local info_out
+    info_out="$(mktemp)"
+
+    if ! nats --server "${NATS_URL}" stream info "${stream_name}" >"${info_out}" 2>/dev/null; then
+        note "Skipping JetStream policy check because stream ${stream_name} is not available yet"
+        rm -f "${info_out}"
+        return 0
+    fi
+
+    grep -Eq "Max Messages:|MaxMsgs:" "${info_out}" || {
+        rm -f "${info_out}"
+        return 1
+    }
+    grep -Eq "Max Bytes:|MaxBytes:" "${info_out}" || {
+        rm -f "${info_out}"
+        return 1
+    }
+    grep -Eq "Max Age:|MaxAge:" "${info_out}" || {
+        rm -f "${info_out}"
+        return 1
+    }
+    grep -Eq "Max Messages Per Subject:|MaxMsgsPerSubject:" "${info_out}" || {
+        rm -f "${info_out}"
+        return 1
+    }
+    grep -Eq "Compression:" "${info_out}" || {
+        rm -f "${info_out}"
+        return 1
+    }
+
+    # Optional exact checks for environments that set expected values.
+    if [[ -n "${EXPECT_MAX_MESSAGES:-}" ]]; then
+        grep -Eq "Max Messages:[[:space:]]*${EXPECT_MAX_MESSAGES}\\b|MaxMsgs:[[:space:]]*${EXPECT_MAX_MESSAGES}\\b" "${info_out}" || {
+            rm -f "${info_out}"
+            return 1
+        }
+    fi
+    if [[ -n "${EXPECT_MAX_BYTES:-}" ]]; then
+        grep -Eq "Max Bytes:[[:space:]]*${EXPECT_MAX_BYTES}\\b|MaxBytes:[[:space:]]*${EXPECT_MAX_BYTES}\\b" "${info_out}" || {
+            rm -f "${info_out}"
+            return 1
+        }
+    fi
+    if [[ -n "${EXPECT_MAX_MESSAGES_PER_SUBJECT:-}" ]]; then
+        grep -Eq "Max Messages Per Subject:[[:space:]]*${EXPECT_MAX_MESSAGES_PER_SUBJECT}\\b|MaxMsgsPerSubject:[[:space:]]*${EXPECT_MAX_MESSAGES_PER_SUBJECT}\\b" "${info_out}" || {
+            rm -f "${info_out}"
+            return 1
+        }
+    fi
+    if [[ -n "${EXPECT_COMPRESSION:-}" ]]; then
+        grep -Eq "Compression:[[:space:]]*${EXPECT_COMPRESSION}\\b" "${info_out}" || {
+            rm -f "${info_out}"
+            return 1
+        }
+    fi
+
+    rm -f "${info_out}"
+    return 0
+}
+
 main() {
     require_cmd curl
     require_cmd grep
     require_cmd date
     require_cmd timeout
 
-    note "Running smoke tests against ${BASE_URL}"
+    note "Running smoke tests against ${BASE_URL} (backend=${BACKEND})"
     run_test "health endpoint returns 200" health_check
     run_test "replay requires from_id or from_date" replay_requires_start_param
     run_test "watch without replay params is live-only" watch_live_only_behavior
@@ -374,6 +448,7 @@ main() {
     run_test "replay with point returns only containing polygons" replay_point_behavior
     run_test "mars replay with from_id works for dot-containing identifier values" replay_mars_from_id_with_dot_identifier
     run_test "diss watch with from_date excludes old and includes live for dot-containing identifier values" watch_diss_from_date_with_dot_identifier
+    run_test "jetstream stream policy is inspectable (and optionally matches expected values)" jetstream_stream_policy_visible_and_optional_checks
 
     echo
     note "Smoke summary: pass=${PASS_COUNT} fail=${FAIL_COUNT}"

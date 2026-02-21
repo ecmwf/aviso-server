@@ -1,6 +1,7 @@
 use aviso_server::{
     configuration::ApplicationSettings,
     configuration::EventSchema,
+    configuration::EventStoragePolicy,
     configuration::InMemorySettings,
     configuration::JetStreamSettings,
     configuration::LoggingSettings,
@@ -117,7 +118,15 @@ fn build_test_polygon_js_schema() -> EventSchema {
         }),
         endpoint: None,
         identifier,
-        storage_policy: None,
+        storage_policy: Some(EventStoragePolicy {
+            // Keep explicit policy values so JetStream tests can assert override precedence
+            // against backend-level defaults.
+            retention_time: Some("7d".to_string()),
+            max_messages: Some(5000),
+            max_size: Some("64Mi".to_string()),
+            allow_duplicates: Some(true),
+            compression: Some(true),
+        }),
     }
 }
 
@@ -497,6 +506,42 @@ pub async fn spawn_jetstream_test_app() -> TestApp {
         max_messages: None,
         max_bytes: None,
         retention_time: None,
+        storage_type: None,
+        replicas: Some(1),
+        retention_policy: None,
+        discard_policy: None,
+        enable_auto_reconnect: Some(true),
+        max_reconnect_attempts: Some(5),
+        reconnect_delay_ms: Some(200),
+        publish_retry_attempts: Some(5),
+        publish_retry_base_delay_ms: Some(150),
+    });
+    set_jetstream_test_notification_schema(&mut configuration);
+    let running = spawn_server(configuration).await;
+    TestApp {
+        address: running.address,
+    }
+}
+
+pub async fn spawn_jetstream_test_app_with_backend_defaults(
+    max_messages: Option<i64>,
+    max_bytes: Option<i64>,
+    retention_time: Option<&str>,
+) -> TestApp {
+    // Keep this server runtime-local for the same reason as `spawn_jetstream_test_app`.
+    let mut configuration = base_test_settings();
+    configuration.notification_backend.kind = "jetstream".to_string();
+    configuration.notification_backend.in_memory = None;
+    configuration.notification_backend.jetstream = Some(JetStreamSettings {
+        nats_url: Some(
+            std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string()),
+        ),
+        token: None,
+        timeout_seconds: Some(10),
+        retry_attempts: Some(3),
+        max_messages,
+        max_bytes,
+        retention_time: retention_time.map(ToString::to_string),
         storage_type: None,
         replicas: Some(1),
         retention_policy: None,

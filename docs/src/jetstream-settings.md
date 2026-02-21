@@ -27,12 +27,22 @@ This page maps `notification_backend.jetstream` settings to runtime behavior.
 
 - Existing streams are reconciled when accessed by Aviso (for example publish path), including
   managed subject binding and mutable policy fields (limits/retention/compression/duplicates/replicas).
+- Precedence is backend defaults first, then per-schema `storage_policy` override for the same stream base.
 - Invalid values for `storage_type`, `retention_policy`, and `discard_policy` fail during configuration deserialization (startup fail-fast).
 - Invalid numeric timing values still fail during backend validation at startup.
 - `retry_attempts` applies to startup connect attempts; reconnect behavior after startup uses
   `enable_auto_reconnect`/`max_reconnect_attempts`.
 - Publish retries are a narrow resilience path for transient `channel closed` transport failures;
   non-transient publish failures fail fast.
+
+## Verify with nats CLI
+
+```bash
+# Replace stream name as needed (for example DISS, MARS, POLYGON)
+nats --server nats://localhost:4222 stream info POLYGON
+```
+
+Check `Max Age`, `Max Messages`, `Max Bytes`, `Max Messages Per Subject`, and `Compression`.
 
 ## Recommended usage
 
