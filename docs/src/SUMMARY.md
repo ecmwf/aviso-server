@@ -7,6 +7,7 @@
 - [Configuration](./configuration.md)
 - [Configuration Reference](./configuration-reference.md)
 - [Backends Overview](./backends-overview.md)
+- [Backend Development](./backend-development.md)
 - [InMemory Backend](./backend-in-memory.md)
 - [JetStream Backend](./backend-jetstream.md)
 - [Topic Encoding](./topic-encoding.md)
