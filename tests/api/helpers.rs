@@ -78,6 +78,7 @@ fn build_test_polygon_schema() -> EventSchema {
         }),
         endpoint: None,
         identifier,
+        storage_policy: None,
     }
 }
 
@@ -110,6 +111,7 @@ fn build_test_polygon_optional_schema() -> EventSchema {
         }),
         endpoint: None,
         identifier,
+        storage_policy: None,
     }
 }
 
@@ -208,6 +210,7 @@ fn build_mars_schema() -> EventSchema {
         }),
         endpoint: None,
         identifier,
+        storage_policy: None,
     }
 }
 
@@ -326,6 +329,7 @@ fn build_dissemination_schema() -> EventSchema {
         }),
         endpoint: None,
         identifier,
+        storage_policy: None,
     }
 }
 

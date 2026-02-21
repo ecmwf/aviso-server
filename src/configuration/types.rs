@@ -51,6 +51,19 @@ pub struct EventSchema {
     pub topic: Option<TopicConfig>,
     pub endpoint: Option<TopicConfig>,
     pub identifier: HashMap<String, Vec<ValidationRules>>,
+    /// Optional per-schema storage policy (backend capability validated at startup).
+    pub storage_policy: Option<EventStoragePolicy>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+pub struct EventStoragePolicy {
+    /// Duration literal (for example `1h`, `7d`, `1w`).
+    pub retention_time: Option<String>,
+    pub max_messages: Option<i64>,
+    /// Size literal (for example `100Mi`, `1Gi`).
+    pub max_size: Option<String>,
+    pub allow_duplicates: Option<bool>,
+    pub compression: Option<bool>,
 }
 
 /// Client-facing schema shape for schema endpoints.

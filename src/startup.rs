@@ -13,7 +13,7 @@ use crate::routes::replay::replay;
 use crate::routes::schema::{get_event_schema, get_notification_schema};
 use crate::routes::watch::watch;
 use crate::{
-    configuration::Settings,
+    configuration::{Settings, validate_schema_storage_policy_support},
     notification_backend::{NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify},
     telemetry::{SERVICE_NAME, SERVICE_VERSION},
@@ -36,6 +36,18 @@ impl Application {
         configuration: Settings,
         shutdown: CancellationToken,
     ) -> Result<Self, std::io::Error> {
+        if let Err(e) = validate_schema_storage_policy_support(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "startup",
+                event_name = "startup.configuration.validation.failed",
+                error = %e,
+                "Configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
         let address = format!(
             "{}:{}",
             configuration.application.host, configuration.application.port

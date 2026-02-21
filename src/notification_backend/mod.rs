@@ -38,12 +38,46 @@ pub enum DeleteMessageResult {
     NotFound,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BackendCapabilities {
+    pub retention_time: bool,
+    pub max_messages: bool,
+    pub max_size: bool,
+    pub allow_duplicates: bool,
+    pub compression: bool,
+}
+
+pub const JETSTREAM_CAPABILITIES: BackendCapabilities = BackendCapabilities {
+    retention_time: true,
+    max_messages: true,
+    max_size: true,
+    allow_duplicates: true,
+    compression: true,
+};
+
+pub const IN_MEMORY_CAPABILITIES: BackendCapabilities = BackendCapabilities {
+    retention_time: false,
+    max_messages: true,
+    max_size: false,
+    allow_duplicates: false,
+    compression: false,
+};
+
+pub fn capabilities_for_backend_kind(kind: &str) -> Option<BackendCapabilities> {
+    match kind {
+        "jetstream" => Some(JETSTREAM_CAPABILITIES),
+        "in_memory" => Some(IN_MEMORY_CAPABILITIES),
+        _ => None,
+    }
+}
+
 /// Trait defining the interface for notification backends
 ///
 /// This abstraction allows different storage backends (in-memory, JetStream etc.)
 /// to be used interchangeably while maintaining the same interface.
 #[async_trait]
 pub trait NotificationBackend: Send + Sync {
+    fn capabilities(&self) -> BackendCapabilities;
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()>;
     async fn put_message_with_headers(
         &self,
@@ -117,5 +151,27 @@ pub async fn build_backend(
             Ok(Arc::new(JetStreamBackend::new(cfg).await?))
         }
         kind => Err(anyhow::anyhow!("Unknown notification_backend kind: {kind}")),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::capabilities_for_backend_kind;
+
+    #[test]
+    fn capability_map_for_known_backends_is_stable() {
+        let jetstream = capabilities_for_backend_kind("jetstream").expect("jetstream exists");
+        assert!(jetstream.retention_time);
+        assert!(jetstream.max_messages);
+        assert!(jetstream.max_size);
+        assert!(jetstream.allow_duplicates);
+        assert!(jetstream.compression);
+
+        let in_memory = capabilities_for_backend_kind("in_memory").expect("in_memory exists");
+        assert!(!in_memory.retention_time);
+        assert!(in_memory.max_messages);
+        assert!(!in_memory.max_size);
+        assert!(!in_memory.allow_duplicates);
+        assert!(!in_memory.compression);
     }
 }

@@ -3,7 +3,10 @@ use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch
 use crate::notification_backend::in_memory::InMemoryConfig;
 use crate::notification_backend::in_memory::InMemoryStats;
 use crate::notification_backend::replay::{BatchParams, StartAt};
-use crate::notification_backend::{DeleteMessageResult, NotificationBackend, NotificationMessage};
+use crate::notification_backend::{
+    BackendCapabilities, DeleteMessageResult, IN_MEMORY_CAPABILITIES, NotificationBackend,
+    NotificationMessage,
+};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::BatchResult;
 use anyhow::Result;
@@ -246,6 +249,10 @@ impl InMemoryBackend {
 
 #[async_trait]
 impl NotificationBackend for InMemoryBackend {
+    fn capabilities(&self) -> BackendCapabilities {
+        IN_MEMORY_CAPABILITIES
+    }
+
     /// Store a notification message for the specified topic
     /// Automatically manages memory limits by pruning old messages and topics
     /// Creates new topics on-demand and assigns unique message IDs per topic
