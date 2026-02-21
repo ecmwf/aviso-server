@@ -1,6 +1,6 @@
 use crate::configuration::{
     EventStoragePolicy, JetStreamDiscardPolicy, JetStreamRetentionPolicy, JetStreamStorageType,
-    Settings, parse_duration_spec, parse_size_spec,
+    Settings, parse_retention_time_spec, parse_size_spec,
 };
 use crate::notification::topic_parser::derive_event_type_from_topic;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
@@ -387,8 +387,8 @@ fn apply_backend_defaults(config: &mut StreamConfig, backend: &JetStreamBackend)
     if let Some(max_bytes) = backend.config.max_bytes {
         config.max_bytes = max_bytes;
     }
-    if let Some(retention_days) = backend.config.retention_days {
-        config.max_age = std::time::Duration::from_secs(retention_days as u64 * 24 * 3600);
+    if let Some(retention_time) = backend.config.retention_time {
+        config.max_age = retention_time;
     }
     if let Some(replicas) = backend.config.replicas {
         config.num_replicas = replicas;
@@ -400,8 +400,13 @@ fn apply_storage_policy_overrides(
     policy: &EventStoragePolicy,
 ) -> Result<()> {
     if let Some(retention_time) = policy.retention_time.as_deref() {
-        config.max_age = parse_duration_spec(retention_time)
+        let parsed_retention = parse_retention_time_spec(retention_time)
             .map_err(|e| anyhow::anyhow!("Invalid storage_policy.retention_time: {e}"))?;
+        // Guard against bypassed startup validation paths.
+        if parsed_retention.is_zero() {
+            bail!("Invalid storage_policy.retention_time: value must be > 0");
+        }
+        config.max_age = parsed_retention;
     }
     if let Some(max_messages) = policy.max_messages {
         config.max_messages = max_messages;
@@ -578,6 +583,22 @@ mod tests {
     }
 
     #[test]
+    fn storage_policy_rejects_zero_retention_time() {
+        let mut config = StreamConfig::default();
+        let policy = EventStoragePolicy {
+            retention_time: Some("0s".to_string()),
+            ..EventStoragePolicy::default()
+        };
+
+        let err = apply_storage_policy_overrides(&mut config, &policy)
+            .expect_err("zero retention must be rejected");
+        assert!(
+            err.to_string()
+                .contains("Invalid storage_policy.retention_time: value must be > 0")
+        );
+    }
+
+    #[test]
     fn merged_reconciled_config_updates_only_mutable_policy_fields() {
         let current = StreamConfig {
             name: "DISS".to_string(),
@@ -674,7 +695,7 @@ mod tests {
                 token: None,
                 max_messages: None,
                 max_bytes: None,
-                retention_days: Some(1),
+                retention_time: Some(Duration::from_secs(24 * 3600)),
                 storage_type: crate::configuration::JetStreamStorageType::File,
                 replicas: Some(1),
                 retention_policy: crate::configuration::JetStreamRetentionPolicy::Limits,
@@ -711,7 +732,7 @@ mod tests {
                 token: None,
                 max_messages: None,
                 max_bytes: None,
-                retention_days: Some(2),
+                retention_time: Some(Duration::from_secs(2 * 24 * 3600)),
                 storage_type: crate::configuration::JetStreamStorageType::File,
                 replicas: Some(1),
                 retention_policy: crate::configuration::JetStreamRetentionPolicy::Limits,
@@ -775,7 +796,7 @@ mod tests {
                 token: None,
                 max_messages: None,
                 max_bytes: None,
-                retention_days: None,
+                retention_time: None,
                 storage_type: crate::configuration::JetStreamStorageType::File,
                 replicas: Some(1),
                 retention_policy: crate::configuration::JetStreamRetentionPolicy::Limits,

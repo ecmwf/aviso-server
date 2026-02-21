@@ -12,7 +12,7 @@ This page maps `notification_backend.jetstream` settings to runtime behavior.
 | `retry_attempts` | `3` | Yes | Controls startup connection retry attempts (`min=1`). |
 | `max_messages` | `None` | Yes | Mapped to stream `max_messages`. |
 | `max_bytes` | `None` | Yes | Mapped to stream `max_bytes`. |
-| `retention_days` | `None` | Yes | Mapped to stream `max_age` (days -> seconds). |
+| `retention_time` | `None` | Yes | Mapped to stream `max_age` using duration literals (`s`, `m`, `h`, `d`, `w`). |
 | `storage_type` | `file` | Yes | Parsed at stream creation (`file`/`memory`). |
 | `replicas` | `None` | Yes | Mapped to stream `num_replicas`. |
 | `retention_policy` | `limits` | Yes | Parsed at stream creation. |

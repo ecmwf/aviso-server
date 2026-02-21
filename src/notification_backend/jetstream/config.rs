@@ -1,8 +1,9 @@
 use crate::configuration::{
     JetStreamDiscardPolicy, JetStreamRetentionPolicy, JetStreamSettings, JetStreamStorageType,
-    NotificationBackendSettings,
+    NotificationBackendSettings, parse_retention_time_spec,
 };
 use anyhow::{Result, bail};
+use std::time::Duration;
 
 /// Configuration for JetStream backend
 /// Contains all necessary settings for connecting to NATS and configuring streams
@@ -20,8 +21,8 @@ pub struct JetStreamConfig {
     pub max_messages: Option<i64>,
     /// Maximum bytes per stream
     pub max_bytes: Option<i64>,
-    /// Maximum age of messages in seconds
-    pub retention_days: Option<u32>,
+    /// Default stream retention window.
+    pub retention_time: Option<Duration>,
     /// Storage type for streams
     pub storage_type: JetStreamStorageType,
     /// Number of replicas for high availability
@@ -46,9 +47,18 @@ impl JetStreamConfig {
     /// Create JetStreamConfig from application configuration
     /// Merges configuration file settings
     /// Environment variables take precedence over config file values
-    pub fn from_backend_settings(settings: &NotificationBackendSettings) -> Self {
+    pub fn from_backend_settings(settings: &NotificationBackendSettings) -> Result<Self> {
         let js_settings = settings.jetstream.as_ref();
-        Self {
+        let retention_time = js_settings
+            .and_then(|js| js.retention_time.as_deref())
+            .map(|value| {
+                parse_retention_time_spec(value).map_err(|e| {
+                    anyhow::anyhow!("notification_backend.jetstream.retention_time is invalid: {e}")
+                })
+            })
+            .transpose()?;
+
+        Ok(Self {
             nats_url: js_settings
                 .and_then(|js| js.nats_url.clone())
                 .unwrap_or_else(|| "nats://localhost:4222".to_string()),
@@ -59,7 +69,7 @@ impl JetStreamConfig {
                 .or_else(|| std::env::var("NATS_TOKEN").ok()),
             max_messages: js_settings.and_then(|js| js.max_messages),
             max_bytes: js_settings.and_then(|js| js.max_bytes),
-            retention_days: js_settings.and_then(|js| js.retention_days),
+            retention_time,
             storage_type: get_storage_type(js_settings),
             replicas: js_settings.and_then(|js| js.replicas),
             retention_policy: get_retention_policy(js_settings),
@@ -79,7 +89,7 @@ impl JetStreamConfig {
             publish_retry_base_delay_ms: js_settings
                 .and_then(|js| js.publish_retry_base_delay_ms)
                 .unwrap_or(150),
-        }
+        })
     }
 
     /// Validate JetStream settings that should fail fast at startup.
@@ -100,6 +110,11 @@ impl JetStreamConfig {
 
         if self.reconnect_delay_ms == 0 {
             bail!("notification_backend.jetstream.reconnect_delay_ms must be > 0");
+        }
+        if let Some(retention_time) = self.retention_time
+            && retention_time.is_zero()
+        {
+            bail!("notification_backend.jetstream.retention_time must be > 0");
         }
         if self.publish_retry_attempts == 0 {
             bail!("notification_backend.jetstream.publish_retry_attempts must be > 0");
@@ -146,7 +161,7 @@ mod tests {
             token: None,
             max_messages: None,
             max_bytes: None,
-            retention_days: None,
+            retention_time: None,
             storage_type: JetStreamStorageType::File,
             replicas: None,
             retention_policy: JetStreamRetentionPolicy::Limits,
@@ -219,7 +234,7 @@ mod tests {
                 retry_attempts: None,
                 max_messages: None,
                 max_bytes: None,
-                retention_days: None,
+                retention_time: None,
                 storage_type: None,
                 replicas: None,
                 retention_policy: None,
@@ -232,12 +247,81 @@ mod tests {
             }),
         };
 
-        let cfg = JetStreamConfig::from_backend_settings(&backend_settings);
+        let cfg = JetStreamConfig::from_backend_settings(&backend_settings)
+            .expect("defaults should build config");
         assert!(matches!(cfg.storage_type, JetStreamStorageType::File));
         assert!(matches!(
             cfg.retention_policy,
             JetStreamRetentionPolicy::Limits
         ));
         assert!(matches!(cfg.discard_policy, JetStreamDiscardPolicy::Old));
+    }
+
+    #[test]
+    fn from_backend_settings_parses_retention_time_duration() {
+        let backend_settings = NotificationBackendSettings {
+            kind: "jetstream".to_string(),
+            in_memory: None,
+            jetstream: Some(JetStreamSettings {
+                nats_url: None,
+                token: None,
+                timeout_seconds: None,
+                retry_attempts: None,
+                max_messages: None,
+                max_bytes: None,
+                retention_time: Some("2h".to_string()),
+                storage_type: None,
+                replicas: None,
+                retention_policy: None,
+                discard_policy: None,
+                enable_auto_reconnect: None,
+                max_reconnect_attempts: None,
+                reconnect_delay_ms: None,
+                publish_retry_attempts: None,
+                publish_retry_base_delay_ms: None,
+            }),
+        };
+
+        let cfg = JetStreamConfig::from_backend_settings(&backend_settings)
+            .expect("valid duration should parse");
+        assert_eq!(
+            cfg.retention_time
+                .expect("retention_time should be present")
+                .as_secs(),
+            7200
+        );
+    }
+
+    #[test]
+    fn from_backend_settings_rejects_invalid_retention_time() {
+        let backend_settings = NotificationBackendSettings {
+            kind: "jetstream".to_string(),
+            in_memory: None,
+            jetstream: Some(JetStreamSettings {
+                nats_url: None,
+                token: None,
+                timeout_seconds: None,
+                retry_attempts: None,
+                max_messages: None,
+                max_bytes: None,
+                retention_time: Some("10x".to_string()),
+                storage_type: None,
+                replicas: None,
+                retention_policy: None,
+                discard_policy: None,
+                enable_auto_reconnect: None,
+                max_reconnect_attempts: None,
+                reconnect_delay_ms: None,
+                publish_retry_attempts: None,
+                publish_retry_base_delay_ms: None,
+            }),
+        };
+
+        let err = JetStreamConfig::from_backend_settings(&backend_settings)
+            .expect_err("invalid retention time must fail");
+        assert!(
+            err.to_string()
+                .contains("notification_backend.jetstream.retention_time is invalid:")
+        );
     }
 }

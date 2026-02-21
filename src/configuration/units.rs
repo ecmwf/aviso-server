@@ -41,6 +41,13 @@ pub fn parse_duration_spec(input: &str) -> Result<Duration, String> {
     Ok(Duration::from_secs(seconds))
 }
 
+/// Parses retention window literals for JetStream defaults and per-schema policies.
+///
+/// This wrapper keeps retention parsing on the same code path everywhere.
+pub fn parse_retention_time_spec(input: &str) -> Result<Duration, String> {
+    parse_duration_spec(input)
+}
+
 /// Parses byte-size literals used in configuration.
 ///
 /// Accepted examples: `100M`, `100Mi`, `64Ki`, `1G`, `1Ti`.
@@ -84,7 +91,7 @@ pub fn parse_size_spec(input: &str) -> Result<i64, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_duration_spec, parse_size_spec};
+    use super::{parse_duration_spec, parse_retention_time_spec, parse_size_spec};
     use std::time::Duration;
 
     #[test]
@@ -114,6 +121,15 @@ mod tests {
         assert!(parse_duration_spec("10").is_err());
         assert!(parse_duration_spec("abc").is_err());
         assert!(parse_duration_spec("10x").is_err());
+    }
+
+    #[test]
+    fn retention_parser_reuses_duration_rules() {
+        assert_eq!(
+            parse_retention_time_spec("7d").unwrap(),
+            Duration::from_secs(604_800)
+        );
+        assert!(parse_retention_time_spec("7x").is_err());
     }
 
     #[test]

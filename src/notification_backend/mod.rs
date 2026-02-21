@@ -129,7 +129,7 @@ pub async fn build_backend(
                 event_name = "backend.jetstream.initialization.started",
                 "Building JetStream notification backend"
             );
-            let cfg = JetStreamConfig::from_backend_settings(config);
+            let cfg = JetStreamConfig::from_backend_settings(config)?;
             cfg.validate()?;
             if cfg.token.is_some() {
                 tracing::info!(

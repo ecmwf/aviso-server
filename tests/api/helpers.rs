@@ -496,7 +496,7 @@ pub async fn spawn_jetstream_test_app() -> TestApp {
         retry_attempts: Some(3),
         max_messages: None,
         max_bytes: None,
-        retention_days: None,
+        retention_time: None,
         storage_type: None,
         replicas: Some(1),
         retention_policy: None,

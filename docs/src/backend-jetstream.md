@@ -44,7 +44,7 @@ On stream creation, backend applies:
 - `discard_policy`
 - `max_messages`
 - `max_bytes`
-- `retention_days` -> `max_age`
+- `retention_time` -> `max_age` (duration literal, for example `7d`, `12h`, `30m`)
 - `replicas`
 
 Existing streams are reconciled when that stream is accessed by Aviso (for example, publish path),

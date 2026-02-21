@@ -1,4 +1,4 @@
-use super::{EventStoragePolicy, Settings, parse_duration_spec, parse_size_spec};
+use super::{EventStoragePolicy, Settings, parse_retention_time_spec, parse_size_spec};
 use crate::notification_backend::{BackendCapabilities, capabilities_for_backend_kind};
 use anyhow::{Result, bail};
 use std::collections::HashMap;
@@ -44,9 +44,12 @@ fn validate_policy_fields(
     capabilities: BackendCapabilities,
 ) -> Result<()> {
     if let Some(retention_time) = policy.retention_time.as_deref() {
-        parse_duration_spec(retention_time).map_err(|e| {
+        let retention = parse_retention_time_spec(retention_time).map_err(|e| {
             anyhow::anyhow!("Schema '{event_type}' storage_policy.retention_time is invalid: {e}")
         })?;
+        if retention.is_zero() {
+            bail!("Schema '{event_type}' storage_policy.retention_time must be greater than zero");
+        }
     }
     if let Some(max_size) = policy.max_size.as_deref() {
         parse_size_spec(max_size).map_err(|e| {
@@ -201,6 +204,24 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("Schema 'mars' storage_policy.retention_time is invalid:")
+        );
+    }
+
+    #[test]
+    fn rejects_non_positive_retention_time() {
+        let settings = settings_with_policy(
+            "jetstream",
+            EventStoragePolicy {
+                retention_time: Some("0s".to_string()),
+                ..EventStoragePolicy::default()
+            },
+            "mars",
+        );
+        let err = validate_schema_storage_policy_support(&settings)
+            .expect_err("zero retention_time must fail");
+        assert!(
+            err.to_string()
+                .contains("Schema 'mars' storage_policy.retention_time must be greater than zero")
         );
     }
 

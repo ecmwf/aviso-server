@@ -124,7 +124,7 @@ mod tests {
             token: None,
             max_messages: None,
             max_bytes: None,
-            retention_days: None,
+            retention_time: None,
             storage_type: JetStreamStorageType::File,
             replicas: None,
             retention_policy: JetStreamRetentionPolicy::Limits,

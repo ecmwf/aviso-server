@@ -65,7 +65,7 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `retry_attempts` | `u32?` | `3` | Startup connect attempts before backend init fails (`> 0`). |
 | `max_messages` | `i64?` | `None` | Stream message cap. |
 | `max_bytes` | `i64?` | `None` | Stream size cap in bytes. |
-| `retention_days` | `u32?` | `None` | Converted to stream max age. |
+| `retention_time` | `string?` | `None` | Default stream max age (`s`, `m`, `h`, `d`, `w`; for example `30d`). |
 | `storage_type` | `string?` | `file` | `file` or `memory` (parsed as typed enum at config load). |
 | `replicas` | `usize?` | `None` | Stream replicas. |
 | `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue` (parsed as typed enum at config load). |

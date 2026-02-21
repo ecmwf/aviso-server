@@ -119,7 +119,8 @@ pub struct JetStreamSettings {
     pub retry_attempts: Option<u32>,
     pub max_messages: Option<i64>,
     pub max_bytes: Option<i64>,
-    pub retention_days: Option<u32>,
+    /// Default stream retention window (examples: "7d", "12h", "30m").
+    pub retention_time: Option<String>,
     pub storage_type: Option<JetStreamStorageType>,
     pub replicas: Option<usize>,
     pub retention_policy: Option<JetStreamRetentionPolicy>,
