@@ -73,6 +73,8 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `enable_auto_reconnect` | `bool?` | `true` | Enables/disables NATS client reconnect behavior. |
 | `max_reconnect_attempts` | `u32?` | `5` | Mapped to NATS `max_reconnects` (`0` => unlimited). |
 | `reconnect_delay_ms` | `u64?` | `2000` | Reconnect delay and startup connect retry backoff (`> 0`). |
+| `publish_retry_attempts` | `u32?` | `5` | Retry attempts for transient publish `channel closed` failures (`> 0`). |
+| `publish_retry_base_delay_ms` | `u64?` | `150` | Base backoff in milliseconds for publish retries (`> 0`). |
 
 See [JetStream Settings](./jetstream-settings.md) and [JetStream Backend](./backend-jetstream.md) for detailed behavior.
 
@@ -88,11 +90,50 @@ Optional per-schema storage settings validated at startup against selected backe
 | `allow_duplicates` | `bool` | `true` | Backend support is capability-gated. |
 | `compression` | `bool` | `true` | Backend support is capability-gated. |
 
+Field behavior:
+
+- `retention_time` overrides backend-level retention for the schema stream.
+- `max_messages` overrides backend-level message cap for the schema stream.
+- `max_size` overrides backend-level byte cap for the schema stream.
+- `allow_duplicates = false` maps to one message per subject (latest kept); `true` removes this cap.
+- `compression = true` enables stream compression when backend supports it.
+
 Startup behavior:
 
 - Invalid `retention_time`/`max_size` format fails startup.
 - Unsupported fields for selected backend fail startup.
 - Validation happens before backend initialization.
+
+Runtime application behavior:
+
+- `storage_policy` is applied on stream create and reconciled for existing JetStream streams
+  when those streams are accessed by Aviso.
+- Aviso-managed stream subject binding is also reconciled to the expected `<base>.>` pattern.
+- Mutable fields (retention/limits/compression/duplicates/replicas) are updated when drift is detected.
+- Recreate stream(s) only when you need historical data physically rewritten with new settings.
+
+Example:
+
+```yaml
+notification_backend:
+  kind: jetstream
+  jetstream:
+    nats_url: "nats://localhost:4222"
+    publish_retry_attempts: 5
+    publish_retry_base_delay_ms: 150
+
+notification_schema:
+  dissemination:
+    topic:
+      base: "diss"
+      key_order: ["destination", "target", "class", "expver", "domain", "date", "time", "stream", "step"]
+    storage_policy:
+      retention_time: "7d"
+      max_messages: 2000000
+      max_size: "10Gi"
+      allow_duplicates: true
+      compression: true
+```
 
 ## Environment override examples
 

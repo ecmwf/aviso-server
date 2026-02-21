@@ -36,6 +36,10 @@ pub struct JetStreamConfig {
     pub max_reconnect_attempts: u32,
     /// Base delay between reconnection attempts in milliseconds
     pub reconnect_delay_ms: u64,
+    /// Maximum publish attempts when transient channel-closed errors occur.
+    pub publish_retry_attempts: u32,
+    /// Base backoff for publish retries on channel-closed errors.
+    pub publish_retry_base_delay_ms: u64,
 }
 
 impl JetStreamConfig {
@@ -69,6 +73,12 @@ impl JetStreamConfig {
             reconnect_delay_ms: js_settings
                 .and_then(|js| js.reconnect_delay_ms)
                 .unwrap_or(2000),
+            publish_retry_attempts: js_settings
+                .and_then(|js| js.publish_retry_attempts)
+                .unwrap_or(5),
+            publish_retry_base_delay_ms: js_settings
+                .and_then(|js| js.publish_retry_base_delay_ms)
+                .unwrap_or(150),
         }
     }
 
@@ -90,6 +100,12 @@ impl JetStreamConfig {
 
         if self.reconnect_delay_ms == 0 {
             bail!("notification_backend.jetstream.reconnect_delay_ms must be > 0");
+        }
+        if self.publish_retry_attempts == 0 {
+            bail!("notification_backend.jetstream.publish_retry_attempts must be > 0");
+        }
+        if self.publish_retry_base_delay_ms == 0 {
+            bail!("notification_backend.jetstream.publish_retry_base_delay_ms must be > 0");
         }
 
         Ok(())
@@ -138,6 +154,8 @@ mod tests {
             enable_auto_reconnect: true,
             max_reconnect_attempts: 5,
             reconnect_delay_ms: 2000,
+            publish_retry_attempts: 5,
+            publish_retry_base_delay_ms: 150,
         }
     }
 
@@ -176,6 +194,20 @@ mod tests {
     }
 
     #[test]
+    fn validate_rejects_zero_publish_retry_attempts() {
+        let mut cfg = base_config();
+        cfg.publish_retry_attempts = 0;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
+    fn validate_rejects_zero_publish_retry_base_delay() {
+        let mut cfg = base_config();
+        cfg.publish_retry_base_delay_ms = 0;
+        assert!(cfg.validate().is_err());
+    }
+
+    #[test]
     fn from_backend_settings_uses_typed_defaults_for_policy_fields() {
         let backend_settings = NotificationBackendSettings {
             kind: "jetstream".to_string(),
@@ -195,6 +227,8 @@ mod tests {
                 enable_auto_reconnect: None,
                 max_reconnect_attempts: None,
                 reconnect_delay_ms: None,
+                publish_retry_attempts: None,
+                publish_retry_base_delay_ms: None,
             }),
         };
 

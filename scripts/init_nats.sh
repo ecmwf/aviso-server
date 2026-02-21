@@ -1,11 +1,13 @@
 #!/usr/bin/env bash
-set -x
-set -eo pipefail
+set -euo pipefail
+set +x
 
 # Server configuration
 NATS_PORT="${NATS_PORT:=4222}"
 NATS_HTTP_PORT="${NATS_HTTP_PORT:=8222}"
 NATS_CLUSTER_PORT="${NATS_CLUSTER_PORT:=6222}"
+DOCKER_NETWORK="${DOCKER_NETWORK:=aviso-net}"
+CONTAINER_NAME="${CONTAINER_NAME:=nats-jetstream}"
 
 # JetStream storage limits
 MAX_MEMORY="${MAX_MEMORY:=5GB}"
@@ -65,12 +67,14 @@ EOF
 generate_nats_config
 
 # Launch NATS with JetStream using Docker
-if [[ -z "${SKIP_DOCKER}" ]]; then
-    CONTAINER_NAME="nats-jetstream"
-
+if [[ -z "${SKIP_DOCKER:-}" ]]; then
     # Stop and remove existing container if it exists
     docker stop "${CONTAINER_NAME}" 2>/dev/null || true
     docker rm "${CONTAINER_NAME}" 2>/dev/null || true
+
+    # Ensure shared docker network exists for NATS ecosystem tools (e.g. NUI)
+    docker network inspect "${DOCKER_NETWORK}" >/dev/null 2>&1 || \
+        docker network create "${DOCKER_NETWORK}" >/dev/null
 
     # Create volumes for persistence
     docker volume create nats-jetstream-data 2>/dev/null || true
@@ -80,13 +84,14 @@ if [[ -z "${SKIP_DOCKER}" ]]; then
     # Launch NATS with custom configuration
     docker run \
         --name "${CONTAINER_NAME}" \
+        --network "${DOCKER_NETWORK}" \
         --publish "${NATS_PORT}":4222 \
         --publish "${NATS_HTTP_PORT}":8222 \
         --publish "${NATS_CLUSTER_PORT}":6222 \
         --volume "$(pwd)/${CONFIG_DIR}:/config:ro" \
         --volume nats-jetstream-data:/data \
         --detach \
-        nats:latest \
+        nats:2-alpine \
         --config /config/nats-server.conf
 
     # Wait for NATS to be ready
@@ -126,7 +131,9 @@ fi
 echo ""
 echo "=== NATS JetStream is ready! ==="
 echo "Server URL: ${NATS_URL}"
+echo "In-network URL: nats://${CONTAINER_NAME}:4222"
 echo "HTTP Monitoring: http://localhost:${NATS_HTTP_PORT}"
+echo "Docker network: ${DOCKER_NETWORK}"
 echo "JetStream enabled with ${MAX_MEMORY} memory and ${MAX_STORAGE} file storage"
 
 if [[ "${ENABLE_AUTH}" == "true" ]]; then

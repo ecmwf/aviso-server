@@ -35,7 +35,9 @@ pub async fn subscribe_to_topic(
 
     // Determine retry parameters based on configuration
     let max_attempts = if config.enable_auto_reconnect {
-        config.max_reconnect_attempts
+        // Keep at least one subscription attempt even when config uses 0 as
+        // "unlimited" in connection policy semantics.
+        config.max_reconnect_attempts.max(1)
     } else {
         1 // Single attempt if auto-reconnect disabled
     };

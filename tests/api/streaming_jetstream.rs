@@ -1,7 +1,11 @@
-use crate::helpers::spawn_app;
-use crate::test_utils::{post_test_polygon_notification, test_polygon, unique_suffix};
+use crate::helpers::spawn_jetstream_test_app;
+use crate::test_utils::{
+    post_polygon_notification_for_event_with_identifier, test_polygon, unique_suffix,
+};
 use reqwest::StatusCode;
 use serde_json::json;
+use std::sync::LazyLock;
+use tokio::sync::Mutex;
 use tokio::time::{Duration, Instant, sleep};
 
 // JetStream-backed integration tests are opt-in:
@@ -12,36 +16,117 @@ fn should_run_nats_tests() -> bool {
         .unwrap_or(false)
 }
 
+const JETSTREAM_TEST_EVENT_TYPE: &str = "test_polygon_js";
+const JETSTREAM_REPLAY_TEST_TIME: &str = "1210";
+const JETSTREAM_WATCH_TEST_TIME: &str = "1220";
+const JETSTREAM_TEST_DATE: &str = "20250706";
+const JETSTREAM_REPLAY_PUBLISH_TEST_TIME: &str = "1310";
+const JETSTREAM_POST_REPLAY_PUBLISH_TEST_TIME: &str = "1410";
+static JETSTREAM_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+async fn assert_jetstream_test_schema_is_available(client: &reqwest::Client, base_url: &str) {
+    let response = client
+        .get(format!(
+            "{}/api/v1/schema/{}",
+            base_url, JETSTREAM_TEST_EVENT_TYPE
+        ))
+        .send()
+        .await
+        .expect("failed to query schema endpoint");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::OK,
+        "test schema {JETSTREAM_TEST_EVENT_TYPE} must be available"
+    );
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("failed to deserialize schema response");
+
+    let returned_event_type = body
+        .get("event_type")
+        .and_then(|value| value.as_str())
+        .expect("schema response missing event_type");
+    assert_eq!(
+        returned_event_type, JETSTREAM_TEST_EVENT_TYPE,
+        "unexpected event_type returned for schema lookup"
+    );
+
+    let polygon_rules = body
+        .get("schema")
+        .and_then(|schema| schema.get("identifier"))
+        .and_then(|identifier| identifier.get("polygon"))
+        .and_then(|rules| rules.as_array())
+        .expect("schema response missing identifier.polygon rules");
+    assert!(
+        !polygon_rules.is_empty(),
+        "schema response must contain polygon identifier rules"
+    );
+}
+
+async fn assert_status_ok_or_panic(response: reqwest::Response, context: &str) {
+    if response.status() != StatusCode::OK {
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<failed to read body>".to_string());
+        panic!("{context} failed with status {status}: {body}");
+    }
+}
+
 #[tokio::test]
 async fn jetstream_replay_with_from_date_excludes_older_messages() {
     if !should_run_nats_tests() {
         return;
     }
+    let _guard = JETSTREAM_TEST_LOCK.lock().await;
 
-    let app = spawn_app().await;
+    let app = spawn_jetstream_test_app().await;
     let client = reqwest::Client::new();
+    assert_jetstream_test_schema_is_available(&client, &app.address).await;
     let suffix = unique_suffix();
 
     let old_note = format!("OLD_BEFORE_FROM_DATE_{suffix}");
     let new_note = format!("NEW_AFTER_FROM_DATE_{suffix}");
 
-    let old_response = post_test_polygon_notification(&client, &app.address, &old_note).await;
-    assert_eq!(old_response.status(), StatusCode::OK);
+    let old_response = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        JETSTREAM_TEST_EVENT_TYPE,
+        &old_note,
+        test_polygon(),
+        JETSTREAM_TEST_DATE,
+        JETSTREAM_REPLAY_TEST_TIME,
+    )
+    .await;
+    assert_status_ok_or_panic(old_response, "old notification").await;
 
     sleep(Duration::from_secs(1)).await;
     let from_date = chrono::Utc::now().to_rfc3339();
     sleep(Duration::from_secs(1)).await;
 
-    let new_response = post_test_polygon_notification(&client, &app.address, &new_note).await;
-    assert_eq!(new_response.status(), StatusCode::OK);
+    let new_response = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        JETSTREAM_TEST_EVENT_TYPE,
+        &new_note,
+        test_polygon(),
+        JETSTREAM_TEST_DATE,
+        JETSTREAM_REPLAY_TEST_TIME,
+    )
+    .await;
+    assert_status_ok_or_panic(new_response, "new notification").await;
 
     let replay_response = client
         .post(format!("{}/api/v1/replay", &app.address))
         .header("Content-Type", "application/json")
         .json(&json!({
-            "event_type": "test_polygon",
+            "event_type": JETSTREAM_TEST_EVENT_TYPE,
             "identifier": {
-                "time": "1200",
+                "time": JETSTREAM_REPLAY_TEST_TIME,
                 "polygon": test_polygon(),
             },
             "from_date": from_date,
@@ -49,8 +134,14 @@ async fn jetstream_replay_with_from_date_excludes_older_messages() {
         .send()
         .await
         .expect("failed to call replay endpoint");
-
-    assert_eq!(replay_response.status(), StatusCode::OK);
+    if replay_response.status() != StatusCode::OK {
+        let status = replay_response.status();
+        let body = replay_response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<failed to read body>".to_string());
+        panic!("replay request failed with status {status}: {body}");
+    }
     let body = replay_response
         .text()
         .await
@@ -71,17 +162,27 @@ async fn jetstream_watch_without_replay_params_is_live_only() {
     if !should_run_nats_tests() {
         return;
     }
+    let _guard = JETSTREAM_TEST_LOCK.lock().await;
 
-    let app = spawn_app().await;
+    let app = spawn_jetstream_test_app().await;
     let client = reqwest::Client::new();
+    assert_jetstream_test_schema_is_available(&client, &app.address).await;
     let suffix = unique_suffix();
 
     let historical_note = format!("HISTORICAL_BEFORE_WATCH_{suffix}");
     let live_note = format!("LIVE_AFTER_WATCH_{suffix}");
 
-    let historical_response =
-        post_test_polygon_notification(&client, &app.address, &historical_note).await;
-    assert_eq!(historical_response.status(), StatusCode::OK);
+    let historical_response = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        JETSTREAM_TEST_EVENT_TYPE,
+        &historical_note,
+        test_polygon(),
+        JETSTREAM_TEST_DATE,
+        JETSTREAM_WATCH_TEST_TIME,
+    )
+    .await;
+    assert_status_ok_or_panic(historical_response, "historical notification").await;
 
     sleep(Duration::from_millis(300)).await;
 
@@ -89,23 +190,38 @@ async fn jetstream_watch_without_replay_params_is_live_only() {
         .post(format!("{}/api/v1/watch", &app.address))
         .header("Content-Type", "application/json")
         .json(&json!({
-            "event_type": "test_polygon",
+            "event_type": JETSTREAM_TEST_EVENT_TYPE,
             "identifier": {
-                "time": "1200",
+                "time": JETSTREAM_WATCH_TEST_TIME,
                 "polygon": test_polygon(),
             }
         }))
         .send()
         .await
         .expect("failed to call watch endpoint");
-
-    assert_eq!(watch_response.status(), StatusCode::OK);
+    if watch_response.status() != StatusCode::OK {
+        let status = watch_response.status();
+        let body = watch_response
+            .text()
+            .await
+            .unwrap_or_else(|_| "<failed to read body>".to_string());
+        panic!("watch request failed with status {status}: {body}");
+    }
 
     // Give the backend a brief moment to fully attach the subscription.
     sleep(Duration::from_millis(200)).await;
 
-    let live_response = post_test_polygon_notification(&client, &app.address, &live_note).await;
-    assert_eq!(live_response.status(), StatusCode::OK);
+    let live_response = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        JETSTREAM_TEST_EVENT_TYPE,
+        &live_note,
+        test_polygon(),
+        JETSTREAM_TEST_DATE,
+        JETSTREAM_WATCH_TEST_TIME,
+    )
+    .await;
+    assert_status_ok_or_panic(live_response, "live notification").await;
 
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut observed = String::new();
@@ -139,4 +255,61 @@ async fn jetstream_watch_without_replay_params_is_live_only() {
         !observed.contains(&historical_note),
         "expected watch stream to exclude historical note: {historical_note}; observed: {observed}"
     );
+}
+
+#[tokio::test]
+async fn jetstream_publish_after_replay_still_succeeds() {
+    if !should_run_nats_tests() {
+        return;
+    }
+    let _guard = JETSTREAM_TEST_LOCK.lock().await;
+
+    let app = spawn_jetstream_test_app().await;
+    let client = reqwest::Client::new();
+    assert_jetstream_test_schema_is_available(&client, &app.address).await;
+    let suffix = unique_suffix();
+
+    // Step 1: publish and run a replay to exercise the same JetStream app instance.
+    let replay_seed_note = format!("REPLAY_SEED_{suffix}");
+    let replay_seed_response = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        JETSTREAM_TEST_EVENT_TYPE,
+        &replay_seed_note,
+        test_polygon(),
+        JETSTREAM_TEST_DATE,
+        JETSTREAM_REPLAY_PUBLISH_TEST_TIME,
+    )
+    .await;
+    assert_status_ok_or_panic(replay_seed_response, "replay-seed notification").await;
+
+    let replay_response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": JETSTREAM_TEST_EVENT_TYPE,
+            "identifier": {
+                "time": JETSTREAM_REPLAY_PUBLISH_TEST_TIME,
+                "polygon": test_polygon(),
+            },
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+    assert_status_ok_or_panic(replay_response, "post-seed replay request").await;
+
+    // Step 2: publish again immediately with a different subject and ensure storage still works.
+    let post_replay_note = format!("POST_REPLAY_PUBLISH_{suffix}");
+    let post_replay_response = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        JETSTREAM_TEST_EVENT_TYPE,
+        &post_replay_note,
+        test_polygon(),
+        JETSTREAM_TEST_DATE,
+        JETSTREAM_POST_REPLAY_PUBLISH_TEST_TIME,
+    )
+    .await;
+    assert_status_ok_or_panic(post_replay_response, "post-replay publish").await;
 }

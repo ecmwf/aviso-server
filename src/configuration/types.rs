@@ -127,6 +127,10 @@ pub struct JetStreamSettings {
     pub enable_auto_reconnect: Option<bool>,
     pub max_reconnect_attempts: Option<u32>,
     pub reconnect_delay_ms: Option<u64>,
+    /// Publish retry attempts for transient channel-closed errors.
+    pub publish_retry_attempts: Option<u32>,
+    /// Base backoff (milliseconds) for publish retries.
+    pub publish_retry_base_delay_ms: Option<u64>,
 }
 
 #[derive(serde::Deserialize, Serialize, Clone, Debug)]

@@ -132,6 +132,8 @@ mod tests {
             enable_auto_reconnect: true,
             max_reconnect_attempts: 5,
             reconnect_delay_ms: 2000,
+            publish_retry_attempts: 5,
+            publish_retry_base_delay_ms: 150,
         }
     }
 
