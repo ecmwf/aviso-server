@@ -53,5 +53,7 @@ Backend details:
 - Environment variables override YAML values.
 - Replay/watch behavior is controlled by request parameters, not by static config switches.
 - Invalid JetStream policy values (for example `storage_type`) are rejected during configuration deserialization at startup (fail-fast), before streams are created.
+- Per-schema `storage_policy` is validated at startup against backend capabilities.
+- `/api/v1/schema` responses remain client-focused and do not expose internal `storage_policy`.
 
 Use [Configuration Reference](./configuration-reference.md) for full field-level documentation.

@@ -76,6 +76,24 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 
 See [JetStream Settings](./jetstream-settings.md) and [JetStream Backend](./backend-jetstream.md) for detailed behavior.
 
+## `notification_schema.<event_type>.storage_policy`
+
+Optional per-schema storage settings validated at startup against selected backend capabilities.
+
+| Field | Type | Example | Notes |
+|---|---|---|---|
+| `retention_time` | `string` | `7d`, `12h`, `30m` | Duration literal (`s`, `m`, `h`, `d`, `w`). |
+| `max_messages` | `integer` | `100000` | Must be `> 0`. |
+| `max_size` | `string` | `512Mi`, `2G` | Size literal (`K`, `Ki`, `M`, `Mi`, `G`, `Gi`, `T`, `Ti`). |
+| `allow_duplicates` | `bool` | `true` | Backend support is capability-gated. |
+| `compression` | `bool` | `true` | Backend support is capability-gated. |
+
+Startup behavior:
+
+- Invalid `retention_time`/`max_size` format fails startup.
+- Unsupported fields for selected backend fail startup.
+- Validation happens before backend initialization.
+
 ## Environment override examples
 
 ```bash
