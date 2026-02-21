@@ -150,6 +150,24 @@ mod tests {
     }
 
     #[test]
+    fn rejects_storage_policy_for_unknown_backend_kind() {
+        let settings = settings_with_policy(
+            "unknown_backend",
+            EventStoragePolicy {
+                retention_time: Some("1d".to_string()),
+                ..EventStoragePolicy::default()
+            },
+            "mars",
+        );
+        let err = validate_schema_storage_policy_support(&settings)
+            .expect_err("unknown backend kind must fail");
+        assert!(
+            err.to_string()
+                .contains("Unknown notification_backend kind: unknown_backend")
+        );
+    }
+
+    #[test]
     fn rejects_invalid_retention_time_format() {
         let settings = settings_with_policy(
             "jetstream",
