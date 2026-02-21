@@ -376,57 +376,50 @@ jetstream_stream_policy_visible_and_optional_checks() {
     local info_out
     info_out="$(mktemp)"
 
-    if ! nats --server "${NATS_URL}" stream info "${stream_name}" >"${info_out}" 2>/dev/null; then
+    if ! nats --server "${NATS_URL}" stream info "${stream_name}" --json >"${info_out}" 2>/dev/null; then
         note "Skipping JetStream policy check because stream ${stream_name} is not available yet"
         rm -f "${info_out}"
         return 0
     fi
 
-    grep -Eq "Max Messages:|MaxMsgs:" "${info_out}" || {
-        rm -f "${info_out}"
-        return 1
-    }
-    grep -Eq "Max Bytes:|MaxBytes:" "${info_out}" || {
-        rm -f "${info_out}"
-        return 1
-    }
-    grep -Eq "Max Age:|MaxAge:" "${info_out}" || {
-        rm -f "${info_out}"
-        return 1
-    }
-    grep -Eq "Max Messages Per Subject:|MaxMsgsPerSubject:" "${info_out}" || {
-        rm -f "${info_out}"
-        return 1
-    }
-    grep -Eq "Compression:" "${info_out}" || {
-        rm -f "${info_out}"
-        return 1
-    }
+    local policy_check_failed=0
+    grep -Eq '"max_msgs"\s*:\s*' "${info_out}" || policy_check_failed=1
+    grep -Eq '"max_bytes"\s*:\s*' "${info_out}" || policy_check_failed=1
+    grep -Eq '"max_age"\s*:\s*' "${info_out}" || policy_check_failed=1
+    grep -Eq '"max_msgs_per_subject"\s*:\s*' "${info_out}" || policy_check_failed=1
+    grep -Eq '"compression"\s*:\s*' "${info_out}" || policy_check_failed=1
 
     # Optional exact checks for environments that set expected values.
     if [[ -n "${EXPECT_MAX_MESSAGES:-}" ]]; then
-        grep -Eq "Max Messages:[[:space:]]*${EXPECT_MAX_MESSAGES}\\b|MaxMsgs:[[:space:]]*${EXPECT_MAX_MESSAGES}\\b" "${info_out}" || {
-            rm -f "${info_out}"
-            return 1
-        }
+        grep -Eq "\"max_msgs\"\\s*:\\s*${EXPECT_MAX_MESSAGES}\\b" "${info_out}" || policy_check_failed=1
     fi
     if [[ -n "${EXPECT_MAX_BYTES:-}" ]]; then
-        grep -Eq "Max Bytes:[[:space:]]*${EXPECT_MAX_BYTES}\\b|MaxBytes:[[:space:]]*${EXPECT_MAX_BYTES}\\b" "${info_out}" || {
-            rm -f "${info_out}"
-            return 1
-        }
+        grep -Eq "\"max_bytes\"\\s*:\\s*${EXPECT_MAX_BYTES}\\b" "${info_out}" || policy_check_failed=1
     fi
     if [[ -n "${EXPECT_MAX_MESSAGES_PER_SUBJECT:-}" ]]; then
-        grep -Eq "Max Messages Per Subject:[[:space:]]*${EXPECT_MAX_MESSAGES_PER_SUBJECT}\\b|MaxMsgsPerSubject:[[:space:]]*${EXPECT_MAX_MESSAGES_PER_SUBJECT}\\b" "${info_out}" || {
-            rm -f "${info_out}"
-            return 1
-        }
+        grep -Eq "\"max_msgs_per_subject\"\\s*:\\s*${EXPECT_MAX_MESSAGES_PER_SUBJECT}\\b" "${info_out}" || policy_check_failed=1
     fi
     if [[ -n "${EXPECT_COMPRESSION:-}" ]]; then
-        grep -Eq "Compression:[[:space:]]*${EXPECT_COMPRESSION}\\b" "${info_out}" || {
-            rm -f "${info_out}"
-            return 1
-        }
+        local expected_compression
+        case "${EXPECT_COMPRESSION}" in
+            S2|s2|true|TRUE)
+                expected_compression="s2"
+                ;;
+            None|none|false|FALSE)
+                expected_compression="none"
+                ;;
+            *)
+                expected_compression="$(printf '%s' "${EXPECT_COMPRESSION}" | tr '[:upper:]' '[:lower:]')"
+                ;;
+        esac
+        grep -Eq "\"compression\"\\s*:\\s*\"${expected_compression}\"" "${info_out}" || policy_check_failed=1
+    fi
+
+    if [[ "${policy_check_failed}" -ne 0 ]]; then
+        note "JetStream stream policy check failed for stream ${stream_name}; captured stream info:"
+        cat "${info_out}"
+        rm -f "${info_out}"
+        return 1
     fi
 
     rm -f "${info_out}"
