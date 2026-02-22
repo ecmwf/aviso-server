@@ -1,6 +1,6 @@
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_nats::HeaderMap;
 use std::collections::HashMap;
 use std::time::Duration;
@@ -55,7 +55,10 @@ async fn publish_with_retry(
             Err(error) => return Err(error),
         }
     }
-    unreachable!("publish_with_retry loop must return on success or error")
+    // Defensive fallback: loop should have returned from the match above.
+    Err(anyhow!(
+        "publish_with_retry exhausted attempts without success or terminal error"
+    ))
 }
 
 async fn publish_once(
