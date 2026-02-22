@@ -23,6 +23,7 @@ const JETSTREAM_WATCH_TEST_TIME: &str = "1220";
 const JETSTREAM_TEST_DATE: &str = "20250706";
 const JETSTREAM_REPLAY_PUBLISH_TEST_TIME: &str = "1310";
 const JETSTREAM_POST_REPLAY_PUBLISH_TEST_TIME: &str = "1410";
+const JETSTREAM_TEST_STREAM: &str = "POLYGON_JS_TEST";
 static JETSTREAM_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
 
 async fn assert_jetstream_test_schema_is_available(client: &reqwest::Client, base_url: &str) {
@@ -79,17 +80,28 @@ async fn assert_status_ok_or_panic(response: reqwest::Response, context: &str) {
 }
 
 async fn fetch_stream_config(stream_name: &str) -> async_nats::jetstream::stream::Config {
-    let nats_url =
-        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
-    let client = async_nats::connect(nats_url)
-        .await
-        .expect("failed to connect to NATS for stream inspection");
-    let jetstream = async_nats::jetstream::new(client);
+    let jetstream = connect_jetstream_for_tests("stream inspection").await;
     let stream = jetstream
         .get_stream(stream_name)
         .await
         .expect("stream should exist for inspection");
     stream.cached_info().config.clone()
+}
+
+async fn connect_jetstream_for_tests(context: &str) -> async_nats::jetstream::Context {
+    let nats_url =
+        std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
+    let client = async_nats::connect(nats_url)
+        .await
+        .unwrap_or_else(|_| panic!("failed to connect to NATS for {context}"));
+    async_nats::jetstream::new(client)
+}
+
+async fn reset_test_stream(stream_name: &str) {
+    let jetstream = connect_jetstream_for_tests("stream reset").await;
+    // Tests reuse a stable stream name; drop any prior state so policy and replay
+    // assertions stay deterministic across repeated local/CI runs.
+    let _ = jetstream.delete_stream(stream_name).await;
 }
 
 #[tokio::test]
@@ -98,6 +110,7 @@ async fn jetstream_replay_with_from_date_excludes_older_messages() {
         return;
     }
     let _guard = JETSTREAM_TEST_LOCK.lock().await;
+    reset_test_stream(JETSTREAM_TEST_STREAM).await;
 
     let app = spawn_jetstream_test_app().await;
     let client = reqwest::Client::new();
@@ -178,6 +191,7 @@ async fn jetstream_watch_without_replay_params_is_live_only() {
         return;
     }
     let _guard = JETSTREAM_TEST_LOCK.lock().await;
+    reset_test_stream(JETSTREAM_TEST_STREAM).await;
 
     let app = spawn_jetstream_test_app().await;
     let client = reqwest::Client::new();
@@ -278,6 +292,7 @@ async fn jetstream_publish_after_replay_still_succeeds() {
         return;
     }
     let _guard = JETSTREAM_TEST_LOCK.lock().await;
+    reset_test_stream(JETSTREAM_TEST_STREAM).await;
 
     let app = spawn_jetstream_test_app().await;
     let client = reqwest::Client::new();
@@ -335,6 +350,7 @@ async fn jetstream_schema_storage_policy_overrides_backend_defaults() {
         return;
     }
     let _guard = JETSTREAM_TEST_LOCK.lock().await;
+    reset_test_stream(JETSTREAM_TEST_STREAM).await;
 
     let app = spawn_jetstream_test_app_with_backend_defaults(Some(5), Some(2048), Some("1h")).await;
     let client = reqwest::Client::new();
@@ -353,7 +369,7 @@ async fn jetstream_schema_storage_policy_overrides_backend_defaults() {
     .await;
     assert_status_ok_or_panic(response, "precedence seed notification").await;
 
-    let stream_config = fetch_stream_config("POLYGON_JS_TEST").await;
+    let stream_config = fetch_stream_config(JETSTREAM_TEST_STREAM).await;
     assert_eq!(
         stream_config.max_messages, 5000,
         "schema storage_policy.max_messages should override backend default"

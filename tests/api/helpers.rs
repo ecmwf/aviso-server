@@ -118,15 +118,21 @@ fn build_test_polygon_js_schema() -> EventSchema {
         }),
         endpoint: None,
         identifier,
-        storage_policy: Some(EventStoragePolicy {
-            // Keep explicit policy values so JetStream tests can assert override precedence
-            // against backend-level defaults.
+        storage_policy: None,
+    }
+}
+
+fn apply_jetstream_test_polygon_js_policy(schema: &mut HashMap<String, EventSchema>) {
+    if let Some(test_polygon_js) = schema.get_mut("test_polygon_js") {
+        // JetStream-specific tests need explicit policy values to validate
+        // backend-default vs schema-override precedence.
+        test_polygon_js.storage_policy = Some(EventStoragePolicy {
             retention_time: Some("7d".to_string()),
             max_messages: Some(5000),
             max_size: Some("64Mi".to_string()),
             allow_duplicates: Some(true),
             compression: Some(true),
-        }),
+        });
     }
 }
 
@@ -407,6 +413,9 @@ fn set_streaming_test_notification_schema(configuration: &mut Settings) {
 fn set_jetstream_test_notification_schema(configuration: &mut Settings) {
     configuration.notification_schema = Some(HashMap::new());
     ensure_test_notification_schema(configuration);
+    if let Some(schema) = configuration.notification_schema.as_mut() {
+        apply_jetstream_test_polygon_js_policy(schema);
+    }
 }
 
 fn base_test_settings() -> Settings {
@@ -436,6 +445,9 @@ fn ensure_test_global_config_initialized() {
     TEST_GLOBAL_CONFIG.get_or_init(|| {
         let mut configuration = base_test_settings();
         ensure_test_notification_schema(&mut configuration);
+        if let Some(schema) = configuration.notification_schema.as_mut() {
+            apply_jetstream_test_polygon_js_policy(schema);
+        }
         // This initialization is process-global (OnceLock-backed in production code),
         // so tests must install a deterministic superset schema exactly once.
         Settings::init_global_config(&configuration);
