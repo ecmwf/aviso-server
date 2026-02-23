@@ -4,6 +4,7 @@ use crate::notification_backend::in_memory::InMemoryConfig;
 use crate::notification_backend::in_memory::InMemoryStats;
 use crate::notification_backend::replay::{BatchParams, StartAt};
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::BatchResult;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -74,6 +75,10 @@ impl InMemoryBackend {
     /// * `Self` - Configured in-memory backend ready to store notifications
     pub fn new(config: InMemoryConfig) -> Self {
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "backend",
+            event_name = "backend.in_memory.initialization.started",
             max_history_per_topic = config.max_history_per_topic,
             max_topics = config.max_topics,
             enable_metrics = config.enable_metrics,
@@ -86,6 +91,10 @@ impl InMemoryBackend {
         let channel_capacity = requested_channel_capacity.clamp(1024, 65536);
         if requested_channel_capacity > channel_capacity {
             warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "backend",
+                event_name = "backend.in_memory.channel.capacity.clamped",
                 requested_channel_capacity,
                 effective_channel_capacity = channel_capacity,
                 "Broadcast channel capacity clamped to upper bound; lagged consumers may miss notifications under high throughput"
@@ -154,6 +163,10 @@ impl InMemoryBackend {
             if let Some(topic_to_remove) = oldest_topic {
                 topics.remove(&topic_to_remove);
                 warn!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "backend",
+                    event_name = "backend.in_memory.topic.evicted",
                     removed_topic = %topic_to_remove,
                     max_topics = self.config.max_topics,
                     "Removed oldest topic due to topic limit enforcement"
@@ -178,6 +191,10 @@ impl InMemoryBackend {
 
         let topic_state = state.topics.entry(topic.to_string()).or_insert_with(|| {
             info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "backend",
+                event_name = "backend.in_memory.topic.created",
                 topic = %topic,
                 max_history = self.config.max_history_per_topic,
                 "Creating new topic with configured history limit"
@@ -291,6 +308,10 @@ impl NotificationBackend for InMemoryBackend {
         }
 
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "backend",
+            event_name = "backend.in_memory.stream.wiped",
             stream_name = %stream_name,
             subjects_removed = removed_subjects,
             notifications_removed = total_notifications,
@@ -318,6 +339,10 @@ impl NotificationBackend for InMemoryBackend {
         topics.clear();
 
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "backend",
+            event_name = "backend.in_memory.storage.wiped",
             subjects_removed = subjects_count,
             notifications_removed = total_notifications,
             "Wiped all data from in-memory backend - complete reset performed"
@@ -385,6 +410,10 @@ impl NotificationBackend for InMemoryBackend {
                         }
                         Err(broadcast::error::RecvError::Lagged(skipped)) => {
                             warn!(
+                                service_name = SERVICE_NAME,
+                                service_version = SERVICE_VERSION,
+                                event_domain = "backend",
+                                event_name = "backend.in_memory.subscription.lagged",
                                 skipped = skipped,
                                 "In-memory subscription lagged; dropped notifications"
                             );

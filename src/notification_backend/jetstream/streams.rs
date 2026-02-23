@@ -3,6 +3,7 @@ use crate::configuration::{
 };
 use crate::notification::topic_parser::derive_event_type_from_topic;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result};
 use async_nats::jetstream::stream::{
     Config as StreamConfig, DiscardPolicy, RetentionPolicy, StorageType,
@@ -44,6 +45,10 @@ pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) ->
         }
         Err(_) => {
             info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "backend",
+                event_name = "backend.jetstream.stream.create.started",
                 stream_name = %stream_name,
                 subject_pattern = %subject_pattern,
                 "Creating new stream for base topic"
@@ -58,6 +63,10 @@ pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) ->
     match backend.jetstream.create_stream(stream_config).await {
         Ok(_) => {
             info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "backend",
+                event_name = "backend.jetstream.stream.create.succeeded",
                 stream_name = %stream_name,
                 subject_pattern = %subject_pattern,
                 "Stream created successfully"
@@ -68,10 +77,21 @@ pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) ->
             let error_msg = e.to_string();
             // Handle race condition where another replica creates the stream
             if error_msg.contains("stream name already in use") {
-                info!(stream_name = %stream_name, "Stream created by another replica");
+                info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "backend",
+                    event_name = "backend.jetstream.stream.create.race_won_by_peer",
+                    stream_name = %stream_name,
+                    "Stream created by another replica"
+                );
                 Ok(stream_name)
             } else {
                 warn!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "backend",
+                    event_name = "backend.jetstream.stream.create.failed",
                     stream_name = %stream_name,
                     subject_pattern = %subject_pattern,
                     error = %e,

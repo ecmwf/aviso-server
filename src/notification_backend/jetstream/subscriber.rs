@@ -5,6 +5,7 @@ use crate::notification_backend::jetstream::backend::JetStreamBackend;
 use crate::notification_backend::jetstream::subscriber_utils::{
     ConsumerConfig, apply_message_filter, create_jetstream_consumer, transform_jetstream_message,
 };
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result};
 use futures::StreamExt;
 use futures_util::Stream;
@@ -20,7 +21,14 @@ pub async fn subscribe_to_topic(
     backend: &JetStreamBackend,
     topic: &str,
 ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Send + Unpin>> {
-    info!(topic = %topic, "Starting subscription to topic with hybrid wildcard filtering");
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "backend",
+        event_name = "backend.jetstream.subscription.started",
+        topic = %topic,
+        "Starting subscription to topic with hybrid wildcard filtering"
+    );
 
     // Get resilience settings from backend config (your actual structure)
     let config = &backend.config;
@@ -43,12 +51,20 @@ pub async fn subscribe_to_topic(
             Ok(stream) => {
                 if attempt > 1 {
                     info!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "backend",
+                        event_name = "backend.jetstream.subscription.retry_succeeded",
                         topic = %topic_owned,
                         attempt = attempt,
                         "Successfully created subscription after retry"
                     );
                 } else {
                     info!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "backend",
+                        event_name = "backend.jetstream.subscription.succeeded",
                         topic = %topic_owned,
                         "Successfully created subscription"
                     );
@@ -58,6 +74,10 @@ pub async fn subscribe_to_topic(
             Err(e) => {
                 if attempt == max_attempts {
                     error!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_domain = "backend",
+                        event_name = "backend.jetstream.subscription.failed",
                         error = %e,
                         topic = %topic_owned,
                         attempts = max_attempts,
@@ -68,6 +88,10 @@ pub async fn subscribe_to_topic(
                 }
 
                 warn!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "backend",
+                    event_name = "backend.jetstream.subscription.retry",
                     error = %e,
                     topic = %topic_owned,
                     attempt = attempt,
@@ -130,6 +154,10 @@ async fn create_subscription_internal(
                         }
                         Err(e) => {
                             warn!(
+                                service_name = SERVICE_NAME,
+                                service_version = SERVICE_VERSION,
+                                event_domain = "backend",
+                                event_name = "backend.jetstream.message.transform.failed",
                                 error = %e,
                                 topic = %topic_for_closure,
                                 subject = %jetstream_msg.subject,
@@ -151,6 +179,10 @@ async fn create_subscription_internal(
         });
 
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "backend",
+        event_name = "backend.jetstream.subscription.ready",
         topic = %topic,
         backend_pattern = %backend_pattern,
         stream_name = %stream_name,

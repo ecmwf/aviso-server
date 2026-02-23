@@ -17,6 +17,7 @@ use super::types::{
 };
 use crate::cloudevents::create_cloud_event_from_notification;
 use crate::notification::decode_subject_for_display;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 /// Convert a notification message to an SSE event
 pub fn notification_to_sse_event(
@@ -46,6 +47,10 @@ pub fn notification_to_sse_event(
         Err(e) => {
             let display_topic = decode_subject_for_display(&notification.topic);
             warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "streaming",
+                event_name = "stream.sse.cloudevent.creation.failed",
                 error = %e,
                 topic = %display_topic,
                 sequence = notification.sequence,

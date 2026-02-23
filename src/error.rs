@@ -188,10 +188,13 @@ impl ResponseError for ApiError {
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
                     event_domain = "http",
-                    event_name = "api_request_parse_failed",
+                    event_name = "api.request.parse.failed",
                     outcome = "error",
                     error_code = code.as_str(),
                     error = %error_label,
+                    // Keep both stable type and human message for query + debugging.
+                    error_type = %error_label,
+                    error_message = %message,
                     details = %message,
                     "Request parsing failed"
                 );
@@ -212,10 +215,13 @@ impl ResponseError for ApiError {
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
                     event_domain = "http",
-                    event_name = "api_request_validation_failed",
+                    event_name = "api.request.validation.failed",
                     outcome = "error",
                     error_code = code.as_str(),
                     error = %error_label,
+                    // `error_type` is stable across deployments; `error_message` carries context.
+                    error_type = %error_label,
+                    error_message = %message,
                     error_chain = ?chain,
                     "Request validation failed"
                 );
@@ -236,10 +242,13 @@ impl ResponseError for ApiError {
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
                     event_domain = "http",
-                    event_name = "api_request_processing_failed",
+                    event_name = "api.request.processing.failed",
                     outcome = "error",
                     error_code = code.as_str(),
                     error = %error_label,
+                    // Emit machine-friendly type and operator-friendly message together.
+                    error_type = %error_label,
+                    error_message = %message,
                     error_chain = ?chain,
                     "Request processing failed"
                 );
@@ -262,9 +271,12 @@ impl ResponseError for ApiError {
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
                     event_domain = "streaming",
-                    event_name = "api_sse_stream_initialization_failed",
+                    event_name = "stream.sse.initialization.failed",
                     outcome = "error",
                     error_code = code.as_str(),
+                    // SSE failures use a fixed type plus the concrete failure message.
+                    error_type = "SSE stream creation failed",
+                    error_message = %message,
                     error_chain = ?chain,
                     topic = %display_topic,
                     request_id = request_id,
@@ -284,6 +296,8 @@ impl ResponseError for ApiError {
 }
 
 fn error_summary(error: &anyhow::Error) -> (String, String, Vec<String>) {
+    // Keep response payloads stable: first chain item is the user-facing message,
+    // last item is the deepest detail, full chain is logged for operators.
     let chain = error
         .chain()
         .map(ToString::to_string)

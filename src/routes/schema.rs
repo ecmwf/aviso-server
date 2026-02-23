@@ -6,6 +6,7 @@
 //! details like topic structure are excluded from API responses.
 
 use crate::configuration::{ApiEventSchema, Settings};
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpResponse, web};
 use serde_json::json;
 use std::collections::HashMap;
@@ -44,6 +45,10 @@ pub async fn get_notification_schema() -> HttpResponse {
                 .collect();
 
             info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "api",
+                event_name = "api.schema.list.succeeded",
                 schema_count = api_schema.len(),
                 event_types = ?api_schema.keys().collect::<Vec<_>>(),
                 "Returning filtered notification schema configuration"
@@ -57,7 +62,13 @@ pub async fn get_notification_schema() -> HttpResponse {
             }))
         }
         None => {
-            info!("No notification schema configured, returning empty schema");
+            info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "api",
+                event_name = "api.schema.list.empty",
+                "No notification schema configured, returning empty schema"
+            );
 
             HttpResponse::Ok().json(json!({
                 "status": "success",
@@ -102,6 +113,10 @@ pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
                 let api_schema = ApiEventSchema::from(event_schema);
 
                 info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "api",
+                    event_name = "api.schema.get.succeeded",
                     event_type = %event_type,
                     field_count = api_schema.identifier.len(),
                     "Returning filtered schema for specific event type"

@@ -35,7 +35,7 @@ See [Topic Encoding](./topic-encoding.md) for rules and examples.
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `level` | `string` | implementation default | Example: `info`, `debug`, `warn`, `error`. |
-| `format` | `string` | implementation default | Example: `bunyan`, `json`, `console`. |
+| `format` | `string` | implementation default | Kept for compatibility; output is OTel-aligned JSON. |
 
 ## `notification_backend`
 

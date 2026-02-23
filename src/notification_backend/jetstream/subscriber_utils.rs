@@ -10,6 +10,7 @@ use chrono::{DateTime, Utc};
 use tracing::{debug, info};
 
 use crate::notification_backend::{JetStreamBackend, NotificationMessage};
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 /// Configuration for different types of JetStream consumers
 #[derive(Debug, Clone)]
@@ -119,6 +120,10 @@ pub async fn create_jetstream_consumer(
         .context("Failed to create JetStream consumer")?;
 
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "backend",
+        event_name = "backend.jetstream.consumer.created",
         backend_pattern = %backend_pattern,
         stream_name = %stream_name,
         consumer_name = consumer.cached_info().name,

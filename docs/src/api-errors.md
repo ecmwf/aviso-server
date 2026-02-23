@@ -31,10 +31,10 @@ These `event_name` values are emitted in structured logs:
 
 | Event Name | Level | Trigger |
 |---|---|---|
-| `api_request_parse_failed` | `warn` | JSON parse/shape/unknown-field failure before domain validation. |
-| `api_request_validation_failed` | `warn` | Domain/request validation failure (`400`). |
-| `api_request_processing_failed` | `error` | Server-side processing/storage failure (`500`). |
-| `api_sse_stream_initialization_failed` | `error` | Replay/watch SSE initialization failure (`500`). |
+| `api.request.parse.failed` | `warn` | JSON parse/shape/unknown-field failure before domain validation. |
+| `api.request.validation.failed` | `warn` | Domain/request validation failure (`400`). |
+| `api.request.processing.failed` | `error` | Server-side processing/storage failure (`500`). |
+| `stream.sse.initialization.failed` | `error` | Replay/watch SSE initialization failure (`500`). |
 
 For SSE setup failures, response also includes:
 

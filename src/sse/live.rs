@@ -15,6 +15,7 @@ use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 /// Create a live notification stream from a backend subscription
 pub fn create_live_notification_stream(
@@ -93,6 +94,10 @@ pub async fn create_watch_sse_stream(
     });
 
     tracing::info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "streaming",
+        event_name = "stream.watch.live.created",
         topic = %decode_subject_for_display(&topic),
         timeout_seconds = connection_timeout.as_secs(),
         concurrent_limit = watch_config.concurrent_notification_processing,

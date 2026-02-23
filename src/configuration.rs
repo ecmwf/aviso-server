@@ -1,3 +1,4 @@
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use aviso_validators::ValidationRules;
 use dirs;
 use serde::{Deserialize, Serialize};
@@ -93,7 +94,7 @@ impl From<&EventSchema> for ApiEventSchema {
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct LoggingSettings {
     pub level: String,  // e.g. "info", "debug", "error", "trace", etc.
-    pub format: String, // "bunyan", "json", "pretty_json", "console"
+    pub format: String, // accepted for compatibility; logs are emitted as OTel JSON
 }
 
 // NOTIFICATION BACKEND SETTINGS
@@ -229,6 +230,10 @@ impl Settings {
         let _ = GLOBAL_WATCH_SETTINGS.set(self.watch_endpoint.clone());
 
         tracing::info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "configuration",
+            event_name = "configuration.global.initialized",
             has_notification_schema = self.notification_schema.is_some(),
             has_logging_config = self.logging.is_some(),
             base_url = %self.application.base_url,
@@ -339,6 +344,10 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     let settings = settings.build()?.try_deserialize::<Settings>()?;
 
     tracing::info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "configuration",
+        event_name = "configuration.load.succeeded",
         host = %settings.application.host,
         port = settings.application.port,
         backend_kind = %settings.notification_backend.kind,
