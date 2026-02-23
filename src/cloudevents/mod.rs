@@ -11,6 +11,7 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::configuration::Settings;
+use crate::notification::decode_subject_for_display;
 use crate::notification::topic_parser::{derive_event_type_from_topic, topic_to_request};
 use crate::notification_backend::NotificationMessage;
 use cloudevents::AttributesReader;
@@ -78,7 +79,7 @@ impl CloudEventCreator {
         debug!(
             event_id = cloud_event.id(),
             event_type = %event_type,
-            topic = %notification.topic,
+            topic = %decode_subject_for_display(&notification.topic),
             sequence = notification.sequence,
             "CloudEvent created successfully"
         );

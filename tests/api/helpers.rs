@@ -69,6 +69,38 @@ fn build_test_polygon_schema() -> EventSchema {
     }
 }
 
+fn build_test_polygon_optional_schema() -> EventSchema {
+    let mut identifier = HashMap::new();
+    identifier.insert(
+        "date".to_string(),
+        vec![ValidationRules::DateHandler {
+            canonical_format: "%Y%m%d".to_string(),
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "time".to_string(),
+        vec![ValidationRules::TimeHandler { required: false }],
+    );
+    identifier.insert(
+        "polygon".to_string(),
+        vec![ValidationRules::PolygonHandler { required: false }],
+    );
+
+    EventSchema {
+        payload: Some(PayloadConfig {
+            allowed_types: vec!["String".to_string()],
+            required: true,
+        }),
+        topic: Some(TopicConfig {
+            base: "polygon_optional".to_string(),
+            key_order: vec!["date".to_string(), "time".to_string()],
+        }),
+        endpoint: None,
+        identifier,
+    }
+}
+
 fn build_mars_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
@@ -291,6 +323,10 @@ fn ensure_test_notification_schema(configuration: &mut Settings) {
         .get_or_insert_with(HashMap::new);
 
     schema.insert("test_polygon".to_string(), build_test_polygon_schema());
+    schema.insert(
+        "test_polygon_optional".to_string(),
+        build_test_polygon_optional_schema(),
+    );
     schema.insert("mars".to_string(), build_mars_schema());
     schema.insert("dissemination".to_string(), build_dissemination_schema());
 }
@@ -298,6 +334,10 @@ fn ensure_test_notification_schema(configuration: &mut Settings) {
 fn set_streaming_test_notification_schema(configuration: &mut Settings) {
     let mut schema = HashMap::new();
     schema.insert("test_polygon".to_string(), build_test_polygon_schema());
+    schema.insert(
+        "test_polygon_optional".to_string(),
+        build_test_polygon_optional_schema(),
+    );
     schema.insert("mars".to_string(), build_mars_schema());
     schema.insert("dissemination".to_string(), build_dissemination_schema());
     configuration.notification_schema = Some(schema);

@@ -1,7 +1,9 @@
 use crate::error::{sse_error_response, validation_error_response};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
+use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::replay::StartAt;
+use crate::routes::streaming::record_start_at_span_fields;
 use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
@@ -60,23 +62,16 @@ pub async fn watch(
 
     // Update tracing context
     tracing::Span::current().record("event_type", &context.event_type);
-    match context.start_at {
-        StartAt::Sequence(id) => {
-            tracing::Span::current().record("from_id", id);
-        }
-        StartAt::Date(date) => {
-            tracing::Span::current().record("from_date", date.to_rfc3339());
-        }
-        StartAt::LiveOnly => {}
-    }
+    record_start_at_span_fields(context.start_at);
 
-    // Prepare filtering parameters - use ORIGINAL request parameters for spatial filtering
-    let original_request_params = Arc::new(notification_request.identifier.clone());
+    // Use canonicalized filtering parameters produced by request processing.
+    let filtering_params = Arc::new(context.canonicalized_params.clone());
 
     // Determine streaming mode and create appropriate stream
+    let display_topic = decode_subject_for_display(&context.topic);
     let sse_response = if !matches!(context.start_at, StartAt::LiveOnly) {
         info!(
-            topic = %context.topic,
+            topic = %display_topic,
             start_at = ?context.start_at,
             "Creating historical replay + live stream"
         );
@@ -86,24 +81,24 @@ pub async fn watch(
             notification_backend.get_ref().clone(),
             context.start_at,
             shutdown.clone(),
-            original_request_params.clone(),
+            filtering_params.clone(),
         )
         .await
     } else {
-        info!(topic = %context.topic, "Creating live-only stream");
+        info!(topic = %display_topic, "Creating live-only stream");
 
         create_watch_sse_stream(
             context.topic.clone(),
             notification_backend.get_ref().clone(),
             shutdown.clone(),
-            original_request_params.clone(),
+            filtering_params.clone(),
         )
         .await
     };
 
     match sse_response {
         Ok(response) => {
-            info!(topic = %context.topic, "SSE stream established successfully");
+            info!(topic = %display_topic, "SSE stream established successfully");
             response
         }
         Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),

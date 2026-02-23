@@ -240,6 +240,44 @@ replay_from_date_behavior() {
     [[ "$has_new" -eq 1 && "$has_old" -eq 0 ]]
 }
 
+replay_point_behavior() {
+    local inside_polygon="(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
+    local outside_polygon="(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"
+    local inside_note="smoke-replay-point-inside-$(date +%s%N)"
+    local outside_note="smoke-replay-point-outside-$(date +%s%N)"
+
+    local replay_out
+    replay_out="$(mktemp)"
+    local boundary
+    boundary="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    sleep 1
+
+    # Use different dates so JetStream per-subject retention keeps both messages.
+    # test_polygon subject shape is polygon.<date>.<time>, so same date/time would collide.
+    post_notification "$inside_polygon" "$inside_note" "20250706" "1200"
+    post_notification "$outside_polygon" "$outside_note" "20250707" "1200"
+
+    timeout "${TIMEOUT_SECONDS}s" curl -sN -X POST "${BASE_URL}/api/v1/replay" \
+        -H "Content-Type: application/json" \
+        -d "{
+          \"event_type\": \"test_polygon\",
+          \"identifier\": {
+            \"time\": \"1200\"
+          },
+          \"point\": \"52.55,13.5\",
+          \"from_date\": \"${boundary}\"
+        }" >"$replay_out" || true
+
+    local has_inside has_outside
+    has_inside=0
+    has_outside=0
+    grep -Fq "$inside_note" "$replay_out" && has_inside=1 || true
+    grep -Fq "$outside_note" "$replay_out" && has_outside=1 || true
+
+    rm -f "$replay_out"
+    [[ "$has_inside" -eq 1 && "$has_outside" -eq 0 ]]
+}
+
 replay_mars_from_id_with_dot_identifier() {
     local stream_value="ens.member.$(date +%s%N)"
     local first_note="smoke-mars-replay-first-$(date +%s%N)"
@@ -333,6 +371,7 @@ main() {
     run_test "watch without replay params is live-only" watch_live_only_behavior
     run_test "replay with from_id returns historical stream" replay_from_id_behavior
     run_test "replay with from_date excludes older messages" replay_from_date_behavior
+    run_test "replay with point returns only containing polygons" replay_point_behavior
     run_test "mars replay with from_id works for dot-containing identifier values" replay_mars_from_id_with_dot_identifier
     run_test "diss watch with from_date excludes old and includes live for dot-containing identifier values" watch_diss_from_date_with_dot_identifier
 

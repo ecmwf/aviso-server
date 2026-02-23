@@ -16,19 +16,12 @@ use super::helpers::{
 };
 use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
+use crate::notification::decode_subject_for_display;
 use crate::notification::wildcard_matcher::matches_notification_filters;
 use crate::notification_backend::{
     NotificationBackend, NotificationMessage,
     replay::{BatchParams, StartAt},
 };
-
-fn split_start_at(start_at: StartAt) -> (Option<u64>, Option<chrono::DateTime<chrono::Utc>>) {
-    match start_at {
-        StartAt::Sequence(seq) => (Some(seq), None),
-        StartAt::Date(date) => (None, Some(date)),
-        StartAt::LiveOnly => (None, None),
-    }
-}
 
 /// Create a stream that replays historical messages using tokio_stream
 ///
@@ -67,7 +60,7 @@ pub fn create_historical_replay_stream(
             match backend.get_messages_batch(params.clone()).await {
                 Ok(batch_result) => {
                     debug!(
-                        topic = %params.topic,
+                        topic = %decode_subject_for_display(&params.topic),
                         batch_size = batch_result.batch_size,
                         has_more = batch_result.has_more,
                         last_sequence = ?batch_result.last_sequence,
@@ -122,7 +115,7 @@ pub fn create_historical_replay_stream(
                 Err(e) => {
                     warn!(
                         error = %e,
-                        topic = %params.topic,
+                        topic = %decode_subject_for_display(&params.topic),
                         "Failed to retrieve historical message batch"
                     );
                     // On error: emit one error frame and stop replay iteration.
@@ -160,7 +153,7 @@ pub async fn create_historical_then_live_stream(
         request_params.clone(),
     );
 
-    let (from_sequence, from_date) = split_start_at(start_at);
+    let (from_sequence, from_date) = start_at.as_replay_cursor();
 
     // Create control events for replay lifecycle.
     let start_event = StreamFrame::Control(ControlEvent::ReplayStarted {
@@ -221,7 +214,7 @@ pub async fn create_historical_then_live_stream(
     });
 
     tracing::info!(
-        topic = %topic,
+        topic = %decode_subject_for_display(&topic),
         from_sequence = ?from_sequence,
         from_date = ?from_date,
         batch_size = watch_config.replay_batch_size,
@@ -251,7 +244,7 @@ pub async fn create_replay_only_stream(
         request_params.clone(),
     );
 
-    let (from_sequence, from_date) = split_start_at(start_at);
+    let (from_sequence, from_date) = start_at.as_replay_cursor();
 
     // Create control events for replay lifecycle.
     let start_event = StreamFrame::Control(ControlEvent::ReplayStarted {
@@ -286,7 +279,7 @@ pub async fn create_replay_only_stream(
     });
 
     tracing::info!(
-        topic = %topic,
+        topic = %decode_subject_for_display(&topic),
         from_sequence = ?from_sequence,
         from_date = ?from_date,
         batch_size = watch_config.replay_batch_size,

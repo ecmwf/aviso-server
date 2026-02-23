@@ -13,20 +13,52 @@ pub fn test_polygon() -> &'static str {
     "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
 }
 
+pub fn outside_polygon() -> &'static str {
+    "(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"
+}
+
 pub async fn post_test_polygon_notification(
     client: &reqwest::Client,
     base_url: &str,
     note: &str,
 ) -> reqwest::Response {
+    post_polygon_notification(client, base_url, "test_polygon", note, test_polygon()).await
+}
+
+pub async fn post_test_polygon_notification_with_polygon(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    polygon: &str,
+) -> reqwest::Response {
+    post_polygon_notification(client, base_url, "test_polygon", note, polygon).await
+}
+
+pub async fn post_test_polygon_optional_notification_with_polygon(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    polygon: &str,
+) -> reqwest::Response {
+    post_polygon_notification(client, base_url, "test_polygon_optional", note, polygon).await
+}
+
+async fn post_polygon_notification(
+    client: &reqwest::Client,
+    base_url: &str,
+    event_type: &str,
+    note: &str,
+    polygon: &str,
+) -> reqwest::Response {
     client
         .post(format!("{}/api/v1/notification", base_url))
         .header("Content-Type", "application/json")
         .json(&json!({
-            "event_type": "test_polygon",
+            "event_type": event_type,
             "identifier": {
                 "date": "20250706",
                 "time": "1200",
-                "polygon": test_polygon(),
+                "polygon": polygon,
             },
             "payload": {
                 "note": note,

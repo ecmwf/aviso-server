@@ -4,4 +4,5 @@ pub mod home;
 pub mod notify;
 pub mod replay;
 pub mod schema;
+pub mod streaming;
 pub mod watch;

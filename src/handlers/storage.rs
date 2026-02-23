@@ -1,4 +1,5 @@
 use crate::notification::ProcessingResult;
+use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use anyhow::Result;
 use aviso_validators::PolygonHandler;
@@ -23,8 +24,9 @@ pub async fn save_to_backend(
     payload: Option<&str>,
     notification_backend: &dyn NotificationBackend,
 ) -> Result<()> {
+    let display_topic = decode_subject_for_display(&result.topic);
     debug!(
-        topic = %result.topic,
+        topic = %display_topic,
         event_type = %result.event_type,
         param_count = result.canonicalized_params.len(),
         has_spatial_metadata = result.spatial_metadata.is_some(),
@@ -41,6 +43,14 @@ pub async fn save_to_backend(
             "spatial_bbox".to_string(),
             spatial_metadata.bounding_box.clone(),
         );
+        if let Some(polygon_geometry) = result
+            .canonicalized_params
+            .values()
+            .find(|value| value.starts_with('(') && value.ends_with(')'))
+            .cloned()
+        {
+            headers.insert("spatial_geometry".to_string(), polygon_geometry);
+        }
 
         // Enhance payload with full polygon geometry from request params
         let enhanced_payload = enhance_payload_with_polygon(base_payload, result)?;
@@ -51,7 +61,7 @@ pub async fn save_to_backend(
             .await?;
 
         info!(
-            topic = %result.topic,
+            topic = %display_topic,
             event_type = %result.event_type,
             bounding_box = %spatial_metadata.bounding_box,
             "Notification with spatial metadata saved to backend successfully"
@@ -63,7 +73,7 @@ pub async fn save_to_backend(
             .await?;
 
         info!(
-            topic = %result.topic,
+            topic = %display_topic,
             event_type = %result.event_type,
             "Notification saved to backend successfully"
         );

@@ -3,6 +3,7 @@
 //! This module provides reusable error handling functionality that can be
 //! used across different endpoints, validation types, and processing modules.
 
+use crate::notification::decode_subject_for_display;
 use actix_web::HttpResponse;
 use serde_json::json;
 use tracing::{error, warn};
@@ -131,10 +132,11 @@ pub fn processing_error_response(process_type: &str, error: anyhow::Error) -> Ht
 /// * `HttpResponse` - InternalServerError response formatted for SSE errors
 pub fn sse_error_response(error: anyhow::Error, topic: &str, request_id: &str) -> HttpResponse {
     let error_chain = extract_error_chain(&error);
+    let display_topic = decode_subject_for_display(topic);
 
     error!(
         error_chain = ?error_chain,
-        topic = topic,
+        topic = display_topic,
         request_id = request_id,
         "SSE stream creation failed"
     );
@@ -143,7 +145,7 @@ pub fn sse_error_response(error: anyhow::Error, topic: &str, request_id: &str) -
         "error": "SSE stream creation failed",
         "message": error_chain.first().unwrap_or(&error.to_string()),
         "details": error_chain.last().unwrap_or(&error.to_string()),
-        "topic": topic,
+        "topic": display_topic,
         "request_id": request_id,
         "error_chain": error_chain
     }))

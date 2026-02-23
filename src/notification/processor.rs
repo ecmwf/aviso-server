@@ -136,6 +136,7 @@ impl<'a> NotificationProcessor<'a> {
         request_params: &HashMap<String, String>,
     ) -> Result<HashMap<String, String>> {
         let mut canonicalized = HashMap::new();
+        let has_point = request_params.contains_key("point");
 
         for (field_name, rules) in &schema.identifier {
             let is_required = rules.iter().any(|rule| rule.is_required());
@@ -145,6 +146,10 @@ impl<'a> NotificationProcessor<'a> {
                     self.validate_and_canonicalize_field(field_name, value, rules)?;
                 canonicalized.insert(field_name.clone(), canonicalized_value);
             } else if is_required {
+                if field_name == "polygon" && has_point {
+                    canonicalized.insert(field_name.clone(), "*".to_string());
+                    continue;
+                }
                 bail!(
                     "Required field '{}' missing for watch operation",
                     field_name
@@ -153,6 +158,10 @@ impl<'a> NotificationProcessor<'a> {
                 // `"*"` keeps positional matching while representing "any value".
                 canonicalized.insert(field_name.clone(), "*".to_string());
             }
+        }
+
+        if let Some(point) = request_params.get("point") {
+            canonicalized.insert("point".to_string(), point.clone());
         }
 
         Ok(canonicalized)
@@ -165,6 +174,7 @@ impl<'a> NotificationProcessor<'a> {
         request_params: &HashMap<String, String>,
     ) -> Result<HashMap<String, String>> {
         let mut canonicalized = HashMap::new();
+        let has_point = request_params.contains_key("point");
 
         for (field_name, rules) in &schema.identifier {
             let is_required = rules.iter().any(|rule| rule.is_required());
@@ -174,6 +184,10 @@ impl<'a> NotificationProcessor<'a> {
                     self.validate_and_canonicalize_field(field_name, value, rules)?;
                 canonicalized.insert(field_name.clone(), canonicalized_value);
             } else if is_required {
+                if field_name == "polygon" && has_point {
+                    canonicalized.insert(field_name.clone(), "*".to_string());
+                    continue;
+                }
                 bail!(
                     "Required field '{}' missing for replay operation",
                     field_name
@@ -181,6 +195,10 @@ impl<'a> NotificationProcessor<'a> {
             } else {
                 canonicalized.insert(field_name.clone(), "*".to_string());
             }
+        }
+
+        if let Some(point) = request_params.get("point") {
+            canonicalized.insert("point".to_string(), point.clone());
         }
 
         Ok(canonicalized)
@@ -582,6 +600,60 @@ mod tests {
             Some(&"*".to_string())
         );
         assert!(processing_result.spatial_metadata.is_none()); // Watch doesn't extract spatial metadata
+    }
+
+    #[test]
+    fn test_polygon_watch_request_accepts_point_without_polygon_identifier() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_polygon".to_string(), create_polygon_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("time".to_string(), "1200".to_string());
+        params.insert("point".to_string(), "52.55,13.5".to_string());
+
+        let payload = None;
+        let result =
+            processor.process_request("test_polygon", &params, &payload, OperationType::Watch);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert_eq!(
+            processing_result.canonicalized_params.get("polygon"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            processing_result.canonicalized_params.get("point"),
+            Some(&"52.55,13.5".to_string())
+        );
+    }
+
+    #[test]
+    fn test_polygon_replay_request_accepts_point_without_polygon_identifier() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_polygon".to_string(), create_polygon_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("time".to_string(), "1200".to_string());
+        params.insert("point".to_string(), "52.55,13.5".to_string());
+
+        let payload = None;
+        let result =
+            processor.process_request("test_polygon", &params, &payload, OperationType::Replay);
+
+        assert!(result.is_ok());
+        let processing_result = result.unwrap();
+        assert_eq!(
+            processing_result.canonicalized_params.get("polygon"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            processing_result.canonicalized_params.get("point"),
+            Some(&"52.55,13.5".to_string())
+        );
     }
 
     #[test]

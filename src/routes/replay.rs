@@ -1,7 +1,8 @@
 use crate::error::{sse_error_response, validation_error_response};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
+use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::notification_backend::replay::StartAt;
+use crate::routes::streaming::record_start_at_span_fields;
 use crate::sse::create_replay_only_stream;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
@@ -52,18 +53,11 @@ pub async fn replay(
     };
 
     tracing::Span::current().record("event_type", &context.event_type);
-    match context.start_at {
-        StartAt::Sequence(id) => {
-            tracing::Span::current().record("from_id", id);
-        }
-        StartAt::Date(date) => {
-            tracing::Span::current().record("from_date", date.to_rfc3339());
-        }
-        StartAt::LiveOnly => {}
-    }
+    record_start_at_span_fields(context.start_at);
 
+    let display_topic = decode_subject_for_display(&context.topic);
     info!(
-        topic = %context.topic,
+        topic = %display_topic,
         start_at = ?context.start_at,
         "Starting replay-only SSE stream"
     );
@@ -81,7 +75,7 @@ pub async fn replay(
     .await
     {
         Ok(response) => {
-            info!(topic = %context.topic, "Replay-only SSE stream established successfully");
+            info!(topic = %display_topic, "Replay-only SSE stream established successfully");
             response
         }
         Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),

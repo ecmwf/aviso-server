@@ -8,6 +8,8 @@
   - historical replay starts first, then transitions to live stream.
 - If both are present:
   - request is rejected with `400`.
+- Spatial filtering:
+  - see [Spatial Filter Model](#spatial-filter-model) below.
 
 Example (live-only watch):
 
@@ -23,6 +25,20 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
   }'
 ```
 
+Example (live-only watch with point filter):
+
+```bash
+curl -N -X POST "http://localhost:8000/api/v1/watch" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_type": "test_polygon",
+    "identifier": {
+      "time": "1200"
+    },
+    "point": "52.55,13.50"
+  }'
+```
+
 ## `POST /api/v1/replay`
 
 - Requires exactly one replay start parameter:
@@ -31,6 +47,7 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
 - If both are missing:
   - request is rejected with `400`.
 - Endpoint returns historical replay stream and then closes.
+- Same spatial filter contract as `watch` (see [Spatial Filter Model](#spatial-filter-model)).
 
 Example (time-based replay):
 
@@ -47,6 +64,72 @@ curl -N -X POST "http://localhost:8000/api/v1/replay" \
   }'
 ```
 
+## Spatial Filter Model
+
+Use this mental model:
+
+- `identifier` picks candidate notifications by topic fields (`time`, `date`, etc.).
+- spatial filters (`identifier.polygon` or top-level `point`) optionally narrow that candidate set.
+
+### Rules
+
+- `identifier.polygon`:
+  - do polygon-intersects-polygon filtering.
+- `point`:
+  - do point-inside-notification-polygon filtering.
+- both `identifier.polygon` and `point`:
+  - invalid request (`400`).
+- neither `identifier.polygon` nor `point`:
+  - no spatial narrowing; filtering uses non-spatial identifier fields only.
+
+### Decision Table
+
+| `identifier.polygon` | `point` | Result |
+|---|---|---|
+| provided | omitted | polygon intersection filter |
+| omitted | provided | point-in-polygon filter |
+| omitted | omitted | no spatial filter |
+| provided | provided | `400 Bad Request` |
+
+### Example: Optional Polygon, No Spatial Filter
+
+Request:
+
+```json
+{
+  "event_type": "test_polygon_optional",
+  "identifier": {
+    "time": "1200"
+  },
+  "from_id": "1"
+}
+```
+
+Behavior:
+
+- replay/watch matches notifications with `time=1200`
+- polygon shape is not used for filtering in this request
+
+### Example: Optional Polygon, Point Filter
+
+Request:
+
+```json
+{
+  "event_type": "test_polygon_optional",
+  "identifier": {
+    "time": "1200"
+  },
+  "point": "52.55,13.50",
+  "from_id": "1"
+}
+```
+
+Behavior:
+
+- replay/watch first matches `time=1200`
+- then keeps only notifications whose polygon contains that point
+
 ## `from_date` behavior
 
 - Input must be RFC3339 datetime string with timezone.
@@ -61,9 +144,11 @@ You can choose one of these fields:
 
 - `from_id`
   - Start from a message sequence number (inclusive).
+  - Example: `from_id: "42"` means replay starts at sequence `42`.
   - Use this when you know the last sequence you processed.
 - `from_date`
   - Start from a UTC timestamp (inclusive, RFC3339).
+  - Example: `from_date: "2025-01-15T10:00:00Z"` means replay starts at or after that instant.
   - Use this when you want events from a specific time onward.
 
 ## Rules by Endpoint
