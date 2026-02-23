@@ -11,5 +11,6 @@
 - [JetStream Backend](./backend-jetstream.md)
 - [Topic Encoding](./topic-encoding.md)
 - [Streaming Semantics](./streaming-semantics.md)
+- [Admin Operations](./admin-operations.md)
 - [API Errors](./api-errors.md)
 - [JetStream Settings](./jetstream-settings.md)

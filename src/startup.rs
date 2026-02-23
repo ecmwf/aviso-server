@@ -7,7 +7,7 @@ use tracing::{error, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::openapi::ApiDoc;
-use crate::routes::admin::{wipe_all, wipe_stream};
+use crate::routes::admin::{delete_notification, wipe_all, wipe_stream};
 use crate::routes::home::homepage;
 use crate::routes::replay::replay;
 use crate::routes::schema::{get_event_schema, get_notification_schema};
@@ -178,7 +178,11 @@ fn configure_api_v1(cfg: &mut web::ServiceConfig) {
             .service(
                 web::scope("/admin")
                     .route("/wipe/stream", web::delete().to(wipe_stream))
-                    .route("/wipe/all", web::delete().to(wipe_all)),
+                    .route("/wipe/all", web::delete().to(wipe_all))
+                    .route(
+                        "/notification/{notification_id}",
+                        web::delete().to(delete_notification),
+                    ),
             ),
     );
 }

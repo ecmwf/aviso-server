@@ -22,6 +22,7 @@ use utoipa::OpenApi;
         replay::replay,
         admin::wipe_stream,
         admin::wipe_all,
+        admin::delete_notification,
     ),
     components(
         schemas(
@@ -39,6 +40,7 @@ use utoipa::OpenApi;
             // Admin endpoints
             admin::WipeStreamRequest,
             admin::WipeResponse,
+            admin::DeleteNotificationResponse,
         )
     ),
     info(

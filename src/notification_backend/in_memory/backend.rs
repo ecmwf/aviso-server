@@ -3,7 +3,7 @@ use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch
 use crate::notification_backend::in_memory::InMemoryConfig;
 use crate::notification_backend::in_memory::InMemoryStats;
 use crate::notification_backend::replay::{BatchParams, StartAt};
-use crate::notification_backend::{NotificationBackend, NotificationMessage};
+use crate::notification_backend::{DeleteMessageResult, NotificationBackend, NotificationMessage};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::BatchResult;
 use anyhow::Result;
@@ -351,6 +351,39 @@ impl NotificationBackend for InMemoryBackend {
         Ok(())
     }
 
+    async fn delete_message(&self, stream_key: &str, sequence: u64) -> Result<DeleteMessageResult> {
+        let mut state = self.state.lock().await;
+        let encoded_stream = encode_token(&stream_key.to_lowercase());
+        let stream_prefix = format!("{encoded_stream}.");
+
+        for (topic_key, topic_state) in &mut state.topics {
+            let lower_topic_key = topic_key.to_lowercase();
+            if lower_topic_key != encoded_stream && !lower_topic_key.starts_with(&stream_prefix) {
+                continue;
+            }
+            if let Some(position) = topic_state
+                .messages
+                .iter()
+                .position(|message| message.sequence == sequence)
+            {
+                topic_state.messages.remove(position);
+                info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_domain = "admin",
+                    event_name = "admin.notification.delete.succeeded",
+                    stream_key = %stream_key,
+                    sequence = sequence,
+                    topic = %topic_key,
+                    "Deleted notification from in-memory backend"
+                );
+                return Ok(DeleteMessageResult::Deleted);
+            }
+        }
+
+        Ok(DeleteMessageResult::NotFound)
+    }
+
     async fn get_messages_batch(&self, params: BatchParams) -> Result<BatchResult> {
         let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(&params.topic)?;
 
@@ -518,6 +551,33 @@ mod tests {
 
         assert_eq!(batch.messages.len(), 1);
         assert_eq!(batch.messages[0].payload, "late");
+    }
+
+    #[tokio::test]
+    async fn delete_message_removes_matching_sequence_from_stream() {
+        let backend = test_backend();
+        backend
+            .put_messages("polygon.20250706.1200", "first".to_string())
+            .await
+            .unwrap();
+        backend
+            .put_messages("polygon.20250706.1200", "second".to_string())
+            .await
+            .unwrap();
+
+        let result = backend.delete_message("polygon", 2).await.unwrap();
+        assert_eq!(result, DeleteMessageResult::Deleted);
+
+        let batch = backend
+            .get_messages_batch(BatchParams {
+                topic: "polygon.20250706.1200".to_string(),
+                start_at: StartAt::Sequence(1),
+                limit: 10,
+            })
+            .await
+            .unwrap();
+        assert_eq!(batch.messages.len(), 1);
+        assert_eq!(batch.messages[0].sequence, 1);
     }
 
     #[tokio::test]
