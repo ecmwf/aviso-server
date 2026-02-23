@@ -2,7 +2,10 @@ use crate::notification_backend::jetstream::{
     admin, connection, publisher, replay, streams, subscriber,
 };
 use crate::notification_backend::replay::BatchParams;
-use crate::notification_backend::{DeleteMessageResult, NotificationBackend, NotificationMessage};
+use crate::notification_backend::{
+    BackendCapabilities, DeleteMessageResult, JETSTREAM_CAPABILITIES, NotificationBackend,
+    NotificationMessage,
+};
 use anyhow::Result;
 use async_trait::async_trait;
 use futures_util::Stream;
@@ -31,6 +34,10 @@ impl JetStreamBackend {
 /* --------------------------------------------------------- */
 #[async_trait]
 impl NotificationBackend for JetStreamBackend {
+    fn capabilities(&self) -> BackendCapabilities {
+        JETSTREAM_CAPABILITIES
+    }
+
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()> {
         publisher::put_messages(self, topic, payload).await
     }

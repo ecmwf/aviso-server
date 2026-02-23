@@ -124,7 +124,7 @@ mod tests {
             token: None,
             max_messages: None,
             max_bytes: None,
-            retention_days: None,
+            retention_time: None,
             storage_type: JetStreamStorageType::File,
             replicas: None,
             retention_policy: JetStreamRetentionPolicy::Limits,
@@ -132,6 +132,8 @@ mod tests {
             enable_auto_reconnect: true,
             max_reconnect_attempts: 5,
             reconnect_delay_ms: 2000,
+            publish_retry_attempts: 5,
+            publish_retry_base_delay_ms: 150,
         }
     }
 

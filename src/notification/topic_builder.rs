@@ -101,6 +101,7 @@ mod tests {
             topic: Some(topic_config),
             endpoint: None,
             identifier: HashMap::new(),
+            storage_policy: None,
         };
 
         let topic =
@@ -124,6 +125,7 @@ mod tests {
             topic: Some(topic_config),
             endpoint: None,
             identifier: HashMap::new(),
+            storage_policy: None,
         };
 
         let result = TopicBuilder::build_topic_with_schema("dissemination", &schema, &params);
@@ -181,6 +183,7 @@ mod tests {
             topic: Some(topic_config),
             endpoint: None,
             identifier: HashMap::new(),
+            storage_policy: None,
         };
 
         let topic = TopicBuilder::build_topic_with_schema("test", &schema, &params).unwrap();

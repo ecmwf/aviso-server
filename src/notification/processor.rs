@@ -312,6 +312,7 @@ mod tests {
             }),
             endpoint: None,
             identifier,
+            storage_policy: None,
         }
     }
 
@@ -344,6 +345,7 @@ mod tests {
             }),
             endpoint: None,
             identifier,
+            storage_policy: None,
         }
     }
 
@@ -735,6 +737,7 @@ mod tests {
             topic: None,
             endpoint: None,
             identifier,
+            storage_policy: None,
         };
 
         let mut schemas = HashMap::new();
@@ -788,6 +791,7 @@ mod tests {
             }),
             endpoint: None,
             identifier,
+            storage_policy: None,
         };
 
         let mut schemas = HashMap::new();
