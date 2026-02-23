@@ -5,6 +5,7 @@ use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::replay::StartAt;
 use crate::routes::streaming::record_start_at_span_fields;
 use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
@@ -71,6 +72,11 @@ pub async fn watch(
     let display_topic = decode_subject_for_display(&context.topic);
     let sse_response = if !matches!(context.start_at, StartAt::LiveOnly) {
         info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "streaming",
+            event_name = "watch_stream_start",
+            outcome = "in_progress",
             topic = %display_topic,
             start_at = ?context.start_at,
             "Creating historical replay + live stream"
@@ -85,7 +91,15 @@ pub async fn watch(
         )
         .await
     } else {
-        info!(topic = %display_topic, "Creating live-only stream");
+        info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_domain = "streaming",
+            event_name = "watch_stream_start",
+            outcome = "in_progress",
+            topic = %display_topic,
+            "Creating live-only stream"
+        );
 
         create_watch_sse_stream(
             context.topic.clone(),
@@ -98,7 +112,15 @@ pub async fn watch(
 
     match sse_response {
         Ok(response) => {
-            info!(topic = %display_topic, "SSE stream established successfully");
+            info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "streaming",
+                event_name = "watch_stream_established",
+                outcome = "success",
+                topic = %display_topic,
+                "SSE stream established successfully"
+            );
             response
         }
         Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),

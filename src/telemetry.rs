@@ -5,6 +5,9 @@ use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
 use tracing_log::LogTracer;
 use tracing_subscriber::{EnvFilter, Layer, Registry, fmt, fmt::MakeWriter, layer::SubscriberExt};
 
+pub const SERVICE_NAME: &str = env!("CARGO_PKG_NAME");
+pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
+
 /// Build a tracing subscriber with configurable log level and output format.
 /// # Parameters
 /// - `name`: Name of the app (used in Bunyan logs)

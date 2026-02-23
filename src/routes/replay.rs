@@ -4,6 +4,7 @@ use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::streaming::record_start_at_span_fields;
 use crate::sse::create_replay_only_stream;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
@@ -57,6 +58,11 @@ pub async fn replay(
 
     let display_topic = decode_subject_for_display(&context.topic);
     info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "streaming",
+        event_name = "replay_stream_start",
+        outcome = "in_progress",
         topic = %display_topic,
         start_at = ?context.start_at,
         "Starting replay-only SSE stream"
@@ -75,7 +81,15 @@ pub async fn replay(
     .await
     {
         Ok(response) => {
-            info!(topic = %display_topic, "Replay-only SSE stream established successfully");
+            info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_domain = "streaming",
+                event_name = "replay_stream_established",
+                outcome = "success",
+                topic = %display_topic,
+                "Replay-only SSE stream established successfully"
+            );
             response
         }
         Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),
