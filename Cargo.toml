@@ -30,6 +30,7 @@ tracing-log = "0.2"# forwards log crate events to tracing
 tracing-actix-web = "0.7"
 async-trait = "0.1"
 anyhow = "1"
+thiserror = "2"
 cloudevents-sdk = "0.9"
 serde_json = "1"
 chrono = "0.4"

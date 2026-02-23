@@ -1,4 +1,7 @@
-use crate::error::{sse_error_response, validation_error_response};
+use crate::error::{
+    RequestKind, request_parse_error_response, request_validation_error_response,
+    sse_error_response,
+};
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
@@ -42,7 +45,7 @@ pub async fn replay(
     // Parse and validate request structure
     let notification_request = match parse_and_validate_request(&body) {
         Ok(req) => req,
-        Err(e) => return validation_error_response("Replay Request", e),
+        Err(e) => return request_parse_error_response(RequestKind::Replay, e),
     };
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,
@@ -50,7 +53,7 @@ pub async fn replay(
         ValidationConfig::for_replay(),
     ) {
         Ok(ctx) => ctx,
-        Err(e) => return validation_error_response("Replay Request", e),
+        Err(e) => return request_validation_error_response(RequestKind::Replay, e),
     };
 
     tracing::Span::current().record("event_type", &context.event_type);

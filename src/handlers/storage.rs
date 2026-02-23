@@ -43,17 +43,16 @@ pub async fn save_to_backend(
             "spatial_bbox".to_string(),
             spatial_metadata.bounding_box.clone(),
         );
-        if let Some(polygon_geometry) = result
-            .canonicalized_params
-            .values()
-            .find(|value| value.starts_with('(') && value.ends_with(')'))
-            .cloned()
-        {
-            headers.insert("spatial_geometry".to_string(), polygon_geometry);
+        let polygon_geometry = find_polygon_geometry(&result.canonicalized_params);
+        if let Some((polygon_geometry, _)) = &polygon_geometry {
+            headers.insert("spatial_geometry".to_string(), polygon_geometry.clone());
         }
 
         // Enhance payload with full polygon geometry from request params
-        let enhanced_payload = enhance_payload_with_polygon(base_payload, result)?;
+        let enhanced_payload = enhance_payload_with_polygon(
+            base_payload,
+            polygon_geometry.as_ref().map(|(_, c)| c.as_slice()),
+        )?;
 
         // Save with spatial headers and enhanced payload
         notification_backend
@@ -97,18 +96,10 @@ pub async fn save_to_backend(
 /// * `Err(anyhow::Error)` - JSON parsing or polygon extraction failed
 fn enhance_payload_with_polygon(
     original_payload: &str,
-    result: &ProcessingResult,
+    polygon_coordinates: Option<&[(f64, f64)]>,
 ) -> Result<String> {
     // Parse original payload as JSON
     let mut payload_json: serde_json::Value = serde_json::from_str(original_payload)?;
-
-    // Find polygon field from canonicalized params
-    let polygon_coordinates = result
-        .canonicalized_params
-        .iter()
-        .find(|(_, value)| value.starts_with('(') && value.ends_with(')'))
-        .map(|(_, value)| PolygonHandler::parse_polygon_coordinates(value))
-        .transpose()?;
 
     if let Some(coordinates) = polygon_coordinates {
         // HERE: Make sure this is lat,lon order for GeoJSON!
@@ -130,4 +121,44 @@ fn enhance_payload_with_polygon(
     }
 
     Ok(serde_json::to_string(&payload_json)?)
+}
+
+fn find_polygon_geometry(
+    canonicalized_params: &HashMap<String, String>,
+) -> Option<(String, Vec<(f64, f64)>)> {
+    canonicalized_params.values().find_map(|value| {
+        PolygonHandler::parse_polygon_coordinates(value)
+            .ok()
+            .map(|coordinates| (value.clone(), coordinates))
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::find_polygon_geometry;
+    use std::collections::HashMap;
+
+    #[test]
+    fn finds_valid_polygon_and_ignores_non_polygon_parenthesized_values() {
+        let mut params = HashMap::new();
+        params.insert("foo".to_string(), "(not-a-polygon)".to_string());
+        params.insert(
+            "polygon".to_string(),
+            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+        );
+
+        let found = find_polygon_geometry(&params);
+        assert!(found.is_some());
+        let (raw, coordinates) = found.expect("must find polygon geometry");
+        assert!(raw.starts_with('(') && raw.ends_with(')'));
+        assert_eq!(coordinates.len(), 5);
+    }
+
+    #[test]
+    fn returns_none_when_no_valid_polygon_value_exists() {
+        let mut params = HashMap::new();
+        params.insert("shape".to_string(), "(not-a-polygon)".to_string());
+        params.insert("time".to_string(), "1200".to_string());
+        assert!(find_polygon_geometry(&params).is_none());
+    }
 }
