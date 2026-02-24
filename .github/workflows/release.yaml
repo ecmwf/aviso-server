@@ -136,10 +136,12 @@ jobs:
           PACKAGE_VERSION: ${{ needs.release-setup.outputs.package_version }}
           REPO: eccr.ecmwf.int/aviso/${{ matrix.image }}
         run: |
-          docker manifest create $REPO:$PACKAGE_VERSION \
+          # Source tags may already be manifest lists from the per-arch build jobs.
+          # `imagetools create` handles both image manifests and manifest lists.
+          docker buildx imagetools create \
+            --tag $REPO:$PACKAGE_VERSION \
             $REPO:$PACKAGE_VERSION-amd64 \
             $REPO:$PACKAGE_VERSION-arm64
-          docker manifest push $REPO:$PACKAGE_VERSION
 
     # Add a separate job for GitHub release creation
   github-release:
