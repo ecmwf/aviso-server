@@ -137,6 +137,9 @@ Behavior:
   - Space-separated datetime with timezone (for example `2025-01-15 10:00:00+00:00`)
   - Naive datetime interpreted as UTC (for example `2025-01-15 10:00:00`, `2025-01-15T10:00:00`)
   - Unix epoch seconds or milliseconds (for example `1740509903`, `1740509903710`)
+- Numeric `from_date` values are interpreted by magnitude:
+  - `< 1000000000000` => unix seconds
+  - `>= 1000000000000` => unix milliseconds
 - Parsed and normalized to UTC internally.
 - JetStream replay uses start-time delivery policy when sequence is not provided.
 

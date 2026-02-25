@@ -64,6 +64,8 @@ pub struct NotificationRequest {
 }
 
 impl NotificationRequest {
+    const UNIX_MILLIS_THRESHOLD: i64 = 1_000_000_000_000;
+
     // Accepted examples:
     // - valid: "2026-02-25T18:58:23Z", "2026-02-25 18:58:23", "1740509903", "1740509903710"
     // - invalid: "2026-02-25", "not-a-date"
@@ -75,7 +77,7 @@ impl NotificationRequest {
                 anyhow::anyhow!("failed to parse unix timestamp '{}': {}", trimmed, e)
             })?;
 
-            if trimmed.len() <= 10 {
+            if value < Self::UNIX_MILLIS_THRESHOLD {
                 return DateTime::<Utc>::from_timestamp(value, 0).ok_or_else(|| {
                     anyhow::anyhow!("invalid unix seconds timestamp '{}'", trimmed)
                 });
@@ -418,6 +420,30 @@ mod tests {
             .expect("from_date should be present");
         assert_eq!(parsed_millis.timestamp(), 1_740_509_903);
         assert_eq!(parsed_millis.timestamp_subsec_millis(), 710);
+    }
+
+    #[test]
+    fn validate_from_date_accepts_far_future_unix_seconds() {
+        let mut request = base_request();
+        request.from_date = Some("10000000000".to_string());
+        let parsed = request
+            .validate_from_date()
+            .expect("11-digit unix seconds should parse as seconds")
+            .expect("from_date should be present");
+        assert_eq!(parsed.timestamp(), 10_000_000_000);
+        assert_eq!(parsed.timestamp_subsec_millis(), 0);
+    }
+
+    #[test]
+    fn validate_from_date_interprets_leading_zero_numeric_values_by_magnitude() {
+        let mut request = base_request();
+        request.from_date = Some("00000000001740509903".to_string());
+        let parsed = request
+            .validate_from_date()
+            .expect("leading-zero numeric value should parse as unix seconds")
+            .expect("from_date should be present");
+        assert_eq!(parsed.timestamp(), 1_740_509_903);
+        assert_eq!(parsed.timestamp_subsec_millis(), 0);
     }
 
     #[test]
