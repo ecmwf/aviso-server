@@ -43,7 +43,7 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
 
 - Requires exactly one replay start parameter:
   - `from_id` (sequence-based), or
-  - `from_date` (time-based, RFC3339).
+  - `from_date` (time-based, flexible datetime/timestamp parsing).
 - If both are missing:
   - request is rejected with `400`.
 - Endpoint returns historical replay stream and then closes.
@@ -132,9 +132,20 @@ Behavior:
 
 ## `from_date` behavior
 
-- Input must be RFC3339 datetime string with timezone.
-- Parsed and normalized to UTC.
+- Input accepts these forms:
+  - RFC3339 with timezone (for example `2025-01-15T10:00:00Z`, `2025-01-15T10:00:00+02:00`)
+  - Space-separated datetime with timezone (for example `2025-01-15 10:00:00+00:00`)
+  - Naive datetime interpreted as UTC (for example `2025-01-15 10:00:00`, `2025-01-15T10:00:00`)
+  - Unix epoch seconds or milliseconds (for example `1740509903`, `1740509903710`)
+- Parsed and normalized to UTC internally.
 - JetStream replay uses start-time delivery policy when sequence is not provided.
+
+## SSE Timestamp Format
+
+- Control/heartbeat/close event timestamps are emitted in canonical UTC second precision:
+  - `YYYY-MM-DDTHH:MM:SSZ`
+- Example:
+  - `2026-02-25T18:58:23Z`
 
 ## Start Point for Historical Events
 
@@ -147,8 +158,11 @@ You can choose one of these fields:
   - Example: `from_id: "42"` means replay starts at sequence `42`.
   - Use this when you know the last sequence you processed.
 - `from_date`
-  - Start from a UTC timestamp (inclusive, RFC3339).
-  - Example: `from_date: "2025-01-15T10:00:00Z"` means replay starts at or after that instant.
+  - Start from a UTC timestamp (inclusive).
+  - Examples:
+    - `from_date: "2025-01-15T10:00:00Z"` (RFC3339)
+    - `from_date: "2025-01-15 10:00:00+00:00"` (space-separated with timezone)
+    - `from_date: "1740509903"` (unix seconds)
   - Use this when you want events from a specific time onward.
 
 ## Rules by Endpoint
