@@ -67,19 +67,33 @@ impl NotificationRequest {
     const UNIX_MILLIS_THRESHOLD: i64 = 1_000_000_000_000;
 
     // Accepted examples:
-    // - valid: "2026-02-25T18:58:23Z", "2026-02-25 18:58:23", "1740509903", "1740509903710"
-    // - invalid: "2026-02-25", "not-a-date"
+    // - valid: "2026-02-25T18:58:23Z", "2026-02-25 18:58:23", "+1740509903", "1740509903710"
+    // - invalid: "2026-02-25", "not-a-date", "-1" (negative unix timestamps are rejected)
     fn parse_from_date_flexible(date_str: &str) -> Result<DateTime<Utc>> {
         let trimmed = date_str.trim();
 
-        if trimmed.chars().all(|c| c.is_ascii_digit()) {
-            let value = trimmed.parse::<i64>().map_err(|e| {
-                anyhow::anyhow!("failed to parse unix timestamp '{}': {}", trimmed, e)
+        if let Some(stripped) = trimmed.strip_prefix('-')
+            && !stripped.is_empty()
+            && stripped.chars().all(|c| c.is_ascii_digit())
+        {
+            bail!("negative unix timestamps are not supported: '{}'", trimmed);
+        }
+
+        let unsigned_numeric = trimmed.strip_prefix('+').unwrap_or(trimmed);
+        if !unsigned_numeric.is_empty() && unsigned_numeric.chars().all(|c| c.is_ascii_digit()) {
+            let value = unsigned_numeric.parse::<i64>().map_err(|e| {
+                anyhow::anyhow!(
+                    "failed to parse unix timestamp '{}': {}",
+                    unsigned_numeric,
+                    e
+                )
             })?;
 
+            // Numeric inputs are interpreted by magnitude:
+            // < 1_000_000_000_000 => unix seconds, >= threshold => unix milliseconds.
             if value < Self::UNIX_MILLIS_THRESHOLD {
                 return DateTime::<Utc>::from_timestamp(value, 0).ok_or_else(|| {
-                    anyhow::anyhow!("invalid unix seconds timestamp '{}'", trimmed)
+                    anyhow::anyhow!("invalid unix seconds timestamp '{}'", unsigned_numeric)
                 });
             }
 
@@ -87,7 +101,7 @@ impl NotificationRequest {
             let millis_remainder = (value % 1000) as u32;
             return DateTime::<Utc>::from_timestamp(seconds, millis_remainder * 1_000_000)
                 .ok_or_else(|| {
-                    anyhow::anyhow!("invalid unix milliseconds timestamp '{}'", trimmed)
+                    anyhow::anyhow!("invalid unix milliseconds timestamp '{}'", unsigned_numeric)
                 });
         }
 
@@ -423,6 +437,18 @@ mod tests {
     }
 
     #[test]
+    fn validate_from_date_accepts_positive_unix_timestamp_with_plus_prefix() {
+        let mut request = base_request();
+        request.from_date = Some("+1740509903".to_string());
+        let parsed = request
+            .validate_from_date()
+            .expect("plus-prefixed unix seconds should parse")
+            .expect("from_date should be present");
+        assert_eq!(parsed.timestamp(), 1_740_509_903);
+        assert_eq!(parsed.timestamp_subsec_millis(), 0);
+    }
+
+    #[test]
     fn validate_from_date_accepts_far_future_unix_seconds() {
         let mut request = base_request();
         request.from_date = Some("10000000000".to_string());
@@ -431,6 +457,18 @@ mod tests {
             .expect("11-digit unix seconds should parse as seconds")
             .expect("from_date should be present");
         assert_eq!(parsed.timestamp(), 10_000_000_000);
+        assert_eq!(parsed.timestamp_subsec_millis(), 0);
+    }
+
+    #[test]
+    fn validate_from_date_uses_millis_at_threshold_boundary() {
+        let mut request = base_request();
+        request.from_date = Some("1000000000000".to_string());
+        let parsed = request
+            .validate_from_date()
+            .expect("threshold value should parse as milliseconds")
+            .expect("from_date should be present");
+        assert_eq!(parsed.timestamp(), 1_000_000_000);
         assert_eq!(parsed.timestamp_subsec_millis(), 0);
     }
 
@@ -444,6 +482,41 @@ mod tests {
             .expect("from_date should be present");
         assert_eq!(parsed.timestamp(), 1_740_509_903);
         assert_eq!(parsed.timestamp_subsec_millis(), 0);
+    }
+
+    #[test]
+    fn validate_from_date_rejects_negative_unix_timestamps() {
+        let mut request = base_request();
+        request.from_date = Some("-1".to_string());
+        assert!(request.validate_from_date().is_err());
+    }
+
+    #[test]
+    fn validate_from_date_accepts_fractional_seconds_for_space_and_t_variants() {
+        let mut request = base_request();
+        request.from_date = Some("2025-06-09 13:15:00.123".to_string());
+        let parsed_space = request
+            .validate_from_date()
+            .expect("space-separated fractional seconds should parse")
+            .expect("from_date should be present");
+        assert_eq!(
+            parsed_space,
+            DateTime::parse_from_rfc3339("2025-06-09T13:15:00.123Z")
+                .expect("expected timestamp should parse")
+                .with_timezone(&Utc)
+        );
+
+        request.from_date = Some("2025-06-09T13:15:00.456".to_string());
+        let parsed_t = request
+            .validate_from_date()
+            .expect("T-separated fractional seconds should parse")
+            .expect("from_date should be present");
+        assert_eq!(
+            parsed_t,
+            DateTime::parse_from_rfc3339("2025-06-09T13:15:00.456Z")
+                .expect("expected timestamp should parse")
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
