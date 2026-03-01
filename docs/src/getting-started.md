@@ -66,9 +66,10 @@ curl -X POST "http://127.0.0.1:8000/api/v1/notification" \
 
 ## Run full smoke script
 
-Once the server is running, execute:
+Once the server is running, install the smoke script dependency and execute:
 
 ```bash
+python3 -m pip install httpx
 python3 scripts/smoke_test.py
 ```
 

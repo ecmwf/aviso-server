@@ -27,13 +27,22 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import time
 from argparse import ArgumentParser
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Callable
 
-import httpx
+try:
+    import httpx
+except ModuleNotFoundError as exc:
+    print(
+        "Missing required dependency 'httpx'. "
+        "Install it with: python3 -m pip install httpx",
+        file=sys.stderr,
+    )
+    raise SystemExit(1) from exc
 
 
 DEFAULT_DATE = "20250706"

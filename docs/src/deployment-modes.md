@@ -13,7 +13,8 @@ Characteristics:
 - Not suitable for horizontal scaling or replica failover.
 - Supports replay and watch in-process, limited by local memory retention.
 - For local JetStream testing, use `./scripts/init_nats.sh` and point app config to `nats://localhost:4222`.
-- You can run `python3 scripts/smoke_test.py` for a quick end-to-end behavior check.
+- You can run `python3 scripts/smoke_test.py` for a quick end-to-end behavior check
+  (requires the `httpx` package: `python3 -m pip install httpx`).
 
 ## Production-like / persistent mode
 

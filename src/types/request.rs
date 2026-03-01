@@ -60,8 +60,6 @@ pub struct NotificationRequest {
 }
 
 impl NotificationRequest {
-    const UNIX_MILLIS_THRESHOLD: i64 = 1_000_000_000_000;
-
     // Accepted examples:
     // - valid: "2026-02-25T18:58:23Z", "2026-02-25 18:58:23", "+1740509903", "1740509903710"
     // - invalid: "2026-02-25", "not-a-date", "-1" (negative unix timestamps are rejected)
@@ -77,6 +75,12 @@ impl NotificationRequest {
 
         let unsigned_numeric = trimmed.strip_prefix('+').unwrap_or(trimmed);
         if !unsigned_numeric.is_empty() && unsigned_numeric.chars().all(|c| c.is_ascii_digit()) {
+            let significant_digits = unsigned_numeric.trim_start_matches('0');
+            let digit_count = if significant_digits.is_empty() {
+                1
+            } else {
+                significant_digits.len()
+            };
             let value = unsigned_numeric.parse::<i64>().map_err(|e| {
                 anyhow::anyhow!(
                     "failed to parse unix timestamp '{}': {}",
@@ -85,9 +89,13 @@ impl NotificationRequest {
                 )
             })?;
 
-            // Numeric inputs are interpreted by magnitude:
-            // < 1_000_000_000_000 => unix seconds, >= threshold => unix milliseconds.
-            if value < Self::UNIX_MILLIS_THRESHOLD {
+            // Numeric inputs use a stable digit-count rule:
+            // - up to 11 digits: unix seconds
+            // - 12+ digits: unix milliseconds
+            // Leading zeros are ignored for classification.
+            // This keeps far-future 11-digit seconds valid and correctly treats
+            // early 12-digit millisecond epochs (for example year 2000) as millis.
+            if digit_count <= 11 {
                 return DateTime::<Utc>::from_timestamp(value, 0).ok_or_else(|| {
                     anyhow::anyhow!("invalid unix seconds timestamp '{}'", unsigned_numeric)
                 });
@@ -470,9 +478,21 @@ mod tests {
         request.from_date = Some("1000000000000".to_string());
         let parsed = request
             .validate_from_date()
-            .expect("threshold value should parse as milliseconds")
+            .expect("12-digit unix timestamp should parse as milliseconds")
             .expect("from_date should be present");
         assert_eq!(parsed.timestamp(), 1_000_000_000);
+        assert_eq!(parsed.timestamp_subsec_millis(), 0);
+    }
+
+    #[test]
+    fn validate_from_date_accepts_pre_2001_unix_millis() {
+        let mut request = base_request();
+        request.from_date = Some("946684800000".to_string());
+        let parsed = request
+            .validate_from_date()
+            .expect("12-digit pre-2001 unix millis should parse as milliseconds")
+            .expect("from_date should be present");
+        assert_eq!(parsed.timestamp(), 946_684_800);
         assert_eq!(parsed.timestamp_subsec_millis(), 0);
     }
 
