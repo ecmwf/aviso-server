@@ -32,9 +32,10 @@ impl Default for WatchEndpointSettings {
 }
 
 #[derive(serde::Deserialize, Serialize, Clone, Debug, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct PayloadConfig {
-    #[serde(rename = "type")]
-    pub allowed_types: Vec<String>,
+    /// Whether clients must provide a payload for this event type.
+    /// Payload values are always treated as JSON.
     #[schema(example = true)]
     pub required: bool,
 }
@@ -184,7 +185,7 @@ pub struct Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::{JetStreamSettings, JetStreamStorageType};
+    use super::{JetStreamSettings, JetStreamStorageType, PayloadConfig};
 
     #[test]
     fn jetstream_settings_accept_lowercase_storage_type() {
@@ -199,6 +200,14 @@ mod tests {
     #[test]
     fn jetstream_settings_reject_invalid_storage_type() {
         let result = serde_json::from_str::<JetStreamSettings>(r#"{"storage_type":"disk"}"#);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn payload_config_rejects_legacy_type_list() {
+        let result = serde_json::from_str::<PayloadConfig>(
+            r#"{"required":true,"type":["String","HashMap"]}"#,
+        );
         assert!(result.is_err());
     }
 }

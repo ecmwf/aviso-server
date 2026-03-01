@@ -78,6 +78,16 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 
 See [JetStream Settings](./jetstream-settings.md) and [JetStream Backend](./backend-jetstream.md) for detailed behavior.
 
+## `notification_schema.<event_type>.payload`
+
+Schema-level payload contract for notify requests.
+
+| Field | Type | Example | Notes |
+|---|---|---|---|
+| `required` | `bool` | `true` | When `true`, `/notification` rejects requests without `payload`. |
+
+Behavior details and edge cases are documented in [Payload Contract](./payload-contract.md).
+
 ## `notification_schema.<event_type>.storage_policy`
 
 Optional per-schema storage settings validated at startup against selected backend capabilities.

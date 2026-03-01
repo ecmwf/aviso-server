@@ -20,7 +20,7 @@ pub struct NotificationProcessingError {
 /// This function handles the core notification processing logic including:
 /// - Schema-based validation of request parameters
 /// - Spatial metadata extraction for polygon fields
-/// - Payload type validation for spatial notifications
+/// - Schema-level payload requirement checks
 ///
 /// # Arguments
 /// * `event_type` - The type of event being processed
@@ -67,9 +67,9 @@ fn is_notification_validation_error(error: &anyhow::Error) -> bool {
     error.chain().any(|cause| {
         let message = cause.to_string().to_ascii_lowercase();
         message.starts_with("required field ")
+            || message.starts_with("payload is required")
             || message.contains("unknown event type")
             || message.starts_with("no validation rules found for field")
-            || message.starts_with("when polygon field is specified")
             || message.starts_with("field '")
             || message.contains("must be a valid")
     })

@@ -74,10 +74,7 @@ fn build_test_polygon_schema() -> EventSchema {
     );
 
     EventSchema {
-        payload: Some(PayloadConfig {
-            allowed_types: vec!["String".to_string()],
-            required: true,
-        }),
+        payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             base: "polygon".to_string(),
             key_order: vec!["date".to_string(), "time".to_string()],
@@ -107,10 +104,7 @@ fn build_test_polygon_js_schema() -> EventSchema {
     );
 
     EventSchema {
-        payload: Some(PayloadConfig {
-            allowed_types: vec!["String".to_string()],
-            required: true,
-        }),
+        payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             // Keep this distinct from runtime/default `polygon` base to avoid collisions.
             base: "polygon_js_test".to_string(),
@@ -155,10 +149,7 @@ fn build_test_polygon_optional_schema() -> EventSchema {
     );
 
     EventSchema {
-        payload: Some(PayloadConfig {
-            allowed_types: vec!["String".to_string()],
-            required: true,
-        }),
+        payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             base: "polygon_optional".to_string(),
             key_order: vec!["date".to_string(), "time".to_string()],
@@ -246,10 +237,7 @@ fn build_mars_schema() -> EventSchema {
     );
 
     EventSchema {
-        payload: Some(PayloadConfig {
-            allowed_types: vec!["String".to_string(), "NoneType".to_string()],
-            required: false,
-        }),
+        payload: Some(PayloadConfig { required: false }),
         topic: Some(TopicConfig {
             base: "mars".to_string(),
             key_order: vec![
@@ -359,14 +347,7 @@ fn build_dissemination_schema() -> EventSchema {
     );
 
     EventSchema {
-        payload: Some(PayloadConfig {
-            allowed_types: vec![
-                "String".to_string(),
-                "HashMap".to_string(),
-                "CloudEvent".to_string(),
-            ],
-            required: true,
-        }),
+        payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             base: "diss".to_string(),
             key_order: vec![

@@ -54,6 +54,7 @@ Backend details:
 - Replay/watch behavior is controlled by request parameters, not by static config switches.
 - Invalid JetStream policy values (for example `storage_type`) are rejected during configuration deserialization at startup (fail-fast), before streams are created.
 - Per-schema `storage_policy` is validated at startup against backend capabilities.
+- Per-schema payload behavior (`required`, omitted optional payload, JSON shape) is documented in [Payload Contract](./payload-contract.md).
 - `/api/v1/schema` responses remain client-focused and do not expose internal `storage_policy`.
 - Stream-affecting changes (for example `compression`, retention, limits) are reconciled for existing
   JetStream streams when those streams are accessed. Recreate stream(s) only if you need historical data rewritten.

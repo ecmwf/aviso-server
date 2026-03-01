@@ -10,8 +10,7 @@ use tracing::{debug, info};
 /// Save notification result to the configured backend
 ///
 /// Takes a processed notification result and persists it to the backend storage.
-/// The result contains the validated topic, canonicalized parameters, and payload.
-/// Now supports spatial metadata for polygon-enabled notifications.
+/// Spatial metadata, when present, is attached via backend headers.
 #[tracing::instrument(
     skip(notification_backend),
     fields(
@@ -22,7 +21,7 @@ use tracing::{debug, info};
 )]
 pub async fn save_to_backend(
     result: &ProcessingResult,
-    payload: Option<&str>,
+    payload: &str,
     notification_backend: &dyn NotificationBackend,
 ) -> Result<()> {
     let display_topic = decode_subject_for_display(&result.topic);
@@ -33,8 +32,6 @@ pub async fn save_to_backend(
         has_spatial_metadata = result.spatial_metadata.is_some(),
         "Saving notification to backend"
     );
-
-    let base_payload = payload.unwrap_or("");
 
     // Check if spatial metadata exists and use appropriate backend method
     if let Some(spatial_metadata) = &result.spatial_metadata {
@@ -49,15 +46,9 @@ pub async fn save_to_backend(
             headers.insert("spatial_geometry".to_string(), polygon_geometry.clone());
         }
 
-        // Enhance payload with full polygon geometry from request params
-        let enhanced_payload = enhance_payload_with_polygon(
-            base_payload,
-            polygon_geometry.as_ref().map(|(_, c)| c.as_slice()),
-        )?;
-
-        // Save with spatial headers and enhanced payload
+        // Keep payload unchanged and attach spatial metadata via headers.
         notification_backend
-            .put_message_with_headers(&result.topic, Some(headers), enhanced_payload)
+            .put_message_with_headers(&result.topic, Some(headers), payload.to_string())
             .await?;
 
         info!(
@@ -73,7 +64,7 @@ pub async fn save_to_backend(
     } else {
         // Save the notification result to backend using put_messages
         notification_backend
-            .put_messages(&result.topic, base_payload.to_string())
+            .put_messages(&result.topic, payload.to_string())
             .await?;
 
         info!(
@@ -88,48 +79,6 @@ pub async fn save_to_backend(
     }
 
     Ok(())
-}
-
-/// Enhance payload JSON with full polygon geometry
-///
-/// Takes the original payload and adds spatial geometry information for precise
-/// intersection calculations during watch filtering. Extracts polygon coordinates
-/// from the canonicalized request parameters.
-///
-/// # Arguments
-/// * `original_payload` - The original payload as JSON string
-/// * `result` - Processing result containing canonicalized parameters
-///
-/// # Returns
-/// * `Ok(String)` - Enhanced payload JSON with spatial_geometry field
-/// * `Err(anyhow::Error)` - JSON parsing or polygon extraction failed
-fn enhance_payload_with_polygon(
-    original_payload: &str,
-    polygon_coordinates: Option<&[(f64, f64)]>,
-) -> Result<String> {
-    // Parse original payload as JSON
-    let mut payload_json: serde_json::Value = serde_json::from_str(original_payload)?;
-
-    if let Some(coordinates) = polygon_coordinates {
-        // HERE: Make sure this is lat,lon order for GeoJSON!
-        if let Some(payload_obj) = payload_json.as_object_mut() {
-            let spatial_geometry = serde_json::json!({
-                "type": "Polygon",
-                // GeoJSON wants [ [ [lon,lat], ... ] ], but we want [ [ [lat,lon], ... ] ]
-                // Just use coordinates as-is, since whole stack is lat,lon
-                "coordinates": [coordinates]
-            });
-
-            payload_obj.insert("spatial_geometry".to_string(), spatial_geometry);
-
-            tracing::debug!(
-                coordinate_count = coordinates.len(),
-                "Enhanced payload with polygon geometry"
-            );
-        }
-    }
-
-    Ok(serde_json::to_string(&payload_json)?)
 }
 
 fn find_polygon_geometry(

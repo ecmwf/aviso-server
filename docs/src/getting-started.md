@@ -64,6 +64,8 @@ curl -X POST "http://127.0.0.1:8000/api/v1/notification" \
   }'
 ```
 
+Payload behavior is documented in [Payload Contract](./payload-contract.md).
+
 ## Run full smoke script
 
 Once the server is running, install the smoke script dependency and execute:

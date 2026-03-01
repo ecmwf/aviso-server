@@ -75,7 +75,6 @@ impl<'a> NotificationProcessor<'a> {
     ) -> Result<(HashMap<String, String>, Option<SpatialMetadata>)> {
         let mut canonicalized = HashMap::new();
         let mut spatial_metadata = None;
-        let mut has_polygon_field = false;
 
         for (field_name, rules) in &schema.identifier {
             let value = request_params.get(field_name).context(format!(
@@ -88,7 +87,6 @@ impl<'a> NotificationProcessor<'a> {
 
             // Polygon fields attach spatial metadata for downstream filtering.
             if matches!(rules.first(), Some(ValidationRules::PolygonHandler { .. })) {
-                has_polygon_field = true;
                 let coordinates = PolygonHandler::parse_polygon_coordinates(value)?;
 
                 spatial_metadata = Some(SpatialMetadata::from_coordinates(&coordinates)?);
@@ -104,29 +102,27 @@ impl<'a> NotificationProcessor<'a> {
             canonicalized.insert(field_name.clone(), canonicalized_value);
         }
 
-        // Polygon notifications require object payload for spatial data.
-        if has_polygon_field {
-            self.validate_polygon_payload_type(payload)?;
-        }
+        self.validate_payload_requirement(schema, payload)?;
 
         Ok((canonicalized, spatial_metadata))
     }
 
-    /// Polygon payload must be a JSON object.
-    fn validate_polygon_payload_type(&self, payload: &Option<serde_json::Value>) -> Result<()> {
-        match payload {
-            Some(serde_json::Value::Object(_)) => Ok(()),
-            Some(_) => {
-                anyhow::bail!(
-                    "When polygon field is specified, payload must be a HashMap/Object, not a primitive type"
-                )
-            }
-            None => {
-                anyhow::bail!(
-                    "When polygon field is specified, payload is required and must be a HashMap/Object"
-                )
-            }
+    /// Enforce schema-level payload presence requirement for notify requests.
+    fn validate_payload_requirement(
+        &self,
+        schema: &EventSchema,
+        payload: &Option<serde_json::Value>,
+    ) -> Result<()> {
+        if schema
+            .payload
+            .as_ref()
+            .map(|payload_config| payload_config.required)
+            .unwrap_or(false)
+            && payload.is_none()
+        {
+            bail!("Payload is required for notify operation based on schema configuration");
         }
+        Ok(())
     }
 
     /// Watch mode: required fields are enforced, optional fields become `"*"`.
@@ -302,10 +298,7 @@ mod tests {
         );
 
         EventSchema {
-            payload: Some(PayloadConfig {
-                allowed_types: vec!["String".to_string()],
-                required: true,
-            }),
+            payload: Some(PayloadConfig { required: true }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
                 key_order: vec!["class".to_string(), "destination".to_string()],
@@ -335,10 +328,7 @@ mod tests {
         );
 
         EventSchema {
-            payload: Some(PayloadConfig {
-                allowed_types: vec!["HashMap".to_string()],
-                required: true,
-            }),
+            payload: Some(PayloadConfig { required: true }),
             topic: Some(TopicConfig {
                 base: "polygon".to_string(),
                 key_order: vec!["date".to_string(), "time".to_string()],
@@ -489,7 +479,7 @@ mod tests {
             "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
         );
 
-        // Valid HashMap payload
+        // Valid object payload
         let mut payload_map = serde_json::Map::new();
         payload_map.insert(
             "message".to_string(),
@@ -510,7 +500,7 @@ mod tests {
     }
 
     #[test]
-    fn test_polygon_notification_with_invalid_payload_type() {
+    fn test_polygon_notification_accepts_scalar_payload() {
         let mut schemas = HashMap::new();
         schemas.insert("test_polygon".to_string(), create_polygon_test_schema());
         let registry = NotificationRegistry::from_config(&schemas);
@@ -524,21 +514,13 @@ mod tests {
             "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
         );
 
-        // Invalid String payload when HashMap is required
-        let payload = Some(serde_json::Value::String(
-            "invalid payload type".to_string(),
-        ));
+        // Payload can be any JSON type, including scalars.
+        let payload = Some(serde_json::Value::String("scalar payload".to_string()));
 
         let result =
             processor.process_request("test_polygon", &params, &payload, OperationType::Notify);
 
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("payload must be a HashMap/Object")
-        );
+        assert!(result.is_ok());
     }
 
     #[test]
@@ -556,7 +538,7 @@ mod tests {
             "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
         );
 
-        // Missing payload when polygon field is present
+        // Missing payload fails because schema marks payload as required.
         let payload = None;
 
         let result =
@@ -567,7 +549,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("payload is required and must be a HashMap/Object")
+                .contains("Payload is required for notify operation")
         );
     }
 
@@ -585,7 +567,7 @@ mod tests {
         );
         // Missing optional date and time fields
 
-        // Watch operations don't validate payload type
+        // Watch operations do not validate notify-only payload requirements.
         let payload = None;
 
         let result =
@@ -782,7 +764,6 @@ mod tests {
 
         let schema = EventSchema {
             payload: Some(PayloadConfig {
-                allowed_types: vec!["String".to_string()],
                 required: false, // Payload is optional
             }),
             topic: Some(TopicConfig {

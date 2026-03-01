@@ -58,9 +58,8 @@ impl CloudEventCreator {
         let request_params = topic_to_request(&notification.topic, &event_type)
             .context("Failed to reconstruct request parameters from topic")?;
 
-        // Build CloudEvent data structure based on schema payload requirements
-        let data =
-            self.build_cloud_event_data(&request_params, &notification.payload, &event_type)?;
+        // Build CloudEvent data structure with canonical payload JSON.
+        let data = self.build_cloud_event_data(&request_params, &notification.payload)?;
 
         // Create CloudEvent with all required fields
         let cloud_event = EventBuilderV10::new()
@@ -87,77 +86,28 @@ impl CloudEventCreator {
         Ok(cloud_event)
     }
 
-    /// Build CloudEvent data structure based on schema payload requirements
-    ///
-    /// This method constructs the data field for the CloudEvent, including
-    /// the payload only if it's required according to the schema configuration.
+    /// Build CloudEvent data structure.
     ///
     /// # Arguments
     /// * `request_params` - Reconstructed request parameters
     /// * `payload` - The notification payload string
-    /// * `event_type` - The event type for schema lookup
     ///
     /// # Returns
     /// * `Ok(serde_json::Value)` - CloudEvent data structure
-    /// * `Err(anyhow::Error)` - Schema lookup or payload parsing failed
+    /// * `Err(anyhow::Error)` - Payload parsing failed
     fn build_cloud_event_data(
         &self,
-        identifier_params: &HashMap<String, String>, // Changed parameter name
+        identifier_params: &HashMap<String, String>,
         payload: &str,
-        event_type: &str,
     ) -> Result<serde_json::Value> {
-        //
-        let include_payload = self.is_payload_required(event_type)?;
+        let payload_json = self
+            .parse_payload_to_json(payload)
+            .context("Failed to parse notification payload as JSON")?;
 
-        if include_payload {
-            let payload_json = self
-                .parse_payload_to_json(payload)
-                .context("Failed to parse notification payload as JSON")?;
-
-            Ok(json!({
-                "identifier": identifier_params,  // Changed from "request"
-                "payload": payload_json
-            }))
-        } else {
-            Ok(json!({
-                "identifier": identifier_params  // Changed from "request"
-            }))
-        }
-    }
-
-    /// Check if payload is required according to schema configuration
-    ///
-    /// # Arguments
-    /// * `event_type` - The event type to check
-    ///
-    /// # Returns
-    /// * `Ok(bool)` - true if payload is required, false otherwise
-    /// * `Err(anyhow::Error)` - Schema lookup failed
-    fn is_payload_required(&self, event_type: &str) -> Result<bool> {
-        let schema = Settings::get_global_notification_schema();
-
-        let schema_map = schema
-            .as_ref()
-            .ok_or_else(|| anyhow!("No notification schema configured"))?;
-
-        let event_schema = schema_map
-            .get(event_type)
-            .ok_or_else(|| anyhow!("Unknown event type: {}", event_type))?;
-
-        // Check if payload is configured and required
-        let payload_required = event_schema
-            .payload
-            .as_ref()
-            .map(|payload_config| payload_config.required)
-            .unwrap_or(false);
-
-        debug!(
-            event_type = %event_type,
-            payload_required = payload_required,
-            "Checked payload requirement from schema"
-        );
-
-        Ok(payload_required)
+        Ok(json!({
+            "identifier": identifier_params,
+            "payload": payload_json
+        }))
     }
 
     /// Parse notification payload string back to JSON value
@@ -181,7 +131,8 @@ impl CloudEventCreator {
         match serde_json::from_str::<serde_json::Value>(payload) {
             Ok(json_value) => Ok(json_value),
             Err(_) => {
-                // If it's not valid JSON, treat it as a string value
+                // Keep replay resilient for legacy/plain payloads that were stored
+                // before the strict JSON payload contract.
                 debug!(
                     payload_preview = &payload[..payload.len().min(100)],
                     "Payload is not valid JSON, treating as string"

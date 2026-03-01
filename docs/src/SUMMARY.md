@@ -11,6 +11,7 @@
 - [InMemory Backend](./backend-in-memory.md)
 - [JetStream Backend](./backend-jetstream.md)
 - [Topic Encoding](./topic-encoding.md)
+- [Payload Contract](./payload-contract.md)
 - [Streaming Semantics](./streaming-semantics.md)
 - [Admin Operations](./admin-operations.md)
 - [API Errors](./api-errors.md)
