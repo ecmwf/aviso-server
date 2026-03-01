@@ -32,11 +32,14 @@ impl NumericConstraint<i64> {
 
 impl NumericConstraint<f64> {
     pub fn matches(&self, value: f64) -> bool {
+        if !value.is_finite() {
+            return false;
+        }
         match self {
-            NumericConstraint::Eq(v) => (value - *v).abs() <= f64::EPSILON,
-            NumericConstraint::In(values) => {
-                values.iter().any(|v| (value - *v).abs() <= f64::EPSILON)
-            }
+            // Exact comparison keeps replay/live filtering deterministic and avoids hidden
+            // tolerance behavior when identifiers are canonicalized into topic tokens.
+            NumericConstraint::Eq(v) => value == *v,
+            NumericConstraint::In(values) => values.contains(&value),
             NumericConstraint::Gt(v) => value > *v,
             NumericConstraint::Gte(v) => value >= *v,
             NumericConstraint::Lt(v) => value < *v,
@@ -252,13 +255,23 @@ fn parse_int_between_operand(
 }
 
 fn parse_float_operand(field_name: &str, operator: &str, value: &Value) -> Result<f64> {
-    value.as_f64().ok_or_else(|| {
+    let parsed = value.as_f64().ok_or_else(|| {
         anyhow::anyhow!(
             "Field '{}' operator '{}' expects numeric value",
             field_name,
             operator
         )
-    })
+    })?;
+
+    if !parsed.is_finite() {
+        bail!(
+            "Field '{}' operator '{}' expects finite numeric value",
+            field_name,
+            operator
+        );
+    }
+
+    Ok(parsed)
 }
 
 fn parse_float_array_operand(field_name: &str, operator: &str, value: &Value) -> Result<Vec<f64>> {
@@ -410,6 +423,7 @@ fn validate_float_constraint_against_range(
         return Ok(());
     };
 
+    // Float operands are validated as finite during parse_*_constraint.
     let validate = |value: f64| -> Result<()> {
         if value < *min || value > *max {
             bail!(
@@ -512,5 +526,47 @@ mod tests {
                 .expect("float constraint should parse");
         assert!(constraint.matches(15.0));
         assert!(!constraint.matches(22.0));
+    }
+
+    #[test]
+    fn float_eq_uses_exact_comparison() {
+        let constraint =
+            parse_float_constraint("temperature", &json!({"eq": 0.3}), None).expect("valid eq");
+        assert!(constraint.matches(0.3));
+        assert!(!constraint.matches(0.1 + 0.2));
+    }
+
+    #[test]
+    fn float_in_uses_exact_comparison() {
+        let constraint = parse_float_constraint("temperature", &json!({"in": [0.3, 1.5]}), None)
+            .expect("valid in");
+        assert!(constraint.matches(0.3));
+        assert!(!constraint.matches(0.1 + 0.2));
+    }
+
+    #[test]
+    fn float_between_is_inclusive() {
+        let constraint =
+            parse_float_constraint("temperature", &json!({"between": [10.5, 20.5]}), None)
+                .expect("float between should parse");
+        assert!(constraint.matches(10.5));
+        assert!(constraint.matches(20.5));
+        assert!(!constraint.matches(20.5000001));
+    }
+
+    #[test]
+    fn float_constraint_rejects_non_finite_notification_values() {
+        let constraint =
+            parse_float_constraint("temperature", &json!({"gt": 3.0}), None).expect("valid gt");
+        assert!(!constraint.matches(f64::NAN));
+        assert!(!constraint.matches(f64::INFINITY));
+        assert!(!constraint.matches(f64::NEG_INFINITY));
+    }
+
+    #[test]
+    fn float_constraint_rejects_out_of_range_operand() {
+        let result =
+            parse_float_constraint("temperature", &json!({"gt": 21.0}), Some(&[10.0, 20.0]));
+        assert!(result.is_err());
     }
 }

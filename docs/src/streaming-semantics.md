@@ -67,6 +67,8 @@ Supported operators by handler type:
 | `EnumHandler` | `eq`, `in` |
 
 `between` expects exactly two values `[min,max]` and is inclusive.
+Float constraints accept only finite values (no `NaN`/`inf`).
+For floats, `eq`/`in` use exact numeric equality; they do not apply a tolerance.
 Constraint objects are rejected on `/notification`; notify accepts scalar identifier values only.
 
 For end-to-end generic examples (with `curl` requests and expected outcomes), see:

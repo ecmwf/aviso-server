@@ -14,7 +14,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"north","run_time":"1200","severity":"3","anomaly":"42.5"},
+    "identifier":{"region":"north","run_time":"1200","severity":"3","anomaly":42.5},
     "payload":{"note":"seed-a"}
   }'
 
@@ -22,7 +22,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":"87.2"},
+    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":87.2},
     "payload":{"note":"seed-b"}
   }'
 ```
@@ -38,7 +38,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"south","run_time":"1200","severity":6,"anomaly":"87.2"},
+    "identifier":{"region":"south","run_time":"1200","severity":6,"anomaly":87.2},
     "from_id":"1"
   }'
 ```
@@ -59,7 +59,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":{"in":["north","south"]},
       "run_time":"1200",
       "severity":{"gte":5},
-      "anomaly":"87.2"
+      "anomaly":87.2
     },
     "from_id":"1"
   }'
@@ -93,6 +93,32 @@ Expected:
 - HTTP `200`
 - includes `anomaly=42.5`
 
+## Float `eq` Is Exact (No Tolerance)
+
+Float `eq` and `in` are exact comparisons. This keeps behavior deterministic across replay/live
+and avoids hidden tolerance windows.
+
+```bash
+curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "event_type":"extreme_event",
+    "identifier":{
+      "region":"north",
+      "run_time":"1200",
+      "severity":"3",
+      "anomaly":{"eq":42.5}
+    },
+    "from_id":"1"
+  }'
+```
+
+Expected:
+
+- HTTP `200`
+- only notifications with exactly `anomaly=42.5` match
+- `NaN`/`inf` values are rejected by float validation/constraints
+
 ## Enum Constraint (`in`)
 
 ```bash
@@ -104,7 +130,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/watch" \
       "region":{"in":["south","west"]},
       "run_time":"1200",
       "severity":"6",
-      "anomaly":"87.2"
+      "anomaly":87.2
     }
   }'
 ```
@@ -125,7 +151,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":"north",
       "run_time":"1200",
       "severity":{"gte":4,"lt":7},
-      "anomaly":"42.5"
+      "anomaly":42.5
     },
     "from_id":"1"
   }'
@@ -147,7 +173,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "region":"north",
       "run_time":"1200",
       "severity":{"gte":4},
-      "anomaly":"42.5"
+      "anomaly":42.5
     },
     "payload":{"note":"should-fail"}
   }'

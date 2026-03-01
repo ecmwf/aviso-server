@@ -8,6 +8,12 @@ pub struct FloatHandler;
 impl FloatHandler {
     /// Validates a floating-point field, applies optional inclusive range checks,
     /// and returns a canonical string representation.
+    ///
+    /// Valid example: `"12.5"` -> `"12.5"`.
+    /// Invalid example: `"NaN"` -> error.
+    ///
+    /// Canonicalization uses Rust's shortest round-trippable decimal formatting.
+    /// Non-finite values (`NaN`, `inf`, `-inf`) are rejected.
     pub fn validate_and_canonicalize(
         value: &str,
         range: Option<&[f64; 2]>,
@@ -17,6 +23,14 @@ impl FloatHandler {
             "Field '{}' must be a valid number, got: '{}'",
             field_name, value
         ))?;
+
+        if !parsed_value.is_finite() {
+            bail!(
+                "Field '{}' must be a finite number, got: '{}'",
+                field_name,
+                value
+            );
+        }
 
         if let Some([min, max]) = range {
             if parsed_value < *min || parsed_value > *max {
@@ -60,6 +74,24 @@ mod tests {
     #[test]
     fn float_outside_range() {
         let result = FloatHandler::validate_and_canonicalize("9.1", Some(&[1.0, 7.0]), "level");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_nan() {
+        let result = FloatHandler::validate_and_canonicalize("NaN", None, "level");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_positive_infinity() {
+        let result = FloatHandler::validate_and_canonicalize("inf", None, "level");
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_negative_infinity() {
+        let result = FloatHandler::validate_and_canonicalize("-inf", None, "level");
         assert!(result.is_err());
     }
 }

@@ -146,6 +146,6 @@ pub struct ProcessingResult {
 pub enum IdentifierConstraint {
     Int(NumericConstraint<i64>),
     Enum(EnumConstraint),
-    /// Prepared for future FloatHandler introduction.
+    /// Floating-point identifier constraints for schema fields using FloatHandler.
     Float(NumericConstraint<f64>),
 }
