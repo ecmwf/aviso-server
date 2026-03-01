@@ -33,9 +33,9 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
   -d '{
     "event_type": "test_polygon",
     "identifier": {
-      "time": "1200"
-    },
-    "point": "52.55,13.50"
+      "time": "1200",
+      "point": "52.55,13.50"
+    }
   }'
 ```
 
@@ -69,22 +69,22 @@ curl -N -X POST "http://localhost:8000/api/v1/replay" \
 Use this mental model:
 
 - `identifier` picks candidate notifications by topic fields (`time`, `date`, etc.).
-- spatial filters (`identifier.polygon` or top-level `point`) optionally narrow that candidate set.
+- spatial filters (`identifier.polygon` or `identifier.point`) optionally narrow that candidate set.
 
 ### Rules
 
 - `identifier.polygon`:
   - do polygon-intersects-polygon filtering.
-- `point`:
+- `identifier.point`:
   - do point-inside-notification-polygon filtering.
-- both `identifier.polygon` and `point`:
+- both `identifier.polygon` and `identifier.point`:
   - invalid request (`400`).
-- neither `identifier.polygon` nor `point`:
+- neither `identifier.polygon` nor `identifier.point`:
   - no spatial narrowing; filtering uses non-spatial identifier fields only.
 
 ### Decision Table
 
-| `identifier.polygon` | `point` | Result |
+| `identifier.polygon` | `identifier.point` | Result |
 |---|---|---|
 | provided | omitted | polygon intersection filter |
 | omitted | provided | point-in-polygon filter |
@@ -118,9 +118,9 @@ Request:
 {
   "event_type": "test_polygon_optional",
   "identifier": {
-    "time": "1200"
+    "time": "1200",
+    "point": "52.55,13.50"
   },
-  "point": "52.55,13.50",
   "from_id": "1"
 }
 ```
