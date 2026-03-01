@@ -200,18 +200,25 @@ def post_test_polygon_notification(
     )
 
 
-def post_mars_notification(config: Config, *, note: str, stream_value: str) -> None:
+def post_mars_notification(
+    config: Config,
+    *,
+    note: str,
+    stream_value: str,
+    domain: str = "g",
+    step: int = 1,
+) -> None:
     post_notification(
         config,
         event_type="mars",
         identifier={
             "class": "od",
             "expver": "0001",
-            "domain": "g",
+            "domain": domain,
             "date": DEFAULT_DATE,
             "time": DEFAULT_TIME,
             "stream": stream_value,
-            "step": "1",
+            "step": str(step),
         },
         payload=note,
     )
@@ -548,6 +555,70 @@ def test_dissemination_watch_from_date(config: Config) -> None:
     assert_not_contains(output, historical_note, "dissemination watch output")
 
 
+def test_mars_replay_with_int_predicate(config: Config) -> None:
+    stream_value = unique_token("ens.int-filter")
+    low_note = unique_token("smoke-mars-int-low")
+    high_note = unique_token("smoke-mars-int-high")
+
+    post_mars_notification(
+        config, note=low_note, stream_value=stream_value, domain="g", step=2
+    )
+    post_mars_notification(
+        config, note=high_note, stream_value=stream_value, domain="g", step=6
+    )
+
+    output = replay_body(
+        config,
+        {
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": stream_value,
+                "step": {"gte": 4},
+            },
+            "from_id": "1",
+        },
+    )
+    assert_contains(output, high_note, "mars int-predicate replay output")
+    assert_not_contains(output, low_note, "mars int-predicate replay output")
+
+
+def test_mars_replay_with_enum_in_predicate(config: Config) -> None:
+    stream_value = unique_token("ens.enum-filter")
+    include_note = unique_token("smoke-mars-enum-include")
+    exclude_note = unique_token("smoke-mars-enum-exclude")
+
+    post_mars_notification(
+        config, note=include_note, stream_value=stream_value, domain="g", step=1
+    )
+    post_mars_notification(
+        config, note=exclude_note, stream_value=stream_value, domain="z", step=1
+    )
+
+    output = replay_body(
+        config,
+        {
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": {"in": ["g", "a"]},
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": stream_value,
+                "step": "1",
+            },
+            "from_id": "1",
+        },
+    )
+    assert_contains(output, include_note, "mars enum-predicate replay output")
+    assert_not_contains(output, exclude_note, "mars enum-predicate replay output")
+
+
 def expected_compression_value(raw: str) -> str:
     normalized = raw.strip().lower()
     if normalized in {"true", "s2"}:
@@ -668,6 +739,14 @@ def main() -> int:
         SmokeCase(
             "diss watch with from_date excludes old and includes live for dot-containing identifier values",
             test_dissemination_watch_from_date,
+        ),
+        SmokeCase(
+            "mars replay supports integer predicates under identifier",
+            test_mars_replay_with_int_predicate,
+        ),
+        SmokeCase(
+            "mars replay supports enum in-predicate under identifier",
+            test_mars_replay_with_enum_in_predicate,
         ),
         SmokeCase(
             "jetstream stream policy is inspectable (and optionally matches expected values)",
