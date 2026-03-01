@@ -36,6 +36,12 @@ pub enum ValidationRules {
         range: Option<[i64; 2]>,
         required: bool,
     },
+    /// Floating-point validation with optional range constraints
+    #[cfg_attr(feature = "openapi", schema(title = "FloatHandler"))]
+    FloatHandler {
+        range: Option<[f64; 2]>,
+        required: bool,
+    },
     /// Time field validation supporting multiple input formats
     #[cfg_attr(feature = "openapi", schema(title = "TimeHandler"))]
     TimeHandler { required: bool },
@@ -53,6 +59,7 @@ impl ValidationRules {
             ValidationRules::EnumHandler { required, .. } => *required,
             ValidationRules::ExpverHandler { required, .. } => *required,
             ValidationRules::IntHandler { required, .. } => *required,
+            ValidationRules::FloatHandler { required, .. } => *required,
             ValidationRules::TimeHandler { required } => *required,
             ValidationRules::PolygonHandler { required } => *required,
         }
