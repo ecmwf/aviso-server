@@ -18,15 +18,7 @@ pub enum NumericConstraint<T> {
 
 impl NumericConstraint<i64> {
     pub fn matches(&self, value: i64) -> bool {
-        match self {
-            NumericConstraint::Eq(v) => value == *v,
-            NumericConstraint::In(values) => values.contains(&value),
-            NumericConstraint::Gt(v) => value > *v,
-            NumericConstraint::Gte(v) => value >= *v,
-            NumericConstraint::Lt(v) => value < *v,
-            NumericConstraint::Lte(v) => value <= *v,
-            NumericConstraint::Between(min, max) => value >= *min && value <= *max,
-        }
+        matches_numeric(self, value)
     }
 }
 
@@ -35,17 +27,24 @@ impl NumericConstraint<f64> {
         if !value.is_finite() {
             return false;
         }
-        match self {
-            // Exact comparison keeps replay/live filtering deterministic and avoids hidden
-            // tolerance behavior when identifiers are canonicalized into topic tokens.
-            NumericConstraint::Eq(v) => value == *v,
-            NumericConstraint::In(values) => values.contains(&value),
-            NumericConstraint::Gt(v) => value > *v,
-            NumericConstraint::Gte(v) => value >= *v,
-            NumericConstraint::Lt(v) => value < *v,
-            NumericConstraint::Lte(v) => value <= *v,
-            NumericConstraint::Between(min, max) => value >= *min && value <= *max,
-        }
+        // Exact comparison keeps replay/live filtering deterministic and avoids hidden
+        // tolerance behavior when identifiers are canonicalized into topic tokens.
+        matches_numeric(self, value)
+    }
+}
+
+fn matches_numeric<T>(constraint: &NumericConstraint<T>, value: T) -> bool
+where
+    T: PartialOrd + PartialEq + Copy,
+{
+    match constraint {
+        NumericConstraint::Eq(v) => value == *v,
+        NumericConstraint::In(values) => values.contains(&value),
+        NumericConstraint::Gt(v) => value > *v,
+        NumericConstraint::Gte(v) => value >= *v,
+        NumericConstraint::Lt(v) => value < *v,
+        NumericConstraint::Lte(v) => value <= *v,
+        NumericConstraint::Between(min, max) => value >= *min && value <= *max,
     }
 }
 
@@ -382,7 +381,7 @@ fn validate_int_constraint_against_range(
         return Ok(());
     };
 
-    let validate = |value: i64| -> Result<()> {
+    validate_constraint_against_range(constraint, |value| {
         if value < *min || value > *max {
             bail!(
                 "Field '{}' constraint value {} is outside allowed range [{}, {}]",
@@ -393,25 +392,7 @@ fn validate_int_constraint_against_range(
             );
         }
         Ok(())
-    };
-
-    match constraint {
-        NumericConstraint::Eq(v)
-        | NumericConstraint::Gt(v)
-        | NumericConstraint::Gte(v)
-        | NumericConstraint::Lt(v)
-        | NumericConstraint::Lte(v) => validate(*v),
-        NumericConstraint::In(values) => {
-            for value in values {
-                validate(*value)?;
-            }
-            Ok(())
-        }
-        NumericConstraint::Between(from, to) => {
-            validate(*from)?;
-            validate(*to)
-        }
-    }
+    })
 }
 
 fn validate_float_constraint_against_range(
@@ -424,7 +405,7 @@ fn validate_float_constraint_against_range(
     };
 
     // Float operands are validated as finite during parse_*_constraint.
-    let validate = |value: f64| -> Result<()> {
+    validate_constraint_against_range(constraint, |value| {
         if value < *min || value > *max {
             bail!(
                 "Field '{}' constraint value {} is outside allowed range [{}, {}]",
@@ -435,23 +416,32 @@ fn validate_float_constraint_against_range(
             );
         }
         Ok(())
-    };
+    })
+}
 
+fn validate_constraint_against_range<T, F>(
+    constraint: &NumericConstraint<T>,
+    mut validate_operand: F,
+) -> Result<()>
+where
+    T: Copy,
+    F: FnMut(T) -> Result<()>,
+{
     match constraint {
         NumericConstraint::Eq(v)
         | NumericConstraint::Gt(v)
         | NumericConstraint::Gte(v)
         | NumericConstraint::Lt(v)
-        | NumericConstraint::Lte(v) => validate(*v),
+        | NumericConstraint::Lte(v) => validate_operand(*v),
         NumericConstraint::In(values) => {
             for value in values {
-                validate(*value)?;
+                validate_operand(*value)?;
             }
             Ok(())
         }
         NumericConstraint::Between(from, to) => {
-            validate(*from)?;
-            validate(*to)
+            validate_operand(*from)?;
+            validate_operand(*to)
         }
     }
 }

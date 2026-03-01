@@ -27,6 +27,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
 Expected:
 
 - HTTP `200`
+- required identifier keys must be present; optional keys may be omitted
 
 ## 2) Watch (Live Only)
 
