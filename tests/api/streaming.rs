@@ -1,6 +1,7 @@
 use crate::helpers::spawn_streaming_test_app;
 use crate::test_utils::{
-    outside_polygon, post_dissemination_notification, post_mars_notification,
+    outside_polygon, post_dissemination_notification,
+    post_extreme_event_notification_with_identifier, post_mars_notification,
     post_mars_notification_with_identifier, post_test_polygon_notification,
     post_test_polygon_notification_with_polygon,
     post_test_polygon_optional_notification_with_polygon, test_polygon, unique_suffix,
@@ -618,6 +619,70 @@ async fn replay_with_enum_in_constraint_filters_mars_domain() {
     assert!(
         !body.contains(&blocked_note),
         "expected replay to exclude blocked enum domain message; body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn replay_with_float_constraint_filters_extreme_anomaly() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let suffix = unique_suffix();
+
+    let low_note = format!("EXTREME_ANOMALY_LOW_{suffix}");
+    let high_note = format!("EXTREME_ANOMALY_HIGH_{suffix}");
+
+    let low_response = post_extreme_event_notification_with_identifier(
+        &client,
+        &app.address,
+        &low_note,
+        "north",
+        4,
+        12.5,
+    )
+    .await;
+    assert_eq!(low_response.status(), StatusCode::OK);
+
+    let high_response = post_extreme_event_notification_with_identifier(
+        &client,
+        &app.address,
+        &high_note,
+        "north",
+        4,
+        42.5,
+    )
+    .await;
+    assert_eq!(high_response.status(), StatusCode::OK);
+
+    let replay_response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "extreme",
+            "identifier": {
+                "region": "north",
+                "run_time": "1200",
+                "severity": 4,
+                "anomaly": {"gte": 40.0}
+            },
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let body = replay_response
+        .text()
+        .await
+        .expect("failed to read replay response body");
+
+    assert!(
+        body.contains(&high_note),
+        "expected replay to include high anomaly message; body: {body}"
+    );
+    assert!(
+        !body.contains(&low_note),
+        "expected replay to exclude low anomaly message; body: {body}"
     );
 }
 

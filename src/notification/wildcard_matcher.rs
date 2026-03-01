@@ -851,15 +851,17 @@ mod tests {
             IdentifierConstraint::Float(NumericConstraint::Gt(3.5)),
         );
 
+        // Wire topics percent-encode '.' inside identifier tokens, so float values
+        // appear as `4%2E1` rather than splitting into extra subject segments.
         assert!(matches_notification_filters(
-            "extreme.4.0",
+            "extreme.4%2E1",
             &request,
             &constraints,
             None,
             ""
         ));
         assert!(!matches_notification_filters(
-            "extreme.2.2",
+            "extreme.2%2E2",
             &request,
             &constraints,
             None,

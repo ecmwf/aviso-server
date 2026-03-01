@@ -167,3 +167,31 @@ pub async fn post_dissemination_notification(
         .await
         .expect("failed to send dissemination notification")
 }
+
+pub async fn post_extreme_event_notification_with_identifier(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    region: &str,
+    severity: i64,
+    anomaly: f64,
+) -> reqwest::Response {
+    client
+        .post(format!("{}/api/v1/notification", base_url))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "extreme",
+            "identifier": {
+                "region": region,
+                "run_time": "1200",
+                "severity": severity,
+                "anomaly": anomaly
+            },
+            "payload": {
+                "note": note
+            }
+        }))
+        .send()
+        .await
+        .expect("failed to send extreme_event notification")
+}
