@@ -34,12 +34,12 @@ impl NotificationHandler {
     pub fn process_request(
         &self,
         event_type: &str,
-        request_params: &HashMap<String, String>,
+        request_params: &HashMap<String, Value>,
         payload: &Option<serde_json::Value>,
         operation: OperationType,
     ) -> Result<ProcessingResult> {
         let processor = NotificationProcessor::new(&self.registry);
-        processor.process_request(event_type, request_params, payload, operation)
+        processor.process_request_with_values(event_type, request_params, payload, operation)
     }
 
     /// Get all identifier keys defined for an event type.
@@ -88,7 +88,7 @@ pub fn extract_aviso_notification(
 }
 
 /// Extract Aviso event type + identifier fields from CloudEvent data.
-fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<String, String>)> {
+fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<String, Value>)> {
     let data = payload
         .get("data")
         .ok_or_else(|| anyhow::anyhow!("Aviso CloudEvents must include a 'data' field"))?;
@@ -107,14 +107,7 @@ fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<Str
     // Identifier values are stringly typed in downstream schema validation.
     let mut request_params = HashMap::new();
     for (key, value) in identifier_obj {
-        let string_value = match value.as_str() {
-            Some(s) => s.to_string(),
-            None => {
-                debug!(key = key, "Converting non-string value to string");
-                value.to_string().trim_matches('"').to_string()
-            }
-        };
-        request_params.insert(key.clone(), string_value);
+        request_params.insert(key.clone(), value.clone());
     }
 
     // Preserve optional Aviso fields that may exist outside `identifier`.
@@ -130,13 +123,19 @@ fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<Str
 }
 
 /// Copy optional Aviso fields used by downstream processing.
-fn extract_additional_fields(data: &Value, request_params: &mut HashMap<String, String>) {
+fn extract_additional_fields(data: &Value, request_params: &mut HashMap<String, Value>) {
     if let Some(payload_str) = data.get("payload").and_then(|v| v.as_str()) {
-        request_params.insert("payload".to_string(), payload_str.to_string());
+        request_params.insert(
+            "payload".to_string(),
+            Value::String(payload_str.to_string()),
+        );
     }
 
     if let Some(location_str) = data.get("location").and_then(|v| v.as_str()) {
-        request_params.insert("location".to_string(), location_str.to_string());
+        request_params.insert(
+            "location".to_string(),
+            Value::String(location_str.to_string()),
+        );
     }
 }
 
@@ -223,8 +222,14 @@ mod tests {
         assert!(result.is_ok());
 
         let (_, params) = result.unwrap();
-        assert_eq!(params.get("payload"), Some(&"test-payload".to_string()));
-        assert_eq!(params.get("location"), Some(&"/path/to/file".to_string()));
+        assert_eq!(
+            params.get("payload"),
+            Some(&Value::String("test-payload".to_string()))
+        );
+        assert_eq!(
+            params.get("location"),
+            Some(&Value::String("/path/to/file".to_string()))
+        );
     }
 
     #[test]
@@ -248,7 +253,10 @@ mod tests {
         assert!(result.is_ok());
 
         let (_, params) = result.unwrap();
-        assert_eq!(params.get("step"), Some(&"12".to_string()));
-        assert_eq!(params.get("active"), Some(&"true".to_string()));
+        assert_eq!(
+            params.get("step"),
+            Some(&Value::Number(serde_json::Number::from(12)))
+        );
+        assert_eq!(params.get("active"), Some(&Value::Bool(true)));
     }
 }

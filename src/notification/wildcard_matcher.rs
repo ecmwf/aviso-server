@@ -6,7 +6,9 @@ use geo::{BoundingRect, Contains, Intersects, Point};
 use std::collections::HashMap;
 use tracing::debug;
 
+use crate::notification::IdentifierConstraint;
 use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
+use crate::notification::topic_parser::{derive_event_type_from_topic, topic_to_request};
 
 /// Build backend coarse pattern plus decoded full pattern.
 pub fn analyze_watch_pattern(watch_topic: &str) -> Result<(String, Vec<String>)> {
@@ -99,10 +101,16 @@ pub fn matches_watch_pattern(notification_topic: &str, watch_pattern: &[String])
 
 /// Apply optional polygon filter against metadata/payload geometry.
 pub fn matches_notification_filters(
+    notification_topic: &str,
     request: &HashMap<String, String>,
+    constraints: &HashMap<String, IdentifierConstraint>,
     metadata: Option<&HashMap<String, String>>,
     payload: &str,
 ) -> bool {
+    if !constraints.is_empty() && !matches_identifier_constraints(notification_topic, constraints) {
+        return false;
+    }
+
     let has_explicit_polygon = request.get("polygon").is_some_and(|polygon| polygon != "*");
 
     if has_explicit_polygon && request.contains_key("point") {
@@ -188,6 +196,65 @@ pub fn matches_notification_filters(
     }
 
     polygons_intersect
+}
+
+fn matches_identifier_constraints(
+    notification_topic: &str,
+    constraints: &HashMap<String, IdentifierConstraint>,
+) -> bool {
+    let event_type = match derive_event_type_from_topic(notification_topic) {
+        Ok(event_type) => event_type,
+        Err(error) => {
+            debug!(
+                notification_topic = %notification_topic,
+                error = %error,
+                "Failed to derive event type for constraint evaluation"
+            );
+            return false;
+        }
+    };
+
+    let identifier = match topic_to_request(notification_topic, &event_type) {
+        Ok(identifier) => identifier,
+        Err(error) => {
+            debug!(
+                notification_topic = %notification_topic,
+                event_type = %event_type,
+                error = %error,
+                "Failed to parse topic identifier for constraint evaluation"
+            );
+            return false;
+        }
+    };
+
+    for (field, constraint) in constraints {
+        let Some(raw_value) = identifier.get(field) else {
+            debug!(
+                field = %field,
+                notification_topic = %notification_topic,
+                "Constraint field missing in notification identifier"
+            );
+            return false;
+        };
+
+        let matches = match constraint {
+            IdentifierConstraint::Int(constraint) => raw_value
+                .parse::<i64>()
+                .ok()
+                .is_some_and(|value| constraint.matches(value)),
+            IdentifierConstraint::Enum(constraint) => constraint.matches(raw_value),
+            IdentifierConstraint::Float(constraint) => raw_value
+                .parse::<f64>()
+                .ok()
+                .is_some_and(|value| constraint.matches(value)),
+        };
+
+        if !matches {
+            return false;
+        }
+    }
+
+    true
 }
 
 fn matches_point_spatial_filter(
@@ -371,6 +438,70 @@ pub fn create_pattern_matcher(watch_pattern: Vec<String>) -> impl Fn(&str) -> bo
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::configuration::{
+        ApplicationSettings, EventSchema, NotificationBackendSettings, PayloadConfig, Settings,
+        TopicConfig, WatchEndpointSettings,
+    };
+    use aviso_validators::{EnumConstraint, NumericConstraint};
+    use std::collections::HashMap;
+    use std::sync::Once;
+
+    static GLOBAL_SCHEMA_INIT: Once = Once::new();
+
+    fn ensure_global_schema_for_constraint_tests() {
+        GLOBAL_SCHEMA_INIT.call_once(|| {
+            let mars_schema = EventSchema {
+                payload: Some(PayloadConfig { required: false }),
+                topic: Some(TopicConfig {
+                    base: "mars".to_string(),
+                    key_order: vec![
+                        "class".to_string(),
+                        "expver".to_string(),
+                        "domain".to_string(),
+                        "date".to_string(),
+                        "time".to_string(),
+                        "stream".to_string(),
+                        "step".to_string(),
+                    ],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+            };
+            let extreme_schema = EventSchema {
+                payload: Some(PayloadConfig { required: false }),
+                topic: Some(TopicConfig {
+                    base: "extreme".to_string(),
+                    key_order: vec!["severity".to_string()],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+            };
+
+            let settings = Settings {
+                application: ApplicationSettings {
+                    host: "127.0.0.1".to_string(),
+                    port: 8000,
+                    base_url: "localhost:8000".to_string(),
+                    static_files_path: "./src/static".to_string(),
+                },
+                notification_backend: NotificationBackendSettings {
+                    kind: "in_memory".to_string(),
+                    in_memory: None,
+                    jetstream: None,
+                },
+                logging: None,
+                notification_schema: Some(HashMap::from([
+                    ("mars".to_string(), mars_schema),
+                    ("extreme".to_string(), extreme_schema),
+                ])),
+                watch_endpoint: WatchEndpointSettings::default(),
+            };
+
+            settings.init_global_config();
+        });
+    }
 
     #[test]
     fn test_analyze_watch_pattern_early_wildcard() {
@@ -505,6 +636,7 @@ mod tests {
     fn test_matches_notification_filters_with_point_inside_polygon() {
         let mut request = HashMap::new();
         request.insert("point".to_string(), "52.55,13.5".to_string());
+        let constraints = HashMap::new();
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -517,7 +649,9 @@ mod tests {
         );
 
         assert!(matches_notification_filters(
+            "polygon.20250706.1200",
             &request,
+            &constraints,
             Some(&metadata),
             "{}"
         ));
@@ -527,6 +661,7 @@ mod tests {
     fn test_matches_notification_filters_with_point_outside_polygon() {
         let mut request = HashMap::new();
         request.insert("point".to_string(), "0,0".to_string());
+        let constraints = HashMap::new();
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -539,7 +674,9 @@ mod tests {
         );
 
         assert!(!matches_notification_filters(
+            "polygon.20250706.1200",
             &request,
+            &constraints,
             Some(&metadata),
             "{}"
         ));
@@ -550,6 +687,7 @@ mod tests {
         let mut request = HashMap::new();
         request.insert("polygon".to_string(), "*".to_string());
         request.insert("point".to_string(), "52.55,13.5".to_string());
+        let constraints = HashMap::new();
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -562,7 +700,9 @@ mod tests {
         );
 
         assert!(matches_notification_filters(
+            "polygon.20250706.1200",
             &request,
+            &constraints,
             Some(&metadata),
             "{}"
         ));
@@ -572,6 +712,7 @@ mod tests {
     fn test_matches_notification_filters_with_point_and_payload_geometry() {
         let mut request = HashMap::new();
         request.insert("point".to_string(), "52.55,13.5".to_string());
+        let constraints = HashMap::new();
 
         let mut metadata = HashMap::new();
         metadata.insert(
@@ -595,7 +736,9 @@ mod tests {
         .to_string();
 
         assert!(matches_notification_filters(
+            "polygon.20250706.1200",
             &request,
+            &constraints,
             Some(&metadata),
             &payload
         ));
@@ -605,6 +748,7 @@ mod tests {
     fn test_matches_notification_filters_with_point_and_payload_geometry_without_bbox() {
         let mut request = HashMap::new();
         request.insert("point".to_string(), "52.55,13.5".to_string());
+        let constraints = HashMap::new();
 
         let payload = serde_json::json!({
             "note": "inside",
@@ -621,14 +765,105 @@ mod tests {
         })
         .to_string();
 
-        assert!(matches_notification_filters(&request, None, &payload));
+        assert!(matches_notification_filters(
+            "polygon.20250706.1200",
+            &request,
+            &constraints,
+            None,
+            &payload
+        ));
     }
 
     #[test]
     fn test_matches_notification_filters_with_wildcard_polygon_without_point() {
         let mut request = HashMap::new();
         request.insert("polygon".to_string(), "*".to_string());
+        let constraints = HashMap::new();
 
-        assert!(matches_notification_filters(&request, None, ""));
+        assert!(matches_notification_filters(
+            "polygon.20250706.1200",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_int_constraint() {
+        ensure_global_schema_for_constraint_tests();
+        let request = HashMap::new();
+        let mut constraints = HashMap::new();
+        constraints.insert(
+            "step".to_string(),
+            IdentifierConstraint::Int(NumericConstraint::Gte(4)),
+        );
+
+        assert!(matches_notification_filters(
+            "mars.od.0001.g.20250706.1200.enfo.5",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+        assert!(!matches_notification_filters(
+            "mars.od.0001.g.20250706.1200.enfo.2",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_enum_constraint() {
+        ensure_global_schema_for_constraint_tests();
+        let request = HashMap::new();
+        let mut constraints = HashMap::new();
+        constraints.insert(
+            "domain".to_string(),
+            IdentifierConstraint::Enum(EnumConstraint::In(vec!["g".to_string(), "a".to_string()])),
+        );
+
+        assert!(matches_notification_filters(
+            "mars.od.0001.g.20250706.1200.enfo.1",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+        assert!(!matches_notification_filters(
+            "mars.od.0001.z.20250706.1200.enfo.1",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_float_constraint() {
+        ensure_global_schema_for_constraint_tests();
+        let request = HashMap::new();
+        let mut constraints = HashMap::new();
+        constraints.insert(
+            "severity".to_string(),
+            IdentifierConstraint::Float(NumericConstraint::Gt(3.5)),
+        );
+
+        assert!(matches_notification_filters(
+            "extreme.4.0",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+        assert!(!matches_notification_filters(
+            "extreme.2.2",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
     }
 }

@@ -13,6 +13,7 @@ use super::helpers::{
 };
 use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
+use crate::notification::IdentifierConstraint;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
@@ -41,6 +42,7 @@ pub async fn create_watch_sse_stream(
     backend: Arc<dyn NotificationBackend>,
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
+    request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
 ) -> Result<HttpResponse> {
     let app_settings = Settings::get_global_application_settings();
     let watch_config = Settings::get_global_watch_settings();
@@ -49,10 +51,15 @@ pub async fn create_watch_sse_stream(
     let notification_stream = backend.subscribe_to_topic(&topic).await?;
 
     let request_params_clone = request_params.clone();
+    let request_constraints_clone = request_constraints.clone();
     let filtered_stream = futures_util::StreamExt::filter_map(
         notification_stream,
         move |message: NotificationMessage| {
-            filter_notification_message(message, request_params_clone.clone())
+            filter_notification_message(
+                message,
+                request_params_clone.clone(),
+                request_constraints_clone.clone(),
+            )
         },
     );
 
@@ -110,9 +117,12 @@ pub async fn create_watch_sse_stream(
 pub async fn filter_notification_message(
     message: NotificationMessage,
     request_params: Arc<std::collections::HashMap<String, String>>,
+    request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
 ) -> Option<NotificationMessage> {
     let result = crate::notification::wildcard_matcher::matches_notification_filters(
+        &message.topic,
         &request_params,
+        &request_constraints,
         message.metadata.as_ref(),
         &message.payload,
     );

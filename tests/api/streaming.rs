@@ -1,7 +1,8 @@
 use crate::helpers::spawn_streaming_test_app;
 use crate::test_utils::{
     outside_polygon, post_dissemination_notification, post_mars_notification,
-    post_test_polygon_notification, post_test_polygon_notification_with_polygon,
+    post_mars_notification_with_identifier, post_test_polygon_notification,
+    post_test_polygon_notification_with_polygon,
     post_test_polygon_optional_notification_with_polygon, test_polygon, unique_suffix,
 };
 use reqwest::StatusCode;
@@ -482,6 +483,238 @@ async fn replay_with_from_id_returns_mars_messages_with_dot_values() {
         body.contains(&stream_value),
         "expected replay to include mars identifier stream with dot value: {stream_value}; body: {body}"
     );
+}
+
+#[tokio::test]
+async fn replay_with_int_constraint_filters_mars_step() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let suffix = unique_suffix();
+
+    let low_note = format!("MARS_STEP_LOW_{suffix}");
+    let high_note = format!("MARS_STEP_HIGH_{suffix}");
+    let stream_value = format!("ens.member.{suffix}");
+
+    let low_response = post_mars_notification_with_identifier(
+        &client,
+        &app.address,
+        &low_note,
+        &stream_value,
+        "1",
+        "g",
+    )
+    .await;
+    assert_eq!(low_response.status(), StatusCode::OK);
+
+    let high_response = post_mars_notification_with_identifier(
+        &client,
+        &app.address,
+        &high_note,
+        &stream_value,
+        "5",
+        "g",
+    )
+    .await;
+    assert_eq!(high_response.status(), StatusCode::OK);
+
+    let replay_response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": "20250706",
+                "time": "1200",
+                "stream": stream_value,
+                "step": {"gte": 4}
+            },
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let body = replay_response
+        .text()
+        .await
+        .expect("failed to read replay response body");
+
+    assert!(
+        body.contains(&high_note),
+        "expected replay to include high step message; body: {body}"
+    );
+    assert!(
+        !body.contains(&low_note),
+        "expected replay to exclude low step message; body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn replay_with_enum_in_constraint_filters_mars_domain() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let suffix = unique_suffix();
+
+    let allowed_note = format!("MARS_DOMAIN_ALLOWED_{suffix}");
+    let blocked_note = format!("MARS_DOMAIN_BLOCKED_{suffix}");
+    let stream_value = format!("ens.member.{suffix}");
+
+    let allowed_response = post_mars_notification_with_identifier(
+        &client,
+        &app.address,
+        &allowed_note,
+        &stream_value,
+        "3",
+        "g",
+    )
+    .await;
+    assert_eq!(allowed_response.status(), StatusCode::OK);
+
+    let blocked_response = post_mars_notification_with_identifier(
+        &client,
+        &app.address,
+        &blocked_note,
+        &stream_value,
+        "3",
+        "a",
+    )
+    .await;
+    assert_eq!(blocked_response.status(), StatusCode::OK);
+
+    let replay_response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": {"in": ["g"]},
+                "date": "20250706",
+                "time": "1200",
+                "stream": stream_value,
+                "step": "3"
+            },
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let body = replay_response
+        .text()
+        .await
+        .expect("failed to read replay response body");
+
+    assert!(
+        body.contains(&allowed_note),
+        "expected replay to include allowed enum domain message; body: {body}"
+    );
+    assert!(
+        !body.contains(&blocked_note),
+        "expected replay to exclude blocked enum domain message; body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn replay_treats_scalar_integer_identifier_as_eq_filter() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let suffix = unique_suffix();
+
+    let step_three_note = format!("MARS_STEP_THREE_{suffix}");
+    let step_four_note = format!("MARS_STEP_FOUR_{suffix}");
+    let stream_value = format!("ens.member.{suffix}");
+
+    let step_three_response = post_mars_notification_with_identifier(
+        &client,
+        &app.address,
+        &step_three_note,
+        &stream_value,
+        "3",
+        "g",
+    )
+    .await;
+    assert_eq!(step_three_response.status(), StatusCode::OK);
+
+    let step_four_response = post_mars_notification_with_identifier(
+        &client,
+        &app.address,
+        &step_four_note,
+        &stream_value,
+        "4",
+        "g",
+    )
+    .await;
+    assert_eq!(step_four_response.status(), StatusCode::OK);
+
+    let replay_response = client
+        .post(format!("{}/api/v1/replay", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": "20250706",
+                "time": "1200",
+                "stream": stream_value,
+                "step": 4
+            },
+            "from_id": "1",
+        }))
+        .send()
+        .await
+        .expect("failed to call replay endpoint");
+
+    assert_eq!(replay_response.status(), StatusCode::OK);
+    let body = replay_response
+        .text()
+        .await
+        .expect("failed to read replay response body");
+
+    assert!(
+        body.contains(&step_four_note),
+        "expected replay to include step=4 message; body: {body}"
+    );
+    assert!(
+        !body.contains(&step_three_note),
+        "expected replay to exclude step=3 message; body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn notification_rejects_constraint_identifier_values() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{}/api/v1/notification", &app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": "20250706",
+                "time": "1200",
+                "stream": "enfo",
+                "step": {"gte": 4}
+            },
+            "payload": "test"
+        }))
+        .send()
+        .await
+        .expect("failed to call notification endpoint");
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]

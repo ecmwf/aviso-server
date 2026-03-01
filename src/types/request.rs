@@ -3,6 +3,7 @@ use anyhow::{Result, bail};
 use aviso_validators::PointHandler;
 use chrono::{DateTime, NaiveDateTime, Utc};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
@@ -12,7 +13,7 @@ pub struct NotificationRequest {
     /// Event type for schema lookup and validation
     pub event_type: String,
     /// Request parameters to validate against schema
-    pub identifier: HashMap<String, String>,
+    pub identifier: HashMap<String, Value>,
     /// Optional message ID for /watch endpoint correlation
     #[serde(default)]
     pub from_id: Option<String>,
@@ -28,6 +29,23 @@ pub struct NotificationRequest {
 }
 
 impl NotificationRequest {
+    pub fn scalar_identifier_value_as_string(field_name: &str, value: &Value) -> Result<String> {
+        match value {
+            Value::String(v) => Ok(v.clone()),
+            Value::Number(v) => Ok(v.to_string()),
+            Value::Bool(v) => Ok(v.to_string()),
+            Value::Null => bail!("Field '{}' cannot be null", field_name),
+            Value::Array(_) => bail!(
+                "Field '{}' must be a scalar value or constraint object, got array",
+                field_name
+            ),
+            Value::Object(_) => bail!(
+                "Field '{}' constraint object is not allowed in this operation",
+                field_name
+            ),
+        }
+    }
+
     // Accepted examples:
     // - valid: "2026-02-25T18:58:23Z", "2026-02-25 18:58:23", "+1740509903", "1740509903710"
     // - invalid: "2026-02-25", "not-a-date", "-1" (negative unix timestamps are rejected)
@@ -296,7 +314,9 @@ impl NotificationRequest {
         }
 
         if let Some(point) = point {
-            PointHandler::parse_point_coordinates(point).map_err(|e| {
+            let point_str = Self::scalar_identifier_value_as_string("point", point)
+                .map_err(|e| anyhow::anyhow!("identifier.point must be a scalar value: {}", e))?;
+            PointHandler::parse_point_coordinates(&point_str).map_err(|e| {
                 anyhow::anyhow!(
                     "identifier.point must be a valid 'lat,lon' coordinate pair: {}",
                     e
@@ -312,6 +332,7 @@ impl NotificationRequest {
 mod tests {
     use super::NotificationRequest;
     use chrono::{DateTime, Utc};
+    use serde_json::Value;
     use std::collections::HashMap;
 
     fn base_request() -> NotificationRequest {
@@ -327,30 +348,34 @@ mod tests {
     #[test]
     fn validate_spatial_filters_accepts_point_without_polygon() {
         let mut request = base_request();
-        request
-            .identifier
-            .insert("point".to_string(), "12.34,56.78".to_string());
+        request.identifier.insert(
+            "point".to_string(),
+            Value::String("12.34,56.78".to_string()),
+        );
         assert!(request.validate_spatial_filters().is_ok());
     }
 
     #[test]
     fn validate_spatial_filters_rejects_polygon_and_point_together() {
         let mut request = base_request();
-        request
-            .identifier
-            .insert("polygon".to_string(), "(0,0,0,1,1,1,0,0)".to_string());
-        request
-            .identifier
-            .insert("point".to_string(), "12.34,56.78".to_string());
+        request.identifier.insert(
+            "polygon".to_string(),
+            Value::String("(0,0,0,1,1,1,0,0)".to_string()),
+        );
+        request.identifier.insert(
+            "point".to_string(),
+            Value::String("12.34,56.78".to_string()),
+        );
         assert!(request.validate_spatial_filters().is_err());
     }
 
     #[test]
     fn validate_spatial_filters_rejects_invalid_point() {
         let mut request = base_request();
-        request
-            .identifier
-            .insert("point".to_string(), "not-a-point".to_string());
+        request.identifier.insert(
+            "point".to_string(),
+            Value::String("not-a-point".to_string()),
+        );
         assert!(request.validate_spatial_filters().is_err());
     }
 

@@ -2,6 +2,7 @@ use crate::configuration::Settings;
 use crate::notification::{NotificationHandler, OperationType, ProcessingResult};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::Result;
+use serde_json::Value;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -33,7 +34,7 @@ pub struct NotificationProcessingError {
 /// * `Err(NotificationProcessingError)` - Validation or processing failure
 pub fn process_notification_request(
     event_type: &str,
-    request_params: &HashMap<String, String>,
+    request_params: &HashMap<String, Value>,
     payload: &Option<serde_json::Value>,
     operation: OperationType,
 ) -> Result<ProcessingResult, NotificationProcessingError> {

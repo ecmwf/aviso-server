@@ -1,6 +1,6 @@
 use crate::configuration::{
-    EventStoragePolicy, JetStreamDiscardPolicy, JetStreamRetentionPolicy, JetStreamStorageType,
-    Settings, parse_retention_time_spec, parse_size_spec,
+    EventSchema, EventStoragePolicy, JetStreamDiscardPolicy, JetStreamRetentionPolicy,
+    JetStreamStorageType, Settings, parse_retention_time_spec, parse_size_spec,
 };
 use crate::notification::topic_parser::derive_event_type_from_topic;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
@@ -10,6 +10,7 @@ use anyhow::{Context, Result, bail};
 use async_nats::jetstream::stream::{
     Compression, Config as StreamConfig, DiscardPolicy, RetentionPolicy, StorageType,
 };
+use std::collections::HashMap;
 use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Default)]
@@ -45,6 +46,18 @@ struct ReconcileContext<'a> {
 /// # Returns
 /// * `Result<String>` - Stream name that handles this topic or error if creation fails
 pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) -> Result<String> {
+    let schema_map = Settings::get_global_notification_schema().as_ref();
+    ensure_stream_for_topic_with_schema(backend, topic, schema_map).await
+}
+
+/// Testable variant of stream ensure that accepts an explicit schema map.
+///
+/// This keeps tests deterministic and independent from global `OnceLock` config.
+async fn ensure_stream_for_topic_with_schema(
+    backend: &JetStreamBackend,
+    topic: &str,
+    schema_map: Option<&HashMap<String, EventSchema>>,
+) -> Result<String> {
     // Extract base from topic (first part before '.')
     let base =
         derive_event_type_from_topic(topic).context("Failed to extract event type from topic")?;
@@ -64,7 +77,7 @@ pub async fn ensure_stream_for_topic(backend: &JetStreamBackend, topic: &str) ->
 
     // Build desired stream configuration for this base.
     let (stream_config, schema_policy_owner, policy_context) =
-        build_stream_config_for_base(backend, &stream_name, &subject_pattern)?;
+        build_stream_config_for_base(backend, &stream_name, &subject_pattern, schema_map)?;
     let max_age_seconds = stream_config.max_age.as_secs();
     let schema_policy_applied = schema_policy_owner.is_some();
     let schema_policy_owner_field = schema_policy_owner.as_deref().unwrap_or("");
@@ -370,6 +383,7 @@ fn build_stream_config_for_base(
     backend: &JetStreamBackend,
     stream_name: &str,
     subject_pattern: &str,
+    schema_map: Option<&HashMap<String, EventSchema>>,
 ) -> Result<(StreamConfig, Option<String>, StreamPolicyContext)> {
     let storage_type = match backend.config.storage_type {
         JetStreamStorageType::File => StorageType::File,
@@ -408,7 +422,7 @@ fn build_stream_config_for_base(
     apply_backend_defaults(&mut config, &backend.config);
 
     let mut schema_policy_owner = None;
-    if let Some((owner, policy)) = resolve_storage_policy_for_base(stream_name)? {
+    if let Some((owner, policy)) = resolve_storage_policy_for_base(stream_name, schema_map)? {
         schema_policy_owner = Some(owner);
         policy_context.schema_retention_time = policy.retention_time.clone();
         policy_context.schema_max_messages = policy.max_messages;
@@ -487,10 +501,10 @@ fn apply_storage_policy_overrides(
 
 fn resolve_storage_policy_for_base(
     stream_name: &str,
+    schema_map: Option<&HashMap<String, EventSchema>>,
 ) -> Result<Option<(String, EventStoragePolicy)>> {
     let base = stream_name.to_ascii_lowercase();
-    let schema = Settings::get_global_notification_schema();
-    let Some(schema_map) = schema.as_ref() else {
+    let Some(schema_map) = schema_map else {
         return Ok(None);
     };
 
@@ -522,10 +536,7 @@ fn resolve_storage_policy_for_base(
 #[cfg(test)]
 mod tests {
     use super::{apply_storage_policy_overrides, merged_reconciled_config};
-    use crate::configuration::{
-        ApplicationSettings, EventSchema, EventStoragePolicy, NotificationBackendSettings,
-        Settings, TopicConfig, WatchEndpointSettings,
-    };
+    use crate::configuration::{EventSchema, EventStoragePolicy, TopicConfig};
     use crate::notification_backend::jetstream::{
         backend::JetStreamBackend,
         config::JetStreamConfig,
@@ -556,9 +567,9 @@ mod tests {
             .unwrap_or(false)
     }
 
-    fn init_test_global_config() {
-        let mut notification_schema = HashMap::new();
-        notification_schema.insert(
+    fn compression_test_schema() -> HashMap<String, EventSchema> {
+        let mut schema = HashMap::new();
+        schema.insert(
             "reconcile_compression".to_string(),
             EventSchema {
                 payload: None,
@@ -577,25 +588,7 @@ mod tests {
                 }),
             },
         );
-
-        let settings = Settings {
-            application: ApplicationSettings {
-                host: "127.0.0.1".to_string(),
-                port: 8000,
-                base_url: "http://localhost".to_string(),
-                static_files_path: "./src/static".to_string(),
-            },
-            notification_backend: NotificationBackendSettings {
-                kind: "jetstream".to_string(),
-                in_memory: None,
-                jetstream: None,
-            },
-            logging: None,
-            notification_schema: Some(notification_schema),
-            watch_endpoint: WatchEndpointSettings::default(),
-        };
-        // Global config is OnceLock-backed; repeated calls are no-op after first set.
-        settings.init_global_config();
+        schema
     }
 
     async fn connect_or_skip(config: JetStreamConfig, context: &str) -> Option<JetStreamBackend> {
@@ -830,8 +823,6 @@ mod tests {
             return;
         }
 
-        init_test_global_config();
-
         let nats_url =
             std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
         let suffix = SystemTime::now()
@@ -868,7 +859,7 @@ mod tests {
             return;
         };
 
-        super::ensure_stream_for_topic(&backend_v1, &topic)
+        super::ensure_stream_for_topic_with_schema(&backend_v1, &topic, None)
             .await
             .expect("stream creation should succeed");
 
@@ -906,7 +897,7 @@ mod tests {
             return;
         };
 
-        super::ensure_stream_for_topic(&backend_v2, &topic)
+        super::ensure_stream_for_topic_with_schema(&backend_v2, &topic, None)
             .await
             .expect("reconciliation should succeed");
 
@@ -931,7 +922,7 @@ mod tests {
             return;
         }
 
-        init_test_global_config();
+        let schema = compression_test_schema();
 
         let nats_url =
             std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
@@ -992,7 +983,7 @@ mod tests {
             Some(Compression::None)
         );
 
-        super::ensure_stream_for_topic(&backend, &topic)
+        super::ensure_stream_for_topic_with_schema(&backend, &topic, Some(&schema))
             .await
             .expect("reconciliation should succeed");
 
