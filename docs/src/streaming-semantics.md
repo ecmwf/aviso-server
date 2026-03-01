@@ -11,34 +11,6 @@
 - Spatial filtering:
   - see [Spatial Filter Model](#spatial-filter-model) below.
 
-Example (live-only watch):
-
-```bash
-curl -N -X POST "http://localhost:8000/api/v1/watch" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event_type": "test_polygon",
-    "identifier": {
-      "time": "1200",
-      "polygon": "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
-    }
-  }'
-```
-
-Example (live-only watch with point filter):
-
-```bash
-curl -N -X POST "http://localhost:8000/api/v1/watch" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event_type": "test_polygon",
-    "identifier": {
-      "time": "1200",
-      "point": "52.55,13.50"
-    }
-  }'
-```
-
 ## `POST /api/v1/replay`
 
 - Requires exactly one replay start parameter:
@@ -48,21 +20,6 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
   - request is rejected with `400`.
 - Endpoint returns historical replay stream and then closes.
 - Same spatial filter contract as `watch` (see [Spatial Filter Model](#spatial-filter-model)).
-
-Example (time-based replay):
-
-```bash
-curl -N -X POST "http://localhost:8000/api/v1/replay" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "event_type": "test_polygon",
-    "identifier": {
-      "time": "1200",
-      "polygon": "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
-    },
-    "from_date": "2025-01-15T10:00:00Z"
-  }'
-```
 
 ## Spatial Filter Model
 
@@ -91,44 +48,32 @@ Use this mental model:
 | omitted | omitted | no spatial filter |
 | provided | provided | `400 Bad Request` |
 
-### Example: Optional Polygon, No Spatial Filter
+For practical request/response examples, see:
 
-Request:
+- [Practical Examples: Basic Notify/Watch/Replay](./practical-examples/basic-notify-watch-replay.md)
+- [Practical Examples: Spatial Filtering](./practical-examples/spatial-filtering.md)
 
-```json
-{
-  "event_type": "test_polygon_optional",
-  "identifier": {
-    "time": "1200"
-  },
-  "from_id": "1"
-}
-```
+## Identifier Constraints (`watch`/`replay`)
 
-Behavior:
+For schema-backed event types, `identifier` fields support constraint objects in `watch`/`replay`.
+Scalar values are still valid and are treated as `eq`.
 
-- replay/watch matches notifications with `time=1200`
-- polygon shape is not used for filtering in this request
+Supported operators by handler type:
 
-### Example: Optional Polygon, Point Filter
+| Handler | Operators |
+|---|---|
+| `IntHandler` | `eq`, `in`, `gt`, `gte`, `lt`, `lte`, `between` |
+| `FloatHandler` | `eq`, `in`, `gt`, `gte`, `lt`, `lte`, `between` |
+| `EnumHandler` | `eq`, `in` |
 
-Request:
+`between` expects exactly two values `[min,max]` and is inclusive.
+Constraint objects are rejected on `/notification`; notify accepts scalar identifier values only.
 
-```json
-{
-  "event_type": "test_polygon_optional",
-  "identifier": {
-    "time": "1200",
-    "point": "52.55,13.50"
-  },
-  "from_id": "1"
-}
-```
+For end-to-end generic examples (with `curl` requests and expected outcomes), see:
 
-Behavior:
-
-- replay/watch first matches `time=1200`
-- then keeps only notifications whose polygon contains that point
+- [Practical Examples: Constraint Filtering](./practical-examples/constraint-filtering.md)
+- [Practical Examples: Spatial Filtering](./practical-examples/spatial-filtering.md)
+- [Practical Examples: Replay Starting Points](./practical-examples/replay-starting-points.md)
 
 ## `from_date` behavior
 
