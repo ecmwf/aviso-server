@@ -69,7 +69,7 @@ curl -X POST "http://127.0.0.1:8000/api/v1/notification" \
 Once the server is running, execute:
 
 ```bash
-./scripts/smoke_test.sh
+python3 scripts/smoke_test.py
 ```
 
 The smoke script covers:
@@ -82,9 +82,11 @@ The smoke script covers:
 Useful overrides:
 
 ```bash
-BASE_URL="http://127.0.0.1:8000" ./scripts/smoke_test.sh
-BACKEND="jetstream" ./scripts/smoke_test.sh
-TIMEOUT_SECONDS=12 ./scripts/smoke_test.sh
+BASE_URL="http://127.0.0.1:8000" python3 scripts/smoke_test.py
+BACKEND="jetstream" python3 scripts/smoke_test.py
+TIMEOUT_SECONDS=12 python3 scripts/smoke_test.py
+SMOKE_VERBOSE=1 python3 scripts/smoke_test.py
+python3 scripts/smoke_test.py --verbose
 ```
 
 ## Build and serve docs
