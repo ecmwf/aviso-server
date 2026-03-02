@@ -44,7 +44,7 @@ geo = "0.32"
 geo-types = "0.7"
 
 [[bench]]
-name = "notification_backend_benchmark"
+name = "constraint_matcher_benchmark"
 harness = false
 
 [dev-dependencies]
