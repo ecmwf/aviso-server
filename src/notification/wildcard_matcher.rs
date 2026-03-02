@@ -9,7 +9,7 @@ use tracing::debug;
 use crate::configuration::Settings;
 use crate::notification::IdentifierConstraint;
 use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
-use crate::notification::topic_parser::{derive_event_type_from_topic, topic_to_request};
+use crate::notification::topic_parser::topic_to_request;
 
 /// Build backend coarse pattern plus decoded full pattern.
 pub fn analyze_watch_pattern(watch_topic: &str) -> Result<(String, Vec<String>)> {
@@ -203,24 +203,38 @@ fn matches_identifier_constraints(
     notification_topic: &str,
     constraints: &HashMap<String, IdentifierConstraint>,
 ) -> bool {
-    let event_type = match derive_event_type_from_topic(notification_topic) {
-        Ok(event_type) => event_type,
+    let decoded_topic = match decode_subject(notification_topic) {
+        Ok(decoded_topic) => decoded_topic,
         Err(error) => {
             debug!(
                 notification_topic = %notification_topic,
                 error = %error,
-                "Failed to derive event type for constraint evaluation"
+                "Failed to decode topic for constraint evaluation"
             );
             return false;
         }
     };
 
+    let event_type = match resolve_event_type_from_topic_base(&decoded_topic) {
+        Some(event_type) => event_type,
+        None => {
+            debug!(
+                notification_topic = %notification_topic,
+                "Failed to resolve schema event type from topic base for constraint evaluation"
+            );
+            return false;
+        }
+    };
+
+    // Fast path: evaluate constraints directly from decoded topic tokens and
+    // schema key_order, without reconstructing the full identifier map.
     if let Some(matched) =
-        matches_identifier_constraints_fast_path(notification_topic, &event_type, constraints)
+        matches_identifier_constraints_fast_path(&decoded_topic, &event_type, constraints)
     {
         return matched;
     }
 
+    // Fallback keeps previous behavior when fast-path prerequisites are not met.
     let identifier = match topic_to_request(notification_topic, &event_type) {
         Ok(identifier) => identifier,
         Err(error) => {
@@ -253,22 +267,10 @@ fn matches_identifier_constraints(
 }
 
 fn matches_identifier_constraints_fast_path(
-    notification_topic: &str,
+    decoded_topic: &[String],
     event_type: &str,
     constraints: &HashMap<String, IdentifierConstraint>,
 ) -> Option<bool> {
-    let decoded_topic = match decode_subject(notification_topic) {
-        Ok(tokens) => tokens,
-        Err(error) => {
-            debug!(
-                notification_topic = %notification_topic,
-                error = %error,
-                "Failed to decode topic in fast-path constraint evaluation"
-            );
-            return None;
-        }
-    };
-
     let schema_map = Settings::get_global_notification_schema().as_ref()?;
     let event_schema = schema_map.get(event_type)?;
     let topic_config = event_schema.topic.as_ref()?;
@@ -313,6 +315,21 @@ fn matches_constraint_value(raw_value: &str, constraint: &IdentifierConstraint) 
             .ok()
             .is_some_and(|value| constraint.matches(value)),
     }
+}
+
+fn resolve_event_type_from_topic_base(decoded_topic: &[String]) -> Option<String> {
+    let topic_base = decoded_topic.first()?;
+    let schema_map = Settings::get_global_notification_schema().as_ref()?;
+
+    // Topic base can differ from schema key (e.g. base "diss", key
+    // "dissemination"), so resolution must match by schema.topic.base.
+    schema_map.iter().find_map(|(event_type, schema)| {
+        schema
+            .topic
+            .as_ref()
+            .filter(|topic| topic.base == *topic_base)
+            .map(|_| event_type.clone())
+    })
 }
 
 fn matches_point_spatial_filter(
@@ -536,6 +553,16 @@ mod tests {
                 identifier: HashMap::new(),
                 storage_policy: None,
             };
+            let dissemination_schema = EventSchema {
+                payload: Some(PayloadConfig { required: false }),
+                topic: Some(TopicConfig {
+                    base: "diss".to_string(),
+                    key_order: vec!["destination".to_string(), "step".to_string()],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+            };
 
             let settings = Settings {
                 application: ApplicationSettings {
@@ -553,6 +580,7 @@ mod tests {
                 notification_schema: Some(HashMap::from([
                     ("mars".to_string(), mars_schema),
                     ("extreme".to_string(), extreme_schema),
+                    ("dissemination".to_string(), dissemination_schema),
                 ])),
                 watch_endpoint: WatchEndpointSettings::default(),
             };
@@ -920,6 +948,32 @@ mod tests {
         ));
         assert!(!matches_notification_filters(
             "extreme.2%2E2",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+    }
+
+    #[test]
+    fn test_matches_notification_filters_with_schema_key_different_from_topic_base() {
+        ensure_global_schema_for_constraint_tests();
+        let request = HashMap::new();
+        let mut constraints = HashMap::new();
+        constraints.insert(
+            "step".to_string(),
+            IdentifierConstraint::Int(NumericConstraint::Gte(4)),
+        );
+
+        assert!(matches_notification_filters(
+            "diss.FOO.5",
+            &request,
+            &constraints,
+            None,
+            ""
+        ));
+        assert!(!matches_notification_filters(
+            "diss.FOO.2",
             &request,
             &constraints,
             None,
