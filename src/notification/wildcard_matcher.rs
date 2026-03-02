@@ -6,6 +6,7 @@ use geo::{BoundingRect, Contains, Intersects, Point};
 use std::collections::HashMap;
 use tracing::debug;
 
+use crate::configuration::Settings;
 use crate::notification::IdentifierConstraint;
 use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
 use crate::notification::topic_parser::{derive_event_type_from_topic, topic_to_request};
@@ -214,6 +215,12 @@ fn matches_identifier_constraints(
         }
     };
 
+    if let Some(matched) =
+        matches_identifier_constraints_fast_path(notification_topic, &event_type, constraints)
+    {
+        return matched;
+    }
+
     let identifier = match topic_to_request(notification_topic, &event_type) {
         Ok(identifier) => identifier,
         Err(error) => {
@@ -237,24 +244,75 @@ fn matches_identifier_constraints(
             return false;
         };
 
-        let matches = match constraint {
-            IdentifierConstraint::Int(constraint) => raw_value
-                .parse::<i64>()
-                .ok()
-                .is_some_and(|value| constraint.matches(value)),
-            IdentifierConstraint::Enum(constraint) => constraint.matches(raw_value),
-            IdentifierConstraint::Float(constraint) => raw_value
-                .parse::<f64>()
-                .ok()
-                .is_some_and(|value| constraint.matches(value)),
-        };
-
-        if !matches {
+        if !matches_constraint_value(raw_value, constraint) {
             return false;
         }
     }
 
     true
+}
+
+fn matches_identifier_constraints_fast_path(
+    notification_topic: &str,
+    event_type: &str,
+    constraints: &HashMap<String, IdentifierConstraint>,
+) -> Option<bool> {
+    let decoded_topic = match decode_subject(notification_topic) {
+        Ok(tokens) => tokens,
+        Err(error) => {
+            debug!(
+                notification_topic = %notification_topic,
+                error = %error,
+                "Failed to decode topic in fast-path constraint evaluation"
+            );
+            return None;
+        }
+    };
+
+    let schema_map = Settings::get_global_notification_schema().as_ref()?;
+    let event_schema = schema_map.get(event_type)?;
+    let topic_config = event_schema.topic.as_ref()?;
+
+    if decoded_topic.first() != Some(&topic_config.base) {
+        return Some(false);
+    }
+
+    for (field, constraint) in constraints {
+        let Some(field_position) = topic_config.key_order.iter().position(|key| key == field)
+        else {
+            return Some(false);
+        };
+
+        let token_index = field_position + 1;
+        let Some(raw_value) = decoded_topic.get(token_index) else {
+            return Some(false);
+        };
+
+        // Keep parity with topic_to_request behavior: wildcard/empty means omitted key.
+        if raw_value.is_empty() || raw_value == "*" {
+            return Some(false);
+        }
+
+        if !matches_constraint_value(raw_value, constraint) {
+            return Some(false);
+        }
+    }
+
+    Some(true)
+}
+
+fn matches_constraint_value(raw_value: &str, constraint: &IdentifierConstraint) -> bool {
+    match constraint {
+        IdentifierConstraint::Int(constraint) => raw_value
+            .parse::<i64>()
+            .ok()
+            .is_some_and(|value| constraint.matches(value)),
+        IdentifierConstraint::Enum(constraint) => constraint.matches(raw_value),
+        IdentifierConstraint::Float(constraint) => raw_value
+            .parse::<f64>()
+            .ok()
+            .is_some_and(|value| constraint.matches(value)),
+    }
 }
 
 fn matches_point_spatial_filter(
