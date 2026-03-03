@@ -2,6 +2,7 @@
 
 # Local runtime/state data should never be part of image build context.
 .nui/
+scripts/.nui
 
 # Local environment and editor artifacts.
 .env
