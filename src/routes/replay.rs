@@ -10,6 +10,7 @@ use crate::sse::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_actix_web::RequestId;
@@ -60,16 +61,7 @@ pub async fn replay(
     record_start_at_span_fields(context.start_at);
 
     let display_topic = decode_subject_for_display(&context.topic);
-    info!(
-        service_name = SERVICE_NAME,
-        service_version = SERVICE_VERSION,
-        event_domain = "streaming",
-        event_name = "api.replay.stream.started",
-        outcome = "in_progress",
-        topic = %display_topic,
-        start_at = ?context.start_at,
-        "Starting replay-only SSE stream"
-    );
+    let setup_started_at = Instant::now();
 
     // Pass canonicalized params for downstream filtering
     let filtering_params = Arc::new(context.canonicalized_params.clone());
@@ -93,6 +85,9 @@ pub async fn replay(
                 event_name = "api.replay.stream.established",
                 outcome = "success",
                 topic = %display_topic,
+                start_at = ?context.start_at,
+                stream_mode = "replay_only",
+                setup_duration_ms = setup_started_at.elapsed().as_millis() as u64,
                 "Replay-only SSE stream established successfully"
             );
             response

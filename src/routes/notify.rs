@@ -116,40 +116,31 @@ pub async fn notify(
         processed_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    // Enhanced logging with spatial information
+    // Emit one success event with optional spatial metadata instead of branching logs.
     let payload_kind = payload
         .payload
         .as_ref()
         .map(json_value_kind)
         .unwrap_or("null");
-    if let Some(spatial_metadata) = &notification_result.spatial_metadata {
-        info!(
-            service_name = SERVICE_NAME,
-            service_version = SERVICE_VERSION,
-            event_domain = "notification",
-            event_name = "api.notification.processed",
-            outcome = "success",
-            topic = %display_topic,
-            event_type = %notification_result.event_type,
-            param_count = notification_result.canonicalized_params.len(),
-            payload_kind = %payload_kind,
-            bounding_box = %spatial_metadata.bounding_box,
-            "Notification with spatial data processed and saved successfully"
-        );
-    } else {
-        info!(
-            service_name = SERVICE_NAME,
-            service_version = SERVICE_VERSION,
-            event_domain = "notification",
-            event_name = "api.notification.processed",
-            outcome = "success",
-            topic = %display_topic,
-            event_type = %notification_result.event_type,
-            param_count = notification_result.canonicalized_params.len(),
-            payload_kind = %payload_kind,
-            "Notification processed and saved successfully"
-        );
-    }
+    let spatial_enabled = notification_result.spatial_metadata.is_some();
+    let spatial_bbox = notification_result
+        .spatial_metadata
+        .as_ref()
+        .map(|metadata| metadata.bounding_box.as_str());
+    info!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_domain = "notification",
+        event_name = "api.notification.processed",
+        outcome = "success",
+        topic = %display_topic,
+        event_type = %notification_result.event_type,
+        param_count = notification_result.canonicalized_params.len(),
+        payload_kind = %payload_kind,
+        spatial_enabled = spatial_enabled,
+        spatial_bbox = ?spatial_bbox,
+        "Notification processed and saved successfully"
+    );
 
     HttpResponse::Ok().json(response)
 }
