@@ -38,6 +38,9 @@ impl<'a> NotificationProcessor<'a> {
     }
 
     /// Validate request fields and build topic for the selected operation.
+    ///
+    /// This entrypoint is intentionally scalar-only: identifier values are
+    /// treated as strings and cannot carry JSON constraint objects.
     pub fn process_request(
         &self,
         event_type: &str,

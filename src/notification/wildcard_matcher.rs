@@ -6,7 +6,7 @@ use geo::{BoundingRect, Contains, Intersects, Point};
 use std::collections::HashMap;
 use tracing::debug;
 
-use crate::configuration::Settings;
+use crate::configuration::{EventSchema, Settings};
 use crate::notification::IdentifierConstraint;
 use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
 use crate::notification::topic_parser::topic_to_request;
@@ -203,6 +203,14 @@ fn matches_identifier_constraints(
     notification_topic: &str,
     constraints: &HashMap<String, IdentifierConstraint>,
 ) -> bool {
+    let Some(schema_map) = Settings::get_global_notification_schema().as_ref() else {
+        debug!(
+            notification_topic = %notification_topic,
+            "Global schema map unavailable for constraint evaluation"
+        );
+        return false;
+    };
+
     let decoded_topic = match decode_subject(notification_topic) {
         Ok(decoded_topic) => decoded_topic,
         Err(error) => {
@@ -215,7 +223,7 @@ fn matches_identifier_constraints(
         }
     };
 
-    let event_type = match resolve_event_type_from_topic_base(&decoded_topic) {
+    let event_type = match resolve_event_type_from_topic_base(&decoded_topic, schema_map) {
         Some(event_type) => event_type,
         None => {
             debug!(
@@ -228,14 +236,17 @@ fn matches_identifier_constraints(
 
     // Fast path: evaluate constraints directly from decoded topic tokens and
     // schema key_order, without reconstructing the full identifier map.
-    if let Some(matched) =
-        matches_identifier_constraints_fast_path(&decoded_topic, &event_type, constraints)
-    {
+    if let Some(matched) = matches_identifier_constraints_fast_path(
+        &decoded_topic,
+        event_type,
+        constraints,
+        schema_map,
+    ) {
         return matched;
     }
 
     // Fallback keeps previous behavior when fast-path prerequisites are not met.
-    let identifier = match topic_to_request(notification_topic, &event_type) {
+    let identifier = match topic_to_request(notification_topic, event_type) {
         Ok(identifier) => identifier,
         Err(error) => {
             debug!(
@@ -270,8 +281,8 @@ fn matches_identifier_constraints_fast_path(
     decoded_topic: &[String],
     event_type: &str,
     constraints: &HashMap<String, IdentifierConstraint>,
+    schema_map: &HashMap<String, EventSchema>,
 ) -> Option<bool> {
-    let schema_map = Settings::get_global_notification_schema().as_ref()?;
     let event_schema = schema_map.get(event_type)?;
     let topic_config = event_schema.topic.as_ref()?;
 
@@ -317,9 +328,11 @@ fn matches_constraint_value(raw_value: &str, constraint: &IdentifierConstraint) 
     }
 }
 
-fn resolve_event_type_from_topic_base(decoded_topic: &[String]) -> Option<String> {
+fn resolve_event_type_from_topic_base<'a>(
+    decoded_topic: &[String],
+    schema_map: &'a HashMap<String, EventSchema>,
+) -> Option<&'a str> {
     let topic_base = decoded_topic.first()?;
-    let schema_map = Settings::get_global_notification_schema().as_ref()?;
 
     // Topic base can differ from schema key (e.g. base "diss", key
     // "dissemination"), so resolution must match by schema.topic.base.
@@ -328,7 +341,7 @@ fn resolve_event_type_from_topic_base(decoded_topic: &[String]) -> Option<String
             .topic
             .as_ref()
             .filter(|topic| topic.base == *topic_base)
-            .map(|_| event_type.clone())
+            .map(|_| event_type.as_str())
     })
 }
 
