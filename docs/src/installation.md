@@ -92,7 +92,7 @@ See [Configuration](./configuration.md) for all config loading options.
 ## Docker
 
 The repository includes a multi-stage `Dockerfile` that produces a minimal
-[distroless](https://github.com/GoogleContainerServices/distroless) image.
+[distroless](https://github.com/GoogleContainerTools/distroless) image.
 
 ### Build the image
 

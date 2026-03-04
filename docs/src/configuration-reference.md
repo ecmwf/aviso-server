@@ -76,7 +76,7 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `publish_retry_attempts` | `u32?` | `5` | Retry attempts for transient publish `channel closed` failures (`> 0`). |
 | `publish_retry_base_delay_ms` | `u64?` | `150` | Base backoff in milliseconds for publish retries (`> 0`). |
 
-See [JetStream Settings](./jetstream-settings.md) and [JetStream Backend](./backend-jetstream.md) for detailed behavior.
+See [JetStream Backend](./backend-jetstream.md#configuration-reference) for detailed behavior.
 
 ## `notification_schema.<event_type>.payload`
 
