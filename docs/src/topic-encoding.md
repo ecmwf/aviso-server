@@ -1,60 +1,96 @@
 # Topic Encoding
 
-Aviso now uses a single backend-agnostic wire format for topics across all backends.
+Aviso uses a single backend-agnostic wire format for topics across all backends.
 
-## Why this exists
+---
 
-NATS subject tokenization is fixed to `.`. Wildcards (`*`, `>`) also operate on dot-delimited tokens.
+## Why This Exists
 
-If topic values are written directly to subjects, values containing reserved characters can break routing and filtering semantics.
+NATS subject tokenization uses `.` as the separator. Wildcards (`*`, `>`) also operate on
+dot-delimited tokens. If topic field values contain any of these reserved characters,
+they would silently break routing and filtering.
 
-Example:
+Example of the problem:
 
-- logical token value: `1.45`
-- naive subject token: `1.45` (looks like two tokens to NATS)
+```
+Logical value:  1.45
+Naive subject:  mars.od.1.45      ← looks like 4 tokens, not 3
+```
 
-To avoid this, Aviso encodes each token before building the wire subject.
+To prevent this, Aviso percent-encodes each token value before assembling the wire subject.
 
-## Invariants
+---
 
-- Wire subject separator is always `.`.
-- Topic tokens are encoded/decoded with one shared codec for all backends.
-- App-level wildcard matching is performed on decoded logical tokens.
-- Decoder is strict: malformed `%HH` sequences are rejected.
+## Encoding Rules
 
-## Encoding rules
+Only four characters are reserved and must be encoded:
 
-Reserved characters are percent-encoded per token:
+| Character | Encoded form | Reason |
+|---|---|---|
+| `.` | `%2E` | NATS token separator |
+| `*` | `%2A` | NATS single-token wildcard |
+| `>` | `%3E` | NATS multi-token wildcard |
+| `%` | `%25` | Escape character itself (keeps decoding unambiguous) |
 
-- `.` -> `%2E`
-- `*` -> `%2A`
-- `>` -> `%3E`
-- `%` -> `%25`
+All other characters pass through unchanged.
 
-`%` must be encoded to keep decoding unambiguous.
+---
+
+## Encode → Wire → Decode Flow
+
+```mermaid
+flowchart LR
+    A["Logical value<br/>e.g. 1.45"] -->|encode| B["Wire token<br/>e.g. 1%2E45"]
+    B -->|assemble| C["Wire subject<br/>e.g. extreme_event.north.1%2E45"]
+    C -->|"split on '.'"| D["Wire tokens"]
+    D -->|decode each| E["Logical tokens<br/>e.g. 1.45"]
+
+    style A fill:#2a4a6b,color:#fff
+    style C fill:#1a6b3a,color:#fff
+    style E fill:#2a4a6b,color:#fff
+```
+
+The decoder is **strict**: malformed `%HH` sequences (e.g. `%GG`) are rejected, not passed through.
+
+---
 
 ## Examples
 
-- `1.45` -> `1%2E45`
-- `1*34` -> `1%2A34`
-- `1%25` -> `1%2525`
+### Encoding
 
-Roundtrip examples:
+| Logical value | Wire token |
+|---|---|
+| `1.45` | `1%2E45` |
+| `1*34` | `1%2A34` |
+| `1>0` | `1%3E0` |
+| `1%25` | `1%2525` |
 
-- `decode("1%2E45")` -> `1.45`
-- `decode("1%2A34")` -> `1*34`
-- `decode("1%2525")` -> `1%25`
+### Decoding (single pass)
 
-Note:
+| Wire token | Logical value |
+|---|---|
+| `1%2E45` | `1.45` |
+| `1%2A34` | `1*34` |
+| `1%2525` | `1%25` |
+| `1%25` | `1%` |
 
-- `decode("1%25")` -> `1%` (single decode pass)
+---
 
-## Impact on topic matching
+## Impact on Wildcard Matching
 
-Two-step matching still applies:
+Watch and replay requests use a two-step filter:
 
-1. Backend coarse filter (JetStream subject filter).
-2. App-level wildcard match.
+1. **Backend coarse filter** — operates on wire subjects (NATS wildcard matching)
+2. **App-level wildcard match** — operates on **decoded** logical tokens
 
-Both steps are now safe with reserved characters because matching works on decoded logical tokens.
+Both steps are safe with reserved characters because the app layer always decodes before matching.
+Subscribers never need to think about encoding in their filter values — Aviso handles it transparently.
 
+---
+
+## Invariants
+
+- Wire subject separator is always `.`
+- One shared codec is used for all backends (JetStream and In-Memory)
+- Encoding is applied per-token, not per-subject
+- Decoding is a strict single-pass operation
