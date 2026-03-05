@@ -1,0 +1,20 @@
+/* Logo: initial state — JS (logo-theme.js) handles switching on theme change */
+.logo-dark  { display: none; }
+.logo-light { display: block; }
+
+/* Dark logo: slightly dimmed so pure white doesn't hurt on dark backgrounds */
+html.coal .logo-dark,
+html.navy .logo-dark,
+html.ayu  .logo-dark {
+    opacity: 0.75;
+}
+
+/* Mermaid diagrams: center the rendered SVG */
+pre.mermaid {
+    text-align: center;
+}
+
+pre.mermaid svg {
+    display: inline-block;
+    max-width: 100%;
+}

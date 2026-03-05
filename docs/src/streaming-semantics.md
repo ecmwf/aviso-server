@@ -1,5 +1,36 @@
 # Streaming Semantics
 
+This page defines the exact behavior of the watch and replay endpoints,
+including start points, spatial filtering, identifier constraints, and SSE lifecycle events.
+
+---
+
+## SSE Stream Lifecycle
+
+Every streaming response (watch or replay) goes through a typed lifecycle:
+
+```mermaid
+stateDiagram-v2
+    [*] --> Connected : SSE connection established
+    Connected --> Replaying : from_id or from_date provided
+    Connected --> Live : no replay parameters (watch only)
+    Replaying --> Live : replay_completed (watch only)
+    Replaying --> Closed : end_of_stream (replay only)
+    Live --> Closed : max_duration_reached
+    Live --> Closed : server_shutdown
+    Closed --> [*]
+```
+
+Close reasons emitted in the final `connection_closing` SSE event:
+
+| Reason | Trigger |
+|---|---|
+| `end_of_stream` | Replay finished (`/replay` endpoint, or watch replay phase if live subscribe fails) |
+| `max_duration_reached` | `connection_max_duration_sec` elapsed on a watch stream |
+| `server_shutdown` | Server is shutting down gracefully |
+
+---
+
 ## `POST /api/v1/watch`
 
 - If both `from_id` and `from_date` are omitted:
@@ -8,57 +39,88 @@
   - historical replay starts first, then transitions to live stream.
 - If both are present:
   - request is rejected with `400`.
-- Spatial filtering:
-  - see [Spatial Filter Model](#spatial-filter-model) below.
+
+```mermaid
+flowchart TD
+    A["Watch Request"] --> B{"from_id or<br/>from_date?"}
+    B -->|neither| C["Live-only stream"]
+    B -->|exactly one| D["Historical replay<br/>then live stream"]
+    B -->|both| E["400 Bad Request"]
+
+    style E fill:#8b1a1a,color:#fff
+    style C fill:#1a6b3a,color:#fff
+    style D fill:#1a4d6b,color:#fff
+```
+
+---
 
 ## `POST /api/v1/replay`
 
 - Requires exactly one replay start parameter:
   - `from_id` (sequence-based), or
-  - `from_date` (time-based, flexible datetime/timestamp parsing).
-- If both are missing:
+  - `from_date` (time-based).
+- If both are missing or both are present:
   - request is rejected with `400`.
-- Endpoint returns historical replay stream and then closes.
-- Same spatial filter contract as `watch` (see [Spatial Filter Model](#spatial-filter-model)).
+- Stream closes with `end_of_stream` when history is exhausted.
+
+---
+
+## Start Point for Historical Events
+
+`from_id` starts delivery from that sequence number (inclusive).
+`from_date` accepts any of these formats:
+
+| Format | Example |
+|---|---|
+| RFC3339 with timezone | `2025-01-15T10:00:00Z` |
+| RFC3339 with offset | `2025-01-15T10:00:00+02:00` |
+| Space-separated with timezone | `2025-01-15 10:00:00+00:00` |
+| Naive datetime (interpreted as UTC) | `2025-01-15T10:00:00` |
+| Unix seconds (≤ 11 digits) | `1740509903` |
+| Unix milliseconds (≥ 12 digits) | `1740509903710` |
+
+All inputs are normalized to UTC internally.
+
+---
 
 ## Spatial Filter Model
 
-Use this mental model:
+Spatial filtering applies on top of the identifier field filters.
+Think of it in two layers:
 
-- `identifier` picks candidate notifications by topic fields (`time`, `date`, etc.).
-- spatial filters (`identifier.polygon` or `identifier.point`) optionally narrow that candidate set.
+- **Non-spatial identifier fields** (`time`, `date`, `class`, etc.) narrow candidates by topic routing.
+- **Spatial fields** (`polygon` or `point`) further narrow that candidate set geographically.
+
+```mermaid
+flowchart LR
+    A["Candidate<br/>notifications"] -->|"non-spatial<br/>identifier filter"| B["Topic-matched<br/>subset"]
+    B -->|"spatial filter<br/>if provided"| C["Final<br/>results"]
+```
 
 ### Rules
 
-- `identifier.polygon`:
-  - do polygon-intersects-polygon filtering.
-- `identifier.point`:
-  - do point-inside-notification-polygon filtering.
-- both `identifier.polygon` and `identifier.point`:
-  - invalid request (`400`).
-- neither `identifier.polygon` nor `identifier.point`:
-  - no spatial narrowing; filtering uses non-spatial identifier fields only.
-
-### Decision Table
-
 | `identifier.polygon` | `identifier.point` | Result |
 |---|---|---|
-| provided | omitted | polygon intersection filter |
-| omitted | provided | point-in-polygon filter |
+| provided | omitted | polygon-intersects-polygon filter |
+| omitted | provided | point-inside-notification-polygon filter |
 | omitted | omitted | no spatial filter |
 | provided | provided | `400 Bad Request` |
 
-For practical request/response examples, see:
+- `identifier.polygon`: keep notifications whose stored polygon intersects the request polygon.
+- `identifier.point`: keep notifications whose stored polygon contains the request point.
+- Both together: invalid — request is rejected.
 
-- [Practical Examples: Basic Notify/Watch/Replay](./practical-examples/basic-notify-watch-replay.md)
-- [Practical Examples: Spatial Filtering](./practical-examples/spatial-filtering.md)
+---
 
-## Identifier Constraints (`watch`/`replay`)
+## Identifier Constraints (`watch` / `replay`)
 
-For schema-backed event types, `identifier` fields support constraint objects in `watch`/`replay`.
-Scalar values are still valid and are treated as `eq`.
+For schema-backed event types, identifier fields in watch/replay requests accept
+**constraint objects** instead of (or in addition to) scalar values.
+A scalar value is treated as an implicit `eq` constraint.
 
-Supported operators by handler type:
+Constraint objects are **rejected on `/notification`** — notify only accepts scalar values.
+
+### Supported operators by field type
 
 | Handler | Operators |
 |---|---|
@@ -66,116 +128,58 @@ Supported operators by handler type:
 | `FloatHandler` | `eq`, `in`, `gt`, `gte`, `lt`, `lte`, `between` |
 | `EnumHandler` | `eq`, `in` |
 
-`between` expects exactly two values `[min,max]` and is inclusive.
-Float constraints accept only finite values (no `NaN`/`inf`).
-For floats, `eq`/`in` use exact numeric equality; they do not apply a tolerance.
-Constraint objects are rejected on `/notification`; notify accepts scalar identifier values only.
+### Notes
 
-For end-to-end generic examples (with `curl` requests and expected outcomes), see:
+- `between` expects exactly two values `[min, max]` and is **inclusive** on both ends.
+- Float constraints reject `NaN` and `inf` — only finite values are valid.
+- Float `eq` and `in` use **exact** numeric equality; no tolerance window is applied.
+- A constraint object must contain **exactly one operator** — combining operators in a single object is rejected.
 
-- [Practical Examples: Constraint Filtering](./practical-examples/constraint-filtering.md)
-- [Practical Examples: Spatial Filtering](./practical-examples/spatial-filtering.md)
-- [Practical Examples: Replay Starting Points](./practical-examples/replay-starting-points.md)
+### Examples
 
-## `from_date` behavior
+```json
+{ "severity": { "gte": 5 } }
+{ "severity": { "between": [3, 7] } }
+{ "region":   { "in": ["north", "south"] } }
+{ "anomaly":  { "lt": 50.0 } }
+```
 
-- Input accepts these forms:
-  - RFC3339 with timezone (for example `2025-01-15T10:00:00Z`, `2025-01-15T10:00:00+02:00`)
-  - Space-separated datetime with timezone (for example `2025-01-15 10:00:00+00:00`)
-  - Naive datetime interpreted as UTC (for example `2025-01-15 10:00:00`, `2025-01-15T10:00:00`)
-  - Unix epoch seconds or milliseconds (for example `1740509903`, `1740509903710`)
-- Numeric `from_date` values are interpreted by digit count:
-  - up to `11` digits => unix seconds
-  - `12` or more digits => unix milliseconds
-- Parsed and normalized to UTC internally.
-- JetStream replay uses start-time delivery policy when sequence is not provided.
-
-## SSE Timestamp Format
-
-- Control/heartbeat/close event timestamps are emitted in canonical UTC second precision:
-  - `YYYY-MM-DDTHH:MM:SSZ`
-- Example:
-  - `2026-02-25T18:58:23Z`
-
-## Start Point for Historical Events
-
-When you request historical data, you must tell the server where to start.
-
-You can choose one of these fields:
-
-- `from_id`
-  - Start from a message sequence number (inclusive).
-  - Example: `from_id: "42"` means replay starts at sequence `42`.
-  - Use this when you know the last sequence you processed.
-- `from_date`
-  - Start from a UTC timestamp (inclusive).
-  - Examples:
-    - `from_date: "2025-01-15T10:00:00Z"` (RFC3339)
-    - `from_date: "2025-01-15 10:00:00+00:00"` (space-separated with timezone)
-    - `from_date: "1740509903"` (unix seconds)
-  - Use this when you want events from a specific time onward.
-
-## Rules by Endpoint
-
-- `watch`
-  - You may omit both fields to get a live-only stream (no history).
-  - You may provide exactly one field (`from_id` or `from_date`) to get history first, then live.
-  - Providing both fields is invalid (`400`).
-- `replay`
-  - You must provide exactly one field (`from_id` or `from_date`).
-  - Omitting both fields or providing both is invalid (`400`).
+---
 
 ## Backend Behavior
 
-Streaming endpoints (`watch` and `replay`) work with both backends.
+| Backend | Historical replay | Live watch |
+|---|---|---|
+| `in_memory` | Node-local only; clears on restart | Node-local fan-out |
+| `jetstream` | Durable; survives restarts | Cluster-wide fan-out |
 
-- `in_memory`
-  - Data exists only inside the running server process.
-  - Restarting the server clears all history.
-  - Replay returns only events still kept in memory on that instance.
-  - In multi-instance deployments, each instance has separate history.
-- `jetstream`
-  - Data is persisted in NATS JetStream.
-  - Replay survives server restarts (subject to JetStream retention settings).
+---
 
-Topic wire format and reserved-character handling are documented in [Topic Encoding](./topic-encoding.md).
+## SSE Timestamp Format
 
-## SSE Implementation Model
+All control, heartbeat, and close event timestamps use canonical UTC second precision:
 
-Internally, streaming is implemented as a typed pipeline:
+```
+YYYY-MM-DDTHH:MM:SSZ
+```
 
-1. Request parameters are validated and converted to a typed replay cursor:
-   - `StartAt::LiveOnly`
-   - `StartAt::Sequence(u64)`
-   - `StartAt::Date(DateTime<Utc>)`
-2. Replay/live producers emit typed frames (`StreamFrame`) rather than raw SSE strings:
-   - control frames (connection/replay lifecycle)
-   - notification frames (live or replay)
-   - heartbeat frames
-   - error frames
-   - close frame
-3. Lifecycle handling is applied once:
-   - server shutdown
-   - optional max connection duration
-   - natural end-of-stream
-4. A single renderer converts typed frames into SSE wire format.
+Example: `2026-02-25T18:58:23Z`
 
-This design keeps endpoint semantics stable while making lifecycle behavior explicit and easier to maintain.
-
-### Close Event Reasons
-
-The final `connection-closing` event can carry one of these reasons:
-
-- `server_shutdown`
-- `max_duration_reached`
-- `end_of_stream`
-
-`/replay` is finite by design, so normal completion uses `end_of_stream`.
+---
 
 ## Replay Payload Shape
 
-- Replay/watch CloudEvent output always includes `data.payload`.
-- If notify payload was omitted for an optional schema, replay/watch returns `data.payload = null`.
-- Payload values are not reshaped by Aviso (for example scalar strings remain strings).
+- Replay and watch CloudEvent output always includes `data.payload`.
+- If a notify request omitted payload (optional schema), replay returns `data.payload = null`.
+- Payload values are not reshaped — scalar strings remain strings, objects remain objects.
 
-See [Payload Contract](./payload-contract.md) for full input/storage/output mapping.
+See [Payload Contract](./payload-contract.md) for the full input → storage → output mapping.
+
+---
+
+For end-to-end examples, see:
+
+- [Basic Notify/Watch/Replay](./practical-examples/basic-notify-watch-replay.md)
+- [Constraint Filtering](./practical-examples/constraint-filtering.md)
+- [Spatial Filtering](./practical-examples/spatial-filtering.md)
+- [Replay Starting Points](./practical-examples/replay-starting-points.md)

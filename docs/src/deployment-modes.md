@@ -12,9 +12,8 @@ Characteristics:
 - Single-process state only.
 - Not suitable for horizontal scaling or replica failover.
 - Supports replay and watch in-process, limited by local memory retention.
-- For local JetStream testing, use `./scripts/init_nats.sh` and point app config to `nats://localhost:4222`.
-- You can run `python3 scripts/smoke_test.py` for a quick end-to-end behavior check
-  (requires the `httpx` package: `python3 -m pip install httpx`).
+- For local JetStream testing, see [Installation — Local JetStream](./installation.md#local-jetstream-docker).
+- For a quick end-to-end behavior check, see [Getting Started — Run the Smoke Test](./getting-started.md#run-the-smoke-test).
 
 ## Production-like / persistent mode
 
