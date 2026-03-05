@@ -366,7 +366,7 @@ checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
 name = "aviso-server"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "actix-files",
  "actix-web",
@@ -403,7 +403,7 @@ dependencies = [
 
 [[package]]
 name = "aviso-validators"
-version = "0.2.0"
+version = "0.3.0"
 dependencies = [
  "anyhow",
  "chrono",
