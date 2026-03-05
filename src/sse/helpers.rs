@@ -1,6 +1,7 @@
 //! SSE utility functions and common helpers
 
 use actix_web::{HttpResponse, web};
+use chrono::{DateTime, SecondsFormat, Utc};
 use futures_util::stream::unfold;
 use serde_json::json;
 use std::sync::{
@@ -18,6 +19,10 @@ use super::types::{
 use crate::cloudevents::create_cloud_event_from_notification;
 use crate::notification::decode_subject_for_display;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
+
+fn format_stream_timestamp(timestamp: DateTime<Utc>) -> String {
+    timestamp.to_rfc3339_opts(SecondsFormat::Secs, true)
+}
 
 /// Convert a notification message to an SSE event
 pub fn notification_to_sse_event(
@@ -98,7 +103,7 @@ pub fn frame_to_sse_bytes(
                 json!({
                     "type": "connection_established",
                     "topic": decode_subject_for_display(&topic),
-                    "timestamp": timestamp.to_rfc3339(),
+                    "timestamp": format_stream_timestamp(timestamp),
                     "connection_will_close_in_seconds": connection_will_close_in_seconds
                 }),
             ))),
@@ -114,9 +119,9 @@ pub fn frame_to_sse_bytes(
                     "type": "replay_started",
                     "topic": decode_subject_for_display(&topic),
                     "from_sequence": from_sequence,
-                    "from_date": from_date,
+                    "from_date": from_date.map(format_stream_timestamp),
                     "batch_size": batch_size,
-                    "timestamp": timestamp.to_rfc3339()
+                    "timestamp": format_stream_timestamp(timestamp)
                 }),
             ))),
             ControlEvent::ReplayCompleted { topic, timestamp } => {
@@ -125,7 +130,7 @@ pub fn frame_to_sse_bytes(
                     json!({
                         "type": "replay_completed",
                         "topic": decode_subject_for_display(&topic),
-                        "timestamp": timestamp.to_rfc3339()
+                        "timestamp": format_stream_timestamp(timestamp)
                     }),
                 )))
             }
@@ -143,14 +148,14 @@ pub fn frame_to_sse_bytes(
                         "Historical replay limited to {} messages. Additional historical messages may be available but were not retrieved.",
                         max_allowed
                     ),
-                    "timestamp": timestamp.to_rfc3339()
+                    "timestamp": format_stream_timestamp(timestamp)
                 }),
             ))),
         },
         StreamFrame::Heartbeat { topic, timestamp } => Ok(web::Bytes::from(format_sse_event(
             SseEventType::Heartbeat,
             json!({
-                "timestamp": timestamp.to_rfc3339(),
+                "timestamp": format_stream_timestamp(timestamp),
                 "topic": decode_subject_for_display(&topic)
             }),
         ))),
@@ -182,7 +187,7 @@ pub fn frame_to_sse_bytes(
                 SseEventType::ConnectionClosing,
                 json!({
                     "reason": reason_str,
-                    "timestamp": timestamp.to_rfc3339(),
+                    "timestamp": format_stream_timestamp(timestamp),
                     "message": message,
                     "topic": decode_subject_for_display(&topic)
                 }),
@@ -287,4 +292,37 @@ where
         .insert_header(("Access-Control-Allow-Origin", "*"))
         .insert_header(("X-Accel-Buffering", "no"))
         .streaming(stream)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::frame_to_sse_bytes;
+    use crate::sse::types::{ControlEvent, StreamFrame};
+    use chrono::{DateTime, Utc};
+
+    #[test]
+    fn replay_started_timestamps_are_emitted_as_clean_utc_seconds() {
+        let control_timestamp = DateTime::parse_from_rfc3339("2026-02-25T18:58:23.710810413+00:00")
+            .expect("test timestamp should parse")
+            .with_timezone(&Utc);
+        let from_date = DateTime::parse_from_rfc3339("2026-02-25T17:01:02.999999999+00:00")
+            .expect("test from_date should parse")
+            .with_timezone(&Utc);
+
+        let bytes = frame_to_sse_bytes(
+            StreamFrame::Control(ControlEvent::ReplayStarted {
+                topic: "polygon.*.1200".to_string(),
+                from_sequence: Some(0),
+                from_date: Some(from_date),
+                batch_size: 100,
+                timestamp: control_timestamp,
+            }),
+            "http://localhost",
+        )
+        .expect("frame rendering should succeed");
+        let text = String::from_utf8(bytes.to_vec()).expect("sse bytes should be valid utf-8");
+
+        assert!(text.contains(r#""timestamp":"2026-02-25T18:58:23Z""#));
+        assert!(text.contains(r#""from_date":"2026-02-25T17:01:02Z""#));
+    }
 }
