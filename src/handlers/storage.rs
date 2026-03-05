@@ -21,7 +21,7 @@ use tracing::{debug, info};
 )]
 pub async fn save_to_backend(
     result: &ProcessingResult,
-    payload: &str,
+    payload: String,
     notification_backend: &dyn NotificationBackend,
 ) -> Result<()> {
     let display_topic = decode_subject_for_display(&result.topic);
@@ -48,7 +48,7 @@ pub async fn save_to_backend(
 
         // Keep payload unchanged and attach spatial metadata via headers.
         notification_backend
-            .put_message_with_headers(&result.topic, Some(headers), payload.to_string())
+            .put_message_with_headers(&result.topic, Some(headers), payload)
             .await?;
 
         info!(
@@ -64,7 +64,7 @@ pub async fn save_to_backend(
     } else {
         // Save the notification result to backend using put_messages
         notification_backend
-            .put_messages(&result.topic, payload.to_string())
+            .put_messages(&result.topic, payload)
             .await?;
 
         info!(

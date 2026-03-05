@@ -1,1 +1,20 @@
 ./target
+
+# Local runtime/state data should never be part of image build context.
+.nui/
+scripts/.nui
+
+# Local environment and editor artifacts.
+.env
+.env.*
+.vscode/
+.idea/
+
+# VCS and CI noise.
+.git/
+.github/
+
+# Python/Node local caches (used by scripts/tooling).
+__pycache__/
+*.pyc
+node_modules/

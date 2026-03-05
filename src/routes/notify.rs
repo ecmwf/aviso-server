@@ -101,7 +101,7 @@ pub async fn notify(
     // Save to backend storage (handles spatial metadata automatically)
     if let Err(e) = save_to_backend(
         &notification_result,
-        &payload_string,
+        payload_string,
         notification_backend.get_ref().as_ref(),
     )
     .await

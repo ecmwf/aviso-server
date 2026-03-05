@@ -102,6 +102,15 @@ impl<'a> NotificationProcessor<'a> {
         request_params: &HashMap<String, Value>,
         payload: &Option<serde_json::Value>,
     ) -> Result<IdentifierProcessingResult> {
+        for field_name in request_params.keys() {
+            if !schema.identifier.contains_key(field_name) {
+                bail!(
+                    "Unknown field '{}' provided for notify operation",
+                    field_name
+                );
+            }
+        }
+
         let mut canonicalized = HashMap::new();
         let mut spatial_metadata = None;
 
@@ -493,6 +502,44 @@ mod tests {
             Some(&"optional_value".to_string())
         );
         assert!(processing_result.spatial_metadata.is_none());
+    }
+
+    #[test]
+    fn test_notify_request_rejects_unknown_identifier_field() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), create_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert(
+            "class".to_string(),
+            serde_json::Value::String("od".to_string()),
+        );
+        params.insert(
+            "destination".to_string(),
+            serde_json::Value::String("SCL".to_string()),
+        );
+        params.insert(
+            "unexpected".to_string(),
+            serde_json::Value::String("value".to_string()),
+        );
+
+        let payload = Some(serde_json::Value::String("test payload".to_string()));
+        let result = processor.process_request_with_values(
+            "test_event",
+            &params,
+            &payload,
+            OperationType::Notify,
+        );
+
+        assert!(result.is_err());
+        let error = result.expect_err("notify with unknown field must fail");
+        assert!(
+            error
+                .to_string()
+                .contains("Unknown field 'unexpected' provided for notify operation")
+        );
     }
 
     #[test]
