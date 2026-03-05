@@ -201,8 +201,8 @@ async fn watch_rejects_polygon_and_point_together() {
             "identifier": {
                 "time": "1200",
                 "polygon": test_polygon(),
+                "point": "52.55,13.5",
             },
-            "point": "52.55,13.5",
         }))
         .send()
         .await
@@ -224,8 +224,8 @@ async fn replay_rejects_polygon_and_point_together() {
             "identifier": {
                 "time": "1200",
                 "polygon": test_polygon(),
+                "point": "52.55,13.5",
             },
-            "point": "52.55,13.5",
             "from_id": "1",
         }))
         .send()
@@ -246,9 +246,9 @@ async fn replay_rejects_invalid_point_format() {
         .json(&json!({
             "event_type": "test_polygon",
             "identifier": {
-                "time": "1200"
+                "time": "1200",
+                "point": "invalid-point",
             },
-            "point": "invalid-point",
             "from_id": "1",
         }))
         .send()
@@ -291,9 +291,9 @@ async fn replay_with_point_matches_only_containing_polygons() {
         .json(&json!({
             "event_type": "test_polygon",
             "identifier": {
-                "time": "1200"
+                "time": "1200",
+                "point": "52.55,13.5",
             },
-            "point": "52.55,13.5",
             "from_id": "1",
         }))
         .send()

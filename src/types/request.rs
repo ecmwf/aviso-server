@@ -53,10 +53,6 @@ pub struct NotificationRequest {
     #[serde(default)]
     #[schema(example = "2025-09-15T12:00:00Z")]
     pub from_date: Option<String>,
-    /// Optional spatial point filter for watch/replay requests ("lat,lon")
-    #[serde(default)]
-    #[schema(example = "52.5200,13.4050")]
-    pub point: Option<String>,
     /// Payload with flexible type based on schema configuration
     #[serde(default)]
     #[schema(value_type = Object, example = json!({"key": "value"}))]
@@ -64,8 +60,6 @@ pub struct NotificationRequest {
 }
 
 impl NotificationRequest {
-    const UNIX_MILLIS_THRESHOLD: i64 = 1_000_000_000_000;
-
     // Accepted examples:
     // - valid: "2026-02-25T18:58:23Z", "2026-02-25 18:58:23", "+1740509903", "1740509903710"
     // - invalid: "2026-02-25", "not-a-date", "-1" (negative unix timestamps are rejected)
@@ -81,6 +75,12 @@ impl NotificationRequest {
 
         let unsigned_numeric = trimmed.strip_prefix('+').unwrap_or(trimmed);
         if !unsigned_numeric.is_empty() && unsigned_numeric.chars().all(|c| c.is_ascii_digit()) {
+            let significant_digits = unsigned_numeric.trim_start_matches('0');
+            let digit_count = if significant_digits.is_empty() {
+                1
+            } else {
+                significant_digits.len()
+            };
             let value = unsigned_numeric.parse::<i64>().map_err(|e| {
                 anyhow::anyhow!(
                     "failed to parse unix timestamp '{}': {}",
@@ -89,9 +89,13 @@ impl NotificationRequest {
                 )
             })?;
 
-            // Numeric inputs are interpreted by magnitude:
-            // < 1_000_000_000_000 => unix seconds, >= threshold => unix milliseconds.
-            if value < Self::UNIX_MILLIS_THRESHOLD {
+            // Numeric inputs use a stable digit-count rule:
+            // - up to 11 digits: unix seconds
+            // - 12+ digits: unix milliseconds
+            // Leading zeros are ignored for classification.
+            // This keeps far-future 11-digit seconds valid and correctly treats
+            // early 12-digit millisecond epochs (for example year 2000) as millis.
+            if digit_count <= 11 {
                 return DateTime::<Utc>::from_timestamp(value, 0).ok_or_else(|| {
                     anyhow::anyhow!("invalid unix seconds timestamp '{}'", unsigned_numeric)
                 });
@@ -139,7 +143,6 @@ impl NotificationRequest {
             "identifier",
             "from_id",
             "from_date",
-            "point",
             "payload",
         ]
     }
@@ -311,21 +314,25 @@ impl NotificationRequest {
     /// Validate spatial filter parameters for watch/replay.
     ///
     /// Rules:
-    /// - `identifier.polygon` and `point` are mutually exclusive.
-    /// - `point` must be a valid "lat,lon" coordinate pair.
+    /// - `identifier.polygon` and `identifier.point` are mutually exclusive.
+    /// - `identifier.point` must be a valid "lat,lon" coordinate pair.
     pub fn validate_spatial_filters(&self) -> Result<()> {
         let has_polygon = self.identifier.contains_key("polygon");
-        let has_point = self.point.is_some();
+        let point = self.identifier.get("point");
+        let has_point = point.is_some();
 
         if has_polygon && has_point {
             bail!(
-                "Cannot specify both identifier.polygon and point. Provide only one spatial filter."
+                "Cannot specify both identifier.polygon and identifier.point. Provide only one spatial filter."
             );
         }
 
-        if let Some(point) = &self.point {
+        if let Some(point) = point {
             PointHandler::parse_point_coordinates(point).map_err(|e| {
-                anyhow::anyhow!("point must be a valid 'lat,lon' coordinate pair: {}", e)
+                anyhow::anyhow!(
+                    "identifier.point must be a valid 'lat,lon' coordinate pair: {}",
+                    e
+                )
             })?;
         }
 
@@ -345,7 +352,6 @@ mod tests {
             identifier: HashMap::new(),
             from_id: None,
             from_date: None,
-            point: None,
             payload: None,
         }
     }
@@ -353,7 +359,9 @@ mod tests {
     #[test]
     fn validate_spatial_filters_accepts_point_without_polygon() {
         let mut request = base_request();
-        request.point = Some("12.34,56.78".to_string());
+        request
+            .identifier
+            .insert("point".to_string(), "12.34,56.78".to_string());
         assert!(request.validate_spatial_filters().is_ok());
     }
 
@@ -363,14 +371,18 @@ mod tests {
         request
             .identifier
             .insert("polygon".to_string(), "(0,0,0,1,1,1,0,0)".to_string());
-        request.point = Some("12.34,56.78".to_string());
+        request
+            .identifier
+            .insert("point".to_string(), "12.34,56.78".to_string());
         assert!(request.validate_spatial_filters().is_err());
     }
 
     #[test]
     fn validate_spatial_filters_rejects_invalid_point() {
         let mut request = base_request();
-        request.point = Some("not-a-point".to_string());
+        request
+            .identifier
+            .insert("point".to_string(), "not-a-point".to_string());
         assert!(request.validate_spatial_filters().is_err());
     }
 
@@ -466,9 +478,21 @@ mod tests {
         request.from_date = Some("1000000000000".to_string());
         let parsed = request
             .validate_from_date()
-            .expect("threshold value should parse as milliseconds")
+            .expect("12-digit unix timestamp should parse as milliseconds")
             .expect("from_date should be present");
         assert_eq!(parsed.timestamp(), 1_000_000_000);
+        assert_eq!(parsed.timestamp_subsec_millis(), 0);
+    }
+
+    #[test]
+    fn validate_from_date_accepts_pre_2001_unix_millis() {
+        let mut request = base_request();
+        request.from_date = Some("946684800000".to_string());
+        let parsed = request
+            .validate_from_date()
+            .expect("12-digit pre-2001 unix millis should parse as milliseconds")
+            .expect("from_date should be present");
+        assert_eq!(parsed.timestamp(), 946_684_800);
         assert_eq!(parsed.timestamp_subsec_millis(), 0);
     }
 

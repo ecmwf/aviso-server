@@ -106,6 +106,12 @@ Precedence rule:
 
 Smoke script tip (JetStream mode):
 
+Make sure the Python dependency is installed first:
+
+```bash
+python3 -m pip install httpx
+```
+
 ```bash
 BACKEND=jetstream \
 NATS_URL=nats://localhost:4222 \
@@ -114,7 +120,7 @@ EXPECT_MAX_MESSAGES=500000 \
 EXPECT_MAX_BYTES=2147483648 \
 EXPECT_MAX_MESSAGES_PER_SUBJECT=1 \
 EXPECT_COMPRESSION=None \
-./scripts/smoke_test.sh
+python3 scripts/smoke_test.py
 ```
 
 ## Replay behavior

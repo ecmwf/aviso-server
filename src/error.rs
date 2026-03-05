@@ -416,7 +416,7 @@ mod tests {
     async fn validation_error_body_has_stable_shape() {
         let response = request_validation_error_response(
             RequestKind::Watch,
-            anyhow!("Cannot specify both identifier.polygon and point"),
+            anyhow!("Cannot specify both identifier.polygon and identifier.point"),
         );
         let json = response_json(response).await;
 

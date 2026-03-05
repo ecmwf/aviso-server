@@ -80,14 +80,9 @@ impl StreamingRequestProcessor {
         let notification_handler =
             NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
 
-        let mut request_params = request.identifier.clone();
-        if let Some(point) = &request.point {
-            request_params.insert("point".to_string(), point.clone());
-        }
-
         let notification_result = notification_handler.process_request(
             &request.event_type,
-            &request_params,
+            &request.identifier,
             &None, // payload parameter as None since this is for request processing
             config.operation_type,
         )?;

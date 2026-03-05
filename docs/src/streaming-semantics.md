@@ -33,9 +33,9 @@ curl -N -X POST "http://localhost:8000/api/v1/watch" \
   -d '{
     "event_type": "test_polygon",
     "identifier": {
-      "time": "1200"
-    },
-    "point": "52.55,13.50"
+      "time": "1200",
+      "point": "52.55,13.50"
+    }
   }'
 ```
 
@@ -69,22 +69,22 @@ curl -N -X POST "http://localhost:8000/api/v1/replay" \
 Use this mental model:
 
 - `identifier` picks candidate notifications by topic fields (`time`, `date`, etc.).
-- spatial filters (`identifier.polygon` or top-level `point`) optionally narrow that candidate set.
+- spatial filters (`identifier.polygon` or `identifier.point`) optionally narrow that candidate set.
 
 ### Rules
 
 - `identifier.polygon`:
   - do polygon-intersects-polygon filtering.
-- `point`:
+- `identifier.point`:
   - do point-inside-notification-polygon filtering.
-- both `identifier.polygon` and `point`:
+- both `identifier.polygon` and `identifier.point`:
   - invalid request (`400`).
-- neither `identifier.polygon` nor `point`:
+- neither `identifier.polygon` nor `identifier.point`:
   - no spatial narrowing; filtering uses non-spatial identifier fields only.
 
 ### Decision Table
 
-| `identifier.polygon` | `point` | Result |
+| `identifier.polygon` | `identifier.point` | Result |
 |---|---|---|
 | provided | omitted | polygon intersection filter |
 | omitted | provided | point-in-polygon filter |
@@ -118,9 +118,9 @@ Request:
 {
   "event_type": "test_polygon_optional",
   "identifier": {
-    "time": "1200"
+    "time": "1200",
+    "point": "52.55,13.50"
   },
-  "point": "52.55,13.50",
   "from_id": "1"
 }
 ```
@@ -137,9 +137,9 @@ Behavior:
   - Space-separated datetime with timezone (for example `2025-01-15 10:00:00+00:00`)
   - Naive datetime interpreted as UTC (for example `2025-01-15 10:00:00`, `2025-01-15T10:00:00`)
   - Unix epoch seconds or milliseconds (for example `1740509903`, `1740509903710`)
-- Numeric `from_date` values are interpreted by magnitude:
-  - `< 1000000000000` => unix seconds
-  - `>= 1000000000000` => unix milliseconds
+- Numeric `from_date` values are interpreted by digit count:
+  - up to `11` digits => unix seconds
+  - `12` or more digits => unix milliseconds
 - Parsed and normalized to UTC internally.
 - JetStream replay uses start-time delivery policy when sequence is not provided.
 

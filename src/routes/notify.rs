@@ -51,11 +51,11 @@ pub async fn notify(
         Ok(p) => p,
         Err(e) => return request_parse_error_response(RequestKind::Notification, e),
     };
-    if payload.point.is_some() {
+    if payload.identifier.contains_key("point") {
         return request_validation_error_response(
             RequestKind::Notification,
             anyhow::anyhow!(
-                "point is only supported for watch/replay endpoints, not /notification"
+                "identifier.point is only supported for watch/replay endpoints, not /notification"
             ),
         );
     }
