@@ -105,6 +105,17 @@ pub async fn post_mars_notification(
     note: &str,
     stream_value: &str,
 ) -> reqwest::Response {
+    post_mars_notification_with_identifier(client, base_url, note, stream_value, "1", "g").await
+}
+
+pub async fn post_mars_notification_with_identifier(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    stream_value: &str,
+    step: &str,
+    domain: &str,
+) -> reqwest::Response {
     client
         .post(format!("{}/api/v1/notification", base_url))
         .header("Content-Type", "application/json")
@@ -113,11 +124,11 @@ pub async fn post_mars_notification(
             "identifier": {
                 "class": "od",
                 "expver": "0001",
-                "domain": "g",
+                "domain": domain,
                 "date": "20250706",
                 "time": "1200",
                 "stream": stream_value,
-                "step": "1"
+                "step": step
             },
             "payload": note
         }))
@@ -155,4 +166,32 @@ pub async fn post_dissemination_notification(
         .send()
         .await
         .expect("failed to send dissemination notification")
+}
+
+pub async fn post_extreme_event_notification_with_identifier(
+    client: &reqwest::Client,
+    base_url: &str,
+    note: &str,
+    region: &str,
+    severity: i64,
+    anomaly: f64,
+) -> reqwest::Response {
+    client
+        .post(format!("{}/api/v1/notification", base_url))
+        .header("Content-Type", "application/json")
+        .json(&json!({
+            "event_type": "extreme",
+            "identifier": {
+                "region": region,
+                "run_time": "1200",
+                "severity": severity,
+                "anomaly": anomaly
+            },
+            "payload": {
+                "note": note
+            }
+        }))
+        .send()
+        .await
+        .expect("failed to send extreme_event notification")
 }

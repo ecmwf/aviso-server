@@ -73,6 +73,7 @@ pub async fn replay(
 
     // Pass canonicalized params for downstream filtering
     let filtering_params = Arc::new(context.canonicalized_params.clone());
+    let filtering_constraints = Arc::new(context.identifier_constraints.clone());
 
     match create_replay_only_stream(
         context.topic.clone(),
@@ -80,6 +81,7 @@ pub async fn replay(
         context.start_at,
         shutdown.clone(),
         filtering_params,
+        filtering_constraints,
     )
     .await
     {

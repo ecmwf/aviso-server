@@ -368,6 +368,56 @@ fn build_dissemination_schema() -> EventSchema {
     }
 }
 
+fn build_extreme_event_schema() -> EventSchema {
+    let mut identifier = HashMap::new();
+    identifier.insert(
+        "region".to_string(),
+        vec![ValidationRules::EnumHandler {
+            values: vec![
+                "north".to_string(),
+                "south".to_string(),
+                "east".to_string(),
+                "west".to_string(),
+            ],
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "run_time".to_string(),
+        vec![ValidationRules::TimeHandler { required: false }],
+    );
+    identifier.insert(
+        "severity".to_string(),
+        vec![ValidationRules::IntHandler {
+            range: Some([1, 7]),
+            required: false,
+        }],
+    );
+    identifier.insert(
+        "anomaly".to_string(),
+        vec![ValidationRules::FloatHandler {
+            range: Some([0.0, 200.0]),
+            required: false,
+        }],
+    );
+
+    EventSchema {
+        payload: Some(PayloadConfig { required: false }),
+        topic: Some(TopicConfig {
+            base: "extreme".to_string(),
+            key_order: vec![
+                "region".to_string(),
+                "run_time".to_string(),
+                "severity".to_string(),
+                "anomaly".to_string(),
+            ],
+        }),
+        endpoint: None,
+        identifier,
+        storage_policy: None,
+    }
+}
+
 fn ensure_test_notification_schema(configuration: &mut Settings) {
     let schema = configuration
         .notification_schema
@@ -380,6 +430,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings) {
     );
     schema.insert("mars".to_string(), build_mars_schema());
     schema.insert("dissemination".to_string(), build_dissemination_schema());
+    schema.insert("extreme".to_string(), build_extreme_event_schema());
     schema.insert(
         "test_polygon_js".to_string(),
         build_test_polygon_js_schema(),

@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use tracing_actix_web::RequestId;
 
 use crate::configuration::Settings;
-use crate::notification::{NotificationHandler, OperationType};
+use crate::notification::{IdentifierConstraint, NotificationHandler, OperationType};
 use crate::notification_backend::replay::StartAt;
 use crate::types::NotificationRequest;
 
@@ -18,6 +18,7 @@ pub struct StreamingRequestContext {
     pub event_type: String,
     pub topic: String,
     pub canonicalized_params: HashMap<String, String>,
+    pub identifier_constraints: HashMap<String, IdentifierConstraint>,
     pub start_at: StartAt,
     pub request_id: RequestId,
 }
@@ -91,6 +92,7 @@ impl StreamingRequestProcessor {
             event_type: notification_result.event_type,
             topic: notification_result.topic,
             canonicalized_params: notification_result.canonicalized_params,
+            identifier_constraints: notification_result.identifier_constraints,
             start_at,
             request_id,
         })

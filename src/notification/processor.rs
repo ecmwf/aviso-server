@@ -1,16 +1,29 @@
 //! Core notification validation and topic construction.
 
 use anyhow::{Context, Result, bail};
+use serde_json::Value;
 use std::collections::HashMap;
 
 use crate::configuration::EventSchema;
 use crate::notification::spatial::SpatialMetadata;
 use crate::notification::topic_builder::TopicBuilder;
-use crate::notification::{NotificationRegistry, OperationType, ProcessingResult};
+use crate::notification::{
+    IdentifierConstraint, NotificationRegistry, OperationType, ProcessingResult,
+};
+use crate::types::NotificationRequest;
 use aviso_validators::ValidationRules;
 use aviso_validators::{
-    DateHandler, EnumHandler, ExpverHandler, IntHandler, PolygonHandler, StringHandler, TimeHandler,
+    DateHandler, EnumHandler, ExpverHandler, FloatHandler, IntHandler, PolygonHandler,
+    StringHandler, TimeHandler, parse_enum_constraint, parse_float_constraint,
+    parse_int_constraint,
 };
+
+/// Shared result type for schema-driven identifier processing.
+type IdentifierProcessingResult = (
+    HashMap<String, String>,
+    HashMap<String, IdentifierConstraint>,
+    Option<SpatialMetadata>,
+);
 
 /// Notification request processor.
 pub struct NotificationProcessor<'a> {
@@ -32,24 +45,39 @@ impl<'a> NotificationProcessor<'a> {
         payload: &Option<serde_json::Value>,
         operation: OperationType,
     ) -> Result<ProcessingResult> {
+        let value_params: HashMap<String, Value> = request_params
+            .iter()
+            .map(|(key, value)| (key.clone(), Value::String(value.clone())))
+            .collect();
+        self.process_request_with_values(event_type, &value_params, payload, operation)
+    }
+
+    /// Validate request fields and build topic for JSON-valued identifier input.
+    pub fn process_request_with_values(
+        &self,
+        event_type: &str,
+        request_params: &HashMap<String, Value>,
+        payload: &Option<serde_json::Value>,
+        operation: OperationType,
+    ) -> Result<ProcessingResult> {
         // Schema-driven when available; generic fallback otherwise.
-        let (canonicalized_params, spatial_metadata) = if self.registry.has_schema(event_type) {
-            let schema = self.registry.get_schema(event_type).unwrap();
-            match operation {
-                OperationType::Notify => {
-                    self.process_notify_request(schema, request_params, payload)?
+        let (canonicalized_params, identifier_constraints, spatial_metadata) =
+            if self.registry.has_schema(event_type) {
+                let schema = self.registry.get_schema(event_type).unwrap();
+                match operation {
+                    OperationType::Notify => {
+                        self.process_notify_request(schema, request_params, payload)?
+                    }
+                    OperationType::Watch => self.process_watch_request(schema, request_params)?,
+                    OperationType::Replay => self.process_replay_request(schema, request_params)?,
                 }
-                OperationType::Watch => (self.process_watch_request(schema, request_params)?, None),
-                OperationType::Replay => {
-                    (self.process_replay_request(schema, request_params)?, None)
-                }
-            }
-        } else {
-            (
-                self.process_generic_request(request_params, operation)?,
-                None,
-            )
-        };
+            } else {
+                (
+                    self.process_generic_request(request_params, operation)?,
+                    HashMap::new(),
+                    None,
+                )
+            };
 
         // Topic always comes from canonicalized values.
         let topic = if let Some(schema) = self.registry.get_schema(event_type) {
@@ -62,6 +90,7 @@ impl<'a> NotificationProcessor<'a> {
             event_type: event_type.to_string(),
             topic,
             canonicalized_params,
+            identifier_constraints,
             spatial_metadata,
         })
     }
@@ -70,9 +99,9 @@ impl<'a> NotificationProcessor<'a> {
     fn process_notify_request(
         &self,
         schema: &EventSchema,
-        request_params: &HashMap<String, String>,
+        request_params: &HashMap<String, Value>,
         payload: &Option<serde_json::Value>,
-    ) -> Result<(HashMap<String, String>, Option<SpatialMetadata>)> {
+    ) -> Result<IdentifierProcessingResult> {
         let mut canonicalized = HashMap::new();
         let mut spatial_metadata = None;
 
@@ -81,13 +110,21 @@ impl<'a> NotificationProcessor<'a> {
                 "Required field '{}' missing for notify operation",
                 field_name
             ))?;
+            if value.is_object() {
+                bail!(
+                    "Field '{}' constraint object is not supported for notify operation",
+                    field_name
+                );
+            }
+            let scalar_value =
+                NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
 
             let canonicalized_value =
-                self.validate_and_canonicalize_field(field_name, value, rules)?;
+                self.validate_and_canonicalize_field(field_name, &scalar_value, rules)?;
 
             // Polygon fields attach spatial metadata for downstream filtering.
             if matches!(rules.first(), Some(ValidationRules::PolygonHandler { .. })) {
-                let coordinates = PolygonHandler::parse_polygon_coordinates(value)?;
+                let coordinates = PolygonHandler::parse_polygon_coordinates(&scalar_value)?;
 
                 spatial_metadata = Some(SpatialMetadata::from_coordinates(&coordinates)?);
 
@@ -104,7 +141,7 @@ impl<'a> NotificationProcessor<'a> {
 
         self.validate_payload_requirement(schema, payload)?;
 
-        Ok((canonicalized, spatial_metadata))
+        Ok((canonicalized, HashMap::new(), spatial_metadata))
     }
 
     /// Enforce schema-level payload presence requirement for notify requests.
@@ -129,26 +166,57 @@ impl<'a> NotificationProcessor<'a> {
     fn process_watch_request(
         &self,
         schema: &EventSchema,
-        request_params: &HashMap<String, String>,
-    ) -> Result<HashMap<String, String>> {
+        request_params: &HashMap<String, Value>,
+    ) -> Result<IdentifierProcessingResult> {
+        self.process_streaming_request(schema, request_params, "watch")
+    }
+
+    /// Replay mode: same schema field rules as watch mode.
+    fn process_replay_request(
+        &self,
+        schema: &EventSchema,
+        request_params: &HashMap<String, Value>,
+    ) -> Result<IdentifierProcessingResult> {
+        self.process_streaming_request(schema, request_params, "replay")
+    }
+
+    /// Shared watch/replay identifier handling.
+    ///
+    /// Invariant: required fields must be present unless polygon is substituted by point.
+    fn process_streaming_request(
+        &self,
+        schema: &EventSchema,
+        request_params: &HashMap<String, Value>,
+        operation_name: &str,
+    ) -> Result<IdentifierProcessingResult> {
         let mut canonicalized = HashMap::new();
+        let mut identifier_constraints = HashMap::new();
         let has_point = request_params.contains_key("point");
 
         for (field_name, rules) in &schema.identifier {
             let is_required = rules.iter().any(|rule| rule.is_required());
 
             if let Some(value) = request_params.get(field_name) {
-                let canonicalized_value =
-                    self.validate_and_canonicalize_field(field_name, value, rules)?;
-                canonicalized.insert(field_name.clone(), canonicalized_value);
+                if value.is_object() {
+                    let constraint = self.parse_identifier_constraint(field_name, value, rules)?;
+                    canonicalized.insert(field_name.clone(), "*".to_string());
+                    identifier_constraints.insert(field_name.clone(), constraint);
+                } else {
+                    let scalar_value =
+                        NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                    let canonicalized_value =
+                        self.validate_and_canonicalize_field(field_name, &scalar_value, rules)?;
+                    canonicalized.insert(field_name.clone(), canonicalized_value);
+                }
             } else if is_required {
                 if field_name == "polygon" && has_point {
                     canonicalized.insert(field_name.clone(), "*".to_string());
                     continue;
                 }
                 bail!(
-                    "Required field '{}' missing for watch operation",
-                    field_name
+                    "Required field '{}' missing for {} operation",
+                    field_name,
+                    operation_name
                 );
             } else {
                 // `"*"` keeps positional matching while representing "any value".
@@ -157,53 +225,21 @@ impl<'a> NotificationProcessor<'a> {
         }
 
         if let Some(point) = request_params.get("point") {
-            canonicalized.insert("point".to_string(), point.clone());
-        }
-
-        Ok(canonicalized)
-    }
-
-    /// Replay mode: same schema field rules as watch mode.
-    fn process_replay_request(
-        &self,
-        schema: &EventSchema,
-        request_params: &HashMap<String, String>,
-    ) -> Result<HashMap<String, String>> {
-        let mut canonicalized = HashMap::new();
-        let has_point = request_params.contains_key("point");
-
-        for (field_name, rules) in &schema.identifier {
-            let is_required = rules.iter().any(|rule| rule.is_required());
-
-            if let Some(value) = request_params.get(field_name) {
-                let canonicalized_value =
-                    self.validate_and_canonicalize_field(field_name, value, rules)?;
-                canonicalized.insert(field_name.clone(), canonicalized_value);
-            } else if is_required {
-                if field_name == "polygon" && has_point {
-                    canonicalized.insert(field_name.clone(), "*".to_string());
-                    continue;
-                }
-                bail!(
-                    "Required field '{}' missing for replay operation",
-                    field_name
-                );
-            } else {
-                canonicalized.insert(field_name.clone(), "*".to_string());
+            if point.is_object() {
+                bail!("Field 'point' constraint object is not supported");
             }
+            let point_value =
+                NotificationRequest::scalar_identifier_value_as_string("point", point)?;
+            canonicalized.insert("point".to_string(), point_value);
         }
 
-        if let Some(point) = request_params.get("point") {
-            canonicalized.insert("point".to_string(), point.clone());
-        }
-
-        Ok(canonicalized)
+        Ok((canonicalized, identifier_constraints, None))
     }
 
     /// Fallback validation for event types without schema.
     fn process_generic_request(
         &self,
-        request_params: &HashMap<String, String>,
+        request_params: &HashMap<String, Value>,
         operation: OperationType,
     ) -> Result<HashMap<String, String>> {
         let mut canonicalized = HashMap::new();
@@ -211,15 +247,31 @@ impl<'a> NotificationProcessor<'a> {
         match operation {
             OperationType::Notify => {
                 for (key, value) in request_params {
-                    if value.is_empty() {
+                    if value.is_object() {
+                        bail!(
+                            "Field '{}' constraint object is not supported for notify operation",
+                            key
+                        );
+                    }
+                    let scalar =
+                        NotificationRequest::scalar_identifier_value_as_string(key, value)?;
+                    if scalar.is_empty() {
                         bail!("Field '{}' cannot be empty", key);
                     }
-                    canonicalized.insert(key.clone(), value.clone());
+                    canonicalized.insert(key.clone(), scalar);
                 }
             }
             OperationType::Watch | OperationType::Replay => {
                 for (key, value) in request_params {
-                    canonicalized.insert(key.clone(), value.clone());
+                    if value.is_object() {
+                        bail!(
+                            "Field '{}' constraint object is not supported without schema",
+                            key
+                        );
+                    }
+                    let scalar =
+                        NotificationRequest::scalar_identifier_value_as_string(key, value)?;
+                    canonicalized.insert(key.clone(), scalar);
                 }
             }
         }
@@ -256,12 +308,43 @@ impl<'a> NotificationProcessor<'a> {
             ValidationRules::IntHandler { range, .. } => {
                 IntHandler::validate_and_canonicalize(value, range.as_ref(), field_name)
             }
+            ValidationRules::FloatHandler { range, .. } => {
+                FloatHandler::validate_and_canonicalize(value, range.as_ref(), field_name)
+            }
             ValidationRules::TimeHandler { .. } => {
                 TimeHandler::validate_and_canonicalize(value, field_name)
             }
             ValidationRules::PolygonHandler { .. } => {
                 PolygonHandler::validate_and_canonicalize(value, field_name)
             }
+        }
+    }
+
+    fn parse_identifier_constraint(
+        &self,
+        field_name: &str,
+        value: &Value,
+        rules: &[ValidationRules],
+    ) -> Result<IdentifierConstraint> {
+        let rule = rules.first().context(format!(
+            "No validation rules found for field '{}'",
+            field_name
+        ))?;
+
+        match rule {
+            ValidationRules::IntHandler { range, .. } => Ok(IdentifierConstraint::Int(
+                parse_int_constraint(field_name, value, range.as_ref())?,
+            )),
+            ValidationRules::FloatHandler { range, .. } => Ok(IdentifierConstraint::Float(
+                parse_float_constraint(field_name, value, range.as_ref())?,
+            )),
+            ValidationRules::EnumHandler { values, .. } => Ok(IdentifierConstraint::Enum(
+                parse_enum_constraint(field_name, value, values)?,
+            )),
+            _ => bail!(
+                "Field '{}' does not support constraint filters; expected scalar value",
+                field_name
+            ),
         }
     }
 }
@@ -332,6 +415,28 @@ mod tests {
             topic: Some(TopicConfig {
                 base: "polygon".to_string(),
                 key_order: vec!["date".to_string(), "time".to_string()],
+            }),
+            endpoint: None,
+            identifier,
+            storage_policy: None,
+        }
+    }
+
+    fn create_float_constraint_schema() -> EventSchema {
+        let mut identifier = HashMap::new();
+        identifier.insert(
+            "severity".to_string(),
+            vec![ValidationRules::FloatHandler {
+                range: Some([1.0, 7.0]),
+                required: true,
+            }],
+        );
+
+        EventSchema {
+            payload: Some(PayloadConfig { required: false }),
+            topic: Some(TopicConfig {
+                base: "extreme".to_string(),
+                key_order: vec!["severity".to_string()],
             }),
             endpoint: None,
             identifier,
@@ -682,6 +787,37 @@ mod tests {
             Some(&"value2".to_string())
         );
         assert!(processing_result.spatial_metadata.is_none());
+    }
+
+    #[test]
+    fn test_replay_request_with_float_constraint() {
+        let mut schemas = HashMap::new();
+        schemas.insert("extreme".to_string(), create_float_constraint_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("severity".to_string(), serde_json::json!({ "gt": 3.5 }));
+
+        let payload = None;
+        let result = processor.process_request_with_values(
+            "extreme",
+            &params,
+            &payload,
+            OperationType::Replay,
+        );
+
+        assert!(result.is_ok());
+        let processing_result = result.expect("replay request should succeed");
+        assert_eq!(
+            processing_result.canonicalized_params.get("severity"),
+            Some(&"*".to_string())
+        );
+        assert!(
+            processing_result
+                .identifier_constraints
+                .contains_key("severity")
+        );
     }
 
     #[test]

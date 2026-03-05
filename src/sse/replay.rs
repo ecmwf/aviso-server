@@ -16,6 +16,7 @@ use super::helpers::{
 };
 use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
+use crate::notification::IdentifierConstraint;
 use crate::notification::decode_subject_for_display;
 use crate::notification::wildcard_matcher::matches_notification_filters;
 use crate::notification_backend::{
@@ -34,6 +35,7 @@ pub fn create_historical_replay_stream(
     backend: Arc<dyn NotificationBackend>,
     start_at: StartAt,
     request_params: Arc<std::collections::HashMap<String, String>>,
+    request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
 ) -> impl tokio_stream::Stream<Item = StreamFrame> {
     // Fetch configuration values from global settings
     let watch_config = Settings::get_global_watch_settings();
@@ -50,8 +52,16 @@ pub fn create_historical_replay_stream(
             true,
             watch_config.replay_batch_delay_ms,
             request_params,
+            request_constraints,
         ),
-        move |(backend, mut params, mut has_more, delay_ms, request_params)| async move {
+        move |(
+            backend,
+            mut params,
+            mut has_more,
+            delay_ms,
+            request_params,
+            request_constraints,
+        )| async move {
             if !has_more {
                 // End of stream: terminate unfold
                 return None;
@@ -80,7 +90,9 @@ pub fn create_historical_replay_stream(
                     for message in batch_result.messages {
                         // Filtering: Only send if message matches request fields (including spatial)
                         if !matches_notification_filters(
+                            &message.topic,
                             &request_params,
+                            &request_constraints,
                             message.metadata.as_ref(),
                             &message.payload,
                         ) {
@@ -110,7 +122,14 @@ pub fn create_historical_replay_stream(
                     // Return current batch frames and updated replay state.
                     Some((
                         tokio_stream::iter(frames),
-                        (backend, params, has_more, delay_ms, request_params),
+                        (
+                            backend,
+                            params,
+                            has_more,
+                            delay_ms,
+                            request_params,
+                            request_constraints,
+                        ),
                     ))
                 }
                 Err(e) => {
@@ -130,7 +149,14 @@ pub fn create_historical_replay_stream(
                     }];
                     Some((
                         tokio_stream::iter(error_frames),
-                        (backend, params, false, delay_ms, request_params),
+                        (
+                            backend,
+                            params,
+                            false,
+                            delay_ms,
+                            request_params,
+                            request_constraints,
+                        ),
                     ))
                 }
             }
@@ -146,6 +172,7 @@ pub async fn create_historical_then_live_stream(
     start_at: StartAt,
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
+    request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let app_settings = Settings::get_global_application_settings();
@@ -156,6 +183,7 @@ pub async fn create_historical_then_live_stream(
         backend.clone(),
         start_at,
         request_params.clone(),
+        request_constraints.clone(),
     );
 
     let (from_sequence, from_date) = start_at.as_replay_cursor();
@@ -176,10 +204,15 @@ pub async fn create_historical_then_live_stream(
     // Create live subscription stream with request filtering.
     let notification_stream = backend.subscribe_to_topic(&topic).await?;
     let request_params_clone = request_params.clone();
+    let request_constraints_clone = request_constraints.clone();
     let filtered_stream = futures_util::StreamExt::filter_map(
         notification_stream,
         move |message: NotificationMessage| {
-            super::live::filter_notification_message(message, request_params_clone.clone())
+            super::live::filter_notification_message(
+                message,
+                request_params_clone.clone(),
+                request_constraints_clone.clone(),
+            )
         },
     );
 
@@ -242,6 +275,7 @@ pub async fn create_replay_only_stream(
     start_at: StartAt,
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
+    request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
 
@@ -251,6 +285,7 @@ pub async fn create_replay_only_stream(
         backend.clone(),
         start_at,
         request_params.clone(),
+        request_constraints.clone(),
     );
 
     let (from_sequence, from_date) = start_at.as_replay_cursor();

@@ -70,6 +70,7 @@ pub async fn watch(
 
     // Use canonicalized filtering parameters produced by request processing.
     let filtering_params = Arc::new(context.canonicalized_params.clone());
+    let filtering_constraints = Arc::new(context.identifier_constraints.clone());
 
     // Determine streaming mode and create appropriate stream
     let display_topic = decode_subject_for_display(&context.topic);
@@ -91,6 +92,7 @@ pub async fn watch(
             context.start_at,
             shutdown.clone(),
             filtering_params.clone(),
+            filtering_constraints.clone(),
         )
         .await
     } else {
@@ -109,6 +111,7 @@ pub async fn watch(
             notification_backend.get_ref().clone(),
             shutdown.clone(),
             filtering_params.clone(),
+            filtering_constraints.clone(),
         )
         .await
     };

@@ -1,4 +1,5 @@
 use crate::notification::spatial::SpatialMetadata;
+use aviso_validators::{EnumConstraint, NumericConstraint};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -135,6 +136,16 @@ pub struct ProcessingResult {
     pub topic: String,
     /// Canonicalized request parameters.
     pub canonicalized_params: HashMap<String, String>,
+    /// Optional identifier constraints for watch/replay fine-grained filtering.
+    pub identifier_constraints: HashMap<String, IdentifierConstraint>,
     /// Optional spatial metadata from polygon fields.
     pub spatial_metadata: Option<SpatialMetadata>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum IdentifierConstraint {
+    Int(NumericConstraint<i64>),
+    Enum(EnumConstraint),
+    /// Floating-point identifier constraints for schema fields using FloatHandler.
+    Float(NumericConstraint<f64>),
 }
