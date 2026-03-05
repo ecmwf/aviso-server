@@ -102,9 +102,9 @@ fn extract_aviso_data(payload: &web::Json<Value>) -> Result<(String, HashMap<Str
     let identifier_obj = data
         .get("identifier")
         .and_then(|v| v.as_object())
-        .ok_or_else(|| anyhow::anyhow!("Missing required 'request' field in Aviso data"))?;
+        .ok_or_else(|| anyhow::anyhow!("Missing required 'identifier' field in Aviso data"))?;
 
-    // Convert non-string values to string to preserve legacy payload shape.
+    // Identifier values are stringly typed in downstream schema validation.
     let mut request_params = HashMap::new();
     for (key, value) in identifier_obj {
         let string_value = match value.as_str() {
@@ -180,7 +180,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_aviso_data_missing_request_field() {
+    fn test_extract_aviso_data_missing_identifier_field() {
         let payload = web::Json(json!({
             "specversion": "1.0",
             "id": "test",
@@ -198,7 +198,7 @@ mod tests {
             result
                 .unwrap_err()
                 .to_string()
-                .contains("Missing required 'request' field")
+                .contains("Missing required 'identifier' field")
         );
     }
 

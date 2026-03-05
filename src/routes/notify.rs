@@ -3,8 +3,8 @@ use crate::error::{
     request_validation_error_response,
 };
 use crate::handlers::{
-    NotificationErrorKind, convert_payload_to_string, get_payload_type_name,
-    parse_and_validate_request, process_notification_request, save_to_backend,
+    NotificationErrorKind, parse_and_validate_request, process_notification_request,
+    save_to_backend,
 };
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
@@ -19,7 +19,7 @@ use tracing_actix_web::RequestId;
 /// Notification endpoint handler
 ///
 /// Processes notification requests with all schema fields required.
-/// Validates request format, payload type, processes notification, and saves to backend.
+/// Validates request format, processes notification, and saves to backend.
 /// Now supports spatial metadata extraction for polygon fields.
 #[utoipa::path(
     post,
@@ -65,14 +65,11 @@ pub async fn notify(
 
     tracing::Span::current().record("event_type", event_type);
 
-    // Convert PayloadType to serde_json::Value
-    let payload_value = payload.payload.as_ref().map(|p| p.to_json_value());
-
     // Process notification request with payload validation
     let notification_result = match process_notification_request(
         event_type,
         request_params,
-        &payload_value,
+        &payload.payload,
         OperationType::Notify,
     ) {
         Ok(result) => result,
@@ -93,13 +90,18 @@ pub async fn notify(
         notification_result.spatial_metadata.is_some(),
     );
 
-    // Convert payload for backend storage
-    let payload_string = convert_payload_to_string(&payload.payload);
+    // Payload is always persisted as canonical JSON.
+    // Missing optional payload is represented as JSON null.
+    let payload_string = payload
+        .payload
+        .as_ref()
+        .map(serde_json::Value::to_string)
+        .unwrap_or_else(|| "null".to_string());
 
     // Save to backend storage (handles spatial metadata automatically)
     if let Err(e) = save_to_backend(
         &notification_result,
-        payload_string.as_deref(),
+        &payload_string,
         notification_backend.get_ref().as_ref(),
     )
     .await
@@ -115,7 +117,11 @@ pub async fn notify(
     };
 
     // Enhanced logging with spatial information
-    let payload_type = get_payload_type_name(&payload.payload).unwrap_or("None");
+    let payload_kind = payload
+        .payload
+        .as_ref()
+        .map(json_value_kind)
+        .unwrap_or("null");
     if let Some(spatial_metadata) = &notification_result.spatial_metadata {
         info!(
             service_name = SERVICE_NAME,
@@ -126,7 +132,7 @@ pub async fn notify(
             topic = %display_topic,
             event_type = %notification_result.event_type,
             param_count = notification_result.canonicalized_params.len(),
-            payload_type = %payload_type,
+            payload_kind = %payload_kind,
             bounding_box = %spatial_metadata.bounding_box,
             "Notification with spatial data processed and saved successfully"
         );
@@ -140,10 +146,21 @@ pub async fn notify(
             topic = %display_topic,
             event_type = %notification_result.event_type,
             param_count = notification_result.canonicalized_params.len(),
-            payload_type = %payload_type,
+            payload_kind = %payload_kind,
             "Notification processed and saved successfully"
         );
     }
 
     HttpResponse::Ok().json(response)
+}
+
+fn json_value_kind(value: &serde_json::Value) -> &'static str {
+    match value {
+        serde_json::Value::Null => "null",
+        serde_json::Value::Bool(_) => "bool",
+        serde_json::Value::Number(_) => "number",
+        serde_json::Value::String(_) => "string",
+        serde_json::Value::Array(_) => "array",
+        serde_json::Value::Object(_) => "object",
+    }
 }

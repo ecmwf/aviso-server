@@ -2,42 +2,9 @@ use crate::notification_backend::replay::StartAt;
 use anyhow::{Result, bail};
 use aviso_validators::PointHandler;
 use chrono::{DateTime, NaiveDateTime, Utc};
-use cloudevents::Event;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use utoipa::ToSchema;
-
-#[derive(Debug, Deserialize, Serialize, Clone, PartialEq)]
-#[serde(untagged)]
-pub enum PayloadType {
-    String(String),
-    CloudEvent(Box<Event>),
-    HashMap(HashMap<String, String>),
-}
-
-impl PayloadType {
-    /// Get the type name for schema validation
-    pub fn type_name(&self) -> &'static str {
-        match self {
-            PayloadType::String(_) => "String",
-            PayloadType::CloudEvent(_) => "CloudEvent",
-            PayloadType::HashMap(_) => "HashMap",
-        }
-    }
-
-    /// Convert PayloadType to serde_json::Value for processing
-    pub fn to_json_value(&self) -> serde_json::Value {
-        match self {
-            PayloadType::String(s) => serde_json::Value::String(s.clone()),
-            PayloadType::HashMap(map) => {
-                serde_json::to_value(map).unwrap_or(serde_json::Value::Null)
-            }
-            PayloadType::CloudEvent(ce) => {
-                serde_json::to_value(ce).unwrap_or(serde_json::Value::Null)
-            }
-        }
-    }
-}
 
 /// Notification request structure used by both /notification and /watch endpoints
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
@@ -53,10 +20,11 @@ pub struct NotificationRequest {
     #[serde(default)]
     #[schema(example = "2025-09-15T12:00:00Z")]
     pub from_date: Option<String>,
-    /// Payload with flexible type based on schema configuration
+    /// Optional JSON payload.
+    /// If omitted for optional payload schemas, the backend stores `null`.
     #[serde(default)]
-    #[schema(value_type = Object, example = json!({"key": "value"}))]
-    pub payload: Option<PayloadType>,
+    #[schema(example = json!({"key": "value"}))]
+    pub payload: Option<serde_json::Value>,
 }
 
 impl NotificationRequest {

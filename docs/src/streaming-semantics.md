@@ -224,3 +224,11 @@ The final `connection-closing` event can carry one of these reasons:
 - `end_of_stream`
 
 `/replay` is finite by design, so normal completion uses `end_of_stream`.
+
+## Replay Payload Shape
+
+- Replay/watch CloudEvent output always includes `data.payload`.
+- If notify payload was omitted for an optional schema, replay/watch returns `data.payload = null`.
+- Payload values are not reshaped by Aviso (for example scalar strings remain strings).
+
+See [Payload Contract](./payload-contract.md) for full input/storage/output mapping.
