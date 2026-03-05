@@ -12,6 +12,21 @@ pub fn validate_schema_storage_policy_support(settings: &Settings) -> Result<()>
         return Ok(());
     };
 
+    let mut topic_owner_by_base: HashMap<String, String> = HashMap::new();
+    for (event_type, schema) in schema_map {
+        let Some(topic) = schema.topic.as_ref() else {
+            continue;
+        };
+        let base_key = topic.base.to_ascii_lowercase();
+        if let Some(previous_owner) = topic_owner_by_base.get(&base_key) {
+            bail!(
+                "Schemas '{previous_owner}' and '{event_type}' both define topic base '{}'",
+                topic.base
+            );
+        }
+        topic_owner_by_base.insert(base_key, event_type.clone());
+    }
+
     let mut policy_owner_by_base: HashMap<String, String> = HashMap::new();
 
     for (event_type, schema) in schema_map {
@@ -320,7 +335,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_duplicate_storage_policy_for_same_topic_base() {
+    fn rejects_duplicate_topic_base_across_schemas() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "dissemination".to_string(),
@@ -373,15 +388,15 @@ mod tests {
         };
 
         let err = validate_schema_storage_policy_support(&settings)
-            .expect_err("duplicate storage policy for same base must fail");
+            .expect_err("duplicate base must fail");
         let message = err.to_string();
-        assert!(message.contains("both define storage_policy for topic base 'diss'"));
+        assert!(message.contains("both define topic base 'diss'"));
         assert!(message.contains("'dissemination'"));
         assert!(message.contains("'diss_alias'"));
     }
 
     #[test]
-    fn rejects_duplicate_storage_policy_for_same_topic_base_case_insensitive() {
+    fn rejects_duplicate_topic_base_across_schemas_case_insensitive() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "schema_a".to_string(),
@@ -434,9 +449,64 @@ mod tests {
         };
 
         let err = validate_schema_storage_policy_support(&settings)
-            .expect_err("duplicate storage policy for same base must fail");
+            .expect_err("duplicate base must fail");
         let message = err.to_string();
-        assert!(message.contains("both define storage_policy"));
+        assert!(message.contains("both define topic base"));
+        assert!(message.contains("'schema_a'"));
+        assert!(message.contains("'schema_b'"));
+    }
+
+    #[test]
+    fn rejects_duplicate_topic_base_even_without_storage_policy() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "schema_a".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "shared".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+            },
+        );
+        schema_map.insert(
+            "schema_b".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "shared".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+            },
+        );
+
+        let settings = Settings {
+            application: ApplicationSettings {
+                host: "127.0.0.1".to_string(),
+                port: 8000,
+                base_url: "http://localhost".to_string(),
+                static_files_path: "/tmp".to_string(),
+            },
+            notification_backend: NotificationBackendSettings {
+                kind: "jetstream".to_string(),
+                in_memory: None,
+                jetstream: None,
+            },
+            logging: None,
+            notification_schema: Some(schema_map),
+            watch_endpoint: WatchEndpointSettings::default(),
+        };
+
+        let err = validate_schema_storage_policy_support(&settings)
+            .expect_err("duplicate base must fail");
+        let message = err.to_string();
+        assert!(message.contains("both define topic base 'shared'"));
         assert!(message.contains("'schema_a'"));
         assert!(message.contains("'schema_b'"));
     }

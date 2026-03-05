@@ -12,11 +12,12 @@ use tracing::{debug, info};
 /// Takes a processed notification result and persists it to the backend storage.
 /// Spatial metadata, when present, is attached via backend headers.
 #[tracing::instrument(
-    skip(notification_backend),
+    skip(payload, notification_backend),
     fields(
         topic = %result.topic,
         event_type = %result.event_type,
         spatial_enabled = result.spatial_metadata.is_some(),
+        payload_len = payload.len(),
     )
 )]
 pub async fn save_to_backend(

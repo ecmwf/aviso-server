@@ -12,6 +12,7 @@ use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::NotificationRequest;
 use actix_web::{HttpResponse, web};
 use std::sync::Arc;
+use std::time::Instant;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use tracing_actix_web::RequestId;
@@ -74,46 +75,32 @@ pub async fn watch(
 
     // Determine streaming mode and create appropriate stream
     let display_topic = decode_subject_for_display(&context.topic);
-    let sse_response = if !matches!(context.start_at, StartAt::LiveOnly) {
-        info!(
-            service_name = SERVICE_NAME,
-            service_version = SERVICE_VERSION,
-            event_domain = "streaming",
-            event_name = "api.watch.stream.started",
-            outcome = "in_progress",
-            topic = %display_topic,
-            start_at = ?context.start_at,
-            "Creating historical replay + live stream"
-        );
-
-        create_historical_then_live_stream(
-            context.topic.clone(),
-            notification_backend.get_ref().clone(),
-            context.start_at,
-            shutdown.clone(),
-            filtering_params.clone(),
-            filtering_constraints.clone(),
+    let setup_started_at = Instant::now();
+    let (stream_mode, sse_response) = if !matches!(context.start_at, StartAt::LiveOnly) {
+        (
+            "historical_then_live",
+            create_historical_then_live_stream(
+                context.topic.clone(),
+                notification_backend.get_ref().clone(),
+                context.start_at,
+                shutdown.clone(),
+                filtering_params.clone(),
+                filtering_constraints.clone(),
+            )
+            .await,
         )
-        .await
     } else {
-        info!(
-            service_name = SERVICE_NAME,
-            service_version = SERVICE_VERSION,
-            event_domain = "streaming",
-            event_name = "api.watch.stream.started",
-            outcome = "in_progress",
-            topic = %display_topic,
-            "Creating live-only stream"
-        );
-
-        create_watch_sse_stream(
-            context.topic.clone(),
-            notification_backend.get_ref().clone(),
-            shutdown.clone(),
-            filtering_params.clone(),
-            filtering_constraints.clone(),
+        (
+            "live_only",
+            create_watch_sse_stream(
+                context.topic.clone(),
+                notification_backend.get_ref().clone(),
+                shutdown.clone(),
+                filtering_params.clone(),
+                filtering_constraints.clone(),
+            )
+            .await,
         )
-        .await
     };
 
     match sse_response {
@@ -125,6 +112,9 @@ pub async fn watch(
                 event_name = "api.watch.stream.established",
                 outcome = "success",
                 topic = %display_topic,
+                start_at = ?context.start_at,
+                stream_mode = stream_mode,
+                setup_duration_ms = setup_started_at.elapsed().as_millis() as u64,
                 "SSE stream established successfully"
             );
             response

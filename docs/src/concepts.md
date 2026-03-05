@@ -117,8 +117,9 @@ notification_schema:
 ```
 
 Every key listed in `key_order` must have a corresponding entry in `identifier`.
-Optional fields (e.g. `anomaly`, `polygon`) may be omitted from notify requests
-but must still be declared in the schema so Aviso knows their type and position in the topic.
+For `notify`, every identifier key declared in the schema must be present in the request.
+Fields marked `required: false` are optional for validation semantics, but the key itself
+is still required on `notify` so Aviso can build a deterministic topic.
 
 ---
 
