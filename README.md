@@ -18,49 +18,51 @@
 > [!IMPORTANT]  
 > This software is **Emerging** and subject to ECMWF's guidelines on [Software Maturity](https://github.com/ecmwf/codex/raw/refs/heads/main/Project%20Maturity).
 
-## What is Aviso Server?
+## Overview
 
-Aviso Server is a specialized notification system that enables real-time monitoring and historical replay of data dissemination events. It's built for environments where timely notification of data availability is critical.
+Aviso Server is a notification service for data-driven workflows.
 
-## Core Capabilities
+It helps you answer questions like:
+- "What just arrived?"
+- "Give me updates for this exact subset of data."
+- "Replay everything I missed since yesterday."
 
-### Real-time Event Streaming
-- **Server-Sent Events (SSE):** Persistent connections for real-time notification delivery
-- **CloudEvent Format:** Standardized event formatting for interoperability
-- **Connection Management:** Automatic heartbeats, timeouts, and graceful reconnection
+Producers publish notifications once, and consumers can either follow live updates or replay history using the same filter model. Aviso keeps this predictable by validating identifiers against schema rules and streaming notifications in a consistent event format.
+For regional use cases, Aviso also supports spatial filtering so clients can subscribe to notifications relevant to a specific area or point.
 
-### Intelligent Pattern Matching
-- **Wildcard Subscriptions:** Subscribe to notification patterns using flexible wildcards
-- **Hybrid Filtering:** Efficient two-tier filtering combining backend optimization with precise application-level matching
-- **Schema-driven Topics:** Structured topic generation based on configurable data schemas
+## Key Features
 
-### Historical Replay
-- **Batch Retrieval:** Access historical notifications with configurable batch sizes
-- **Sequence-based Access:** Retrieve notifications from specific sequence numbers or timestamps
-- **Controlled Historical Notification Delivery:** Controlled replay to prevent system overload
+- Publish notifications through a simple HTTP API
+- Watch live updates over SSE with connection and replay controls
+- Replay historical notifications by sequence or timestamp
+- Filter by exact identifier values or constraints (for supported field types)
+- Use spatial filters for polygon/point use cases
+- Run with either in-memory storage (local/dev) or JetStream (durable environments)
 
-### Robust Architecture
-- **Well Abstracted Storage Backend:** Reliable message persistence using configurable backends
-- **Schema Validation:** Comprehensive field validation with support for dates, times, integers, and enums
-- **Graceful Shutdown:** Clean resource cleanup and connection handling
-- **Structured Logging:** Comprehensive observability with configurable log formats
+## Quick Start
 
-## Use Cases
-- **Data Availability Monitoring:** Track when new datasets become available
-- **Operational Workflows:** Trigger downstream processes based on data events
-- **System Integration:** Connect disparate systems through standardized event notifications
-- **Audit and Compliance:** Historical replay for tracking data processing workflows
+### Run locally (in-memory backend)
 
-## Testing Notes
-- JetStream integration tests are opt-in and require a running NATS/JetStream instance.
-- Run them with: `AVISO_RUN_NATS_TESTS=1 cargo test --workspace`
+```bash
+cargo run
+```
 
-## Documentation
-- Project docs are maintained with mdBook under `docs/`.
-- Helm chart for Kubernetes deployment: `https://github.com/ecmwf/aviso-chart`
-- Install mdBook:
-  - `cargo install mdbook`
-- Build docs:
-  - `mdbook build docs`
-- Serve locally:
-  - `mdbook serve docs --open`
+### Run tests
+
+```bash
+cargo test --workspace
+```
+
+JetStream integration tests are opt-in:
+
+```bash
+AVISO_RUN_NATS_TESTS=1 cargo test --workspace
+```
+
+## Build Docs Locally
+
+```bash
+cargo install mdbook
+mdbook build docs
+mdbook serve docs --open
+```
