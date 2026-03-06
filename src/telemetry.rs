@@ -169,34 +169,50 @@ impl LogRecordBuilder {
         self
     }
 
-    fn build_json(
-        mut self,
-        formatter: &OTelLogFormatter,
-        metadata: &tracing::Metadata<'_>,
-    ) -> Value {
-        // traceId and spanId are top-level LogRecord fields per the OTel log data model,
-        // not per-event attributes.
-        let trace_id = self.attributes.remove("traceId");
-        let span_id = self.attributes.remove("spanId");
-
-        let mut record = json!({
-            "timestamp": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-            "severityText": metadata.level().as_str(),
-            "severityNumber": OTelLogFormatter::severity_number(metadata.level()),
-            "body": self.body,
-            "resource": formatter.resource_json(),
-            "attributes": self.attributes
-        });
-
-        if let Some(id) = trace_id {
-            record["traceId"] = id;
-        }
-        if let Some(id) = span_id {
-            record["spanId"] = id;
-        }
-
-        record
+    fn build_json(self, formatter: &OTelLogFormatter, metadata: &tracing::Metadata<'_>) -> Value {
+        assemble_log_json(
+            Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
+            metadata.level().as_str(),
+            OTelLogFormatter::severity_number(metadata.level()),
+            self.body,
+            formatter.resource_json(),
+            self.attributes,
+        )
     }
+}
+
+/// Assemble the final OTel log record JSON from pre-computed parts.
+///
+/// `traceId` and `spanId` are promoted from `attributes` to top-level fields
+/// per the OTel log data model; they are absent when no trace context was set.
+fn assemble_log_json(
+    timestamp: String,
+    severity_text: &str,
+    severity_number: u8,
+    body: String,
+    resource: Map<String, Value>,
+    mut attributes: Map<String, Value>,
+) -> Value {
+    let trace_id = attributes.remove("traceId");
+    let span_id = attributes.remove("spanId");
+
+    let mut record = json!({
+        "timestamp": timestamp,
+        "severityText": severity_text,
+        "severityNumber": severity_number,
+        "body": body,
+        "resource": resource,
+        "attributes": attributes,
+    });
+
+    if let Some(id) = trace_id {
+        record["traceId"] = id;
+    }
+    if let Some(id) = span_id {
+        record["spanId"] = id;
+    }
+
+    record
 }
 
 #[derive(Default)]
@@ -499,5 +515,51 @@ mod tests {
             Some(&json!("nats://[REDACTED]@localhost:4222"))
         );
         assert_eq!(value.get("token"), Some(&json!("[REDACTED]")));
+    }
+
+    #[test]
+    fn assemble_log_json_produces_otel_compliant_schema() {
+        let mut attributes = Map::new();
+        attributes.insert("event.name".to_string(), json!("api.request.succeeded"));
+        attributes.insert("traceId".to_string(), json!("abc123"));
+        attributes.insert("spanId".to_string(), json!("def456"));
+
+        let resource = Map::new();
+        let record = assemble_log_json(
+            "2024-01-01T00:00:00Z".to_string(),
+            "INFO",
+            9,
+            "request handled".to_string(),
+            resource,
+            attributes,
+        );
+
+        // OTel top-level LogRecord fields must be at the root.
+        assert_eq!(record["severityText"], "INFO");
+        assert_eq!(record["severityNumber"], 9);
+        assert_eq!(record["traceId"], "abc123");
+        assert_eq!(record["spanId"], "def456");
+
+        // Trace fields must not be duplicated inside attributes.
+        let attrs = record["attributes"]
+            .as_object()
+            .expect("attributes is object");
+        assert!(!attrs.contains_key("traceId"));
+        assert!(!attrs.contains_key("spanId"));
+    }
+
+    #[test]
+    fn assemble_log_json_omits_trace_fields_when_absent() {
+        let record = assemble_log_json(
+            "2024-01-01T00:00:00Z".to_string(),
+            "WARN",
+            13,
+            "no trace context".to_string(),
+            Map::new(),
+            Map::new(),
+        );
+
+        assert!(record.get("traceId").is_none());
+        assert!(record.get("spanId").is_none());
     }
 }
