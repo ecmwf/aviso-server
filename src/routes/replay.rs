@@ -81,7 +81,6 @@ pub async fn replay(
             info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "streaming",
                 event_name = "api.replay.stream.established",
                 outcome = "success",
                 topic = %display_topic,

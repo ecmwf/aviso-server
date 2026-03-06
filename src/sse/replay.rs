@@ -136,7 +136,6 @@ pub fn create_historical_replay_stream(
                     warn!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "streaming",
                         event_name = "stream.replay.batch.failed",
                         error = %e,
                         topic = %decode_subject_for_display(&params.topic),
@@ -254,7 +253,6 @@ pub async fn create_historical_then_live_stream(
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "streaming",
         event_name = "stream.watch.replay_live.created",
         topic = %decode_subject_for_display(&topic),
         from_sequence = ?from_sequence,
@@ -325,7 +323,6 @@ pub async fn create_replay_only_stream(
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "streaming",
         event_name = "stream.replay.created",
         topic = %decode_subject_for_display(&topic),
         from_sequence = ?from_sequence,

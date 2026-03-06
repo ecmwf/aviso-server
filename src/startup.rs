@@ -40,7 +40,6 @@ impl Application {
             error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "startup",
                 event_name = "startup.configuration.validation.failed",
                 error = %e,
                 "Configuration validation failed"
@@ -62,7 +61,6 @@ impl Application {
                 error!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "startup",
                     event_name = "startup.backend.initialization.failed",
                     error = %e,
                     "Failed to initialize notification backend"
@@ -84,7 +82,6 @@ impl Application {
                 info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "startup",
                     event_name = "startup.shutdown.received",
                     "Shutdown signal received, stopping Actix server"
                 );
@@ -95,7 +92,6 @@ impl Application {
                 info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "startup",
                     event_name = "startup.server.stopped",
                     "Actix server stopped, shutting down backend"
                 );
@@ -105,7 +101,6 @@ impl Application {
                     error!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "startup",
                         event_name = "startup.backend.shutdown.failed",
                         error = %e,
                         "Error during backend shutdown"
@@ -114,7 +109,6 @@ impl Application {
                     info!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "startup",
                         event_name = "startup.backend.shutdown.succeeded",
                         "Backend shutdown completed successfully"
                     );
@@ -150,7 +144,6 @@ async fn shutdown_backend(backend: Arc<dyn NotificationBackend>) -> anyhow::Resu
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "startup",
         event_name = "startup.backend.shutdown.started",
         "Shutting down notification backend"
     );
@@ -161,7 +154,6 @@ async fn shutdown_backend(backend: Arc<dyn NotificationBackend>) -> anyhow::Resu
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "startup",
         event_name = "startup.backend.shutdown.completed",
         "Notification backend shutdown completed"
     );

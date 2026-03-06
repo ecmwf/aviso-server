@@ -119,7 +119,6 @@ async fn ensure_stream_for_topic_with_schema(
             warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "backend",
                 event_name = "backend.jetstream.stream.lookup.failed_fallback_create",
                 stream_name = %stream_name,
                 subject_pattern = %subject_pattern,
@@ -132,7 +131,6 @@ async fn ensure_stream_for_topic_with_schema(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.stream.create.started",
         stream_name = %stream_name,
         subject_pattern = %subject_pattern,
@@ -142,7 +140,6 @@ async fn ensure_stream_for_topic_with_schema(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.stream.create.config",
         stream_name = %stream_name,
         subject_pattern = %subject_pattern,
@@ -178,7 +175,6 @@ async fn ensure_stream_for_topic_with_schema(
             info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "backend",
                 event_name = "backend.jetstream.stream.create.succeeded",
                 stream_name = %stream_name,
                 subject_pattern = %subject_pattern,
@@ -201,7 +197,6 @@ async fn ensure_stream_for_topic_with_schema(
                 info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.jetstream.stream.create.race_won_by_peer",
                     stream_name = %stream_name,
                     "Stream created by another replica"
@@ -211,7 +206,6 @@ async fn ensure_stream_for_topic_with_schema(
                 warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.jetstream.stream.create.failed",
                     stream_name = %stream_name,
                     subject_pattern = %subject_pattern,
@@ -267,7 +261,6 @@ async fn reconcile_existing_stream_config(
         debug!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "backend",
             event_name = "backend.jetstream.stream.reconcile.noop",
             stream_name = %stream_name,
             subject_pattern = %subject_pattern,
@@ -279,7 +272,6 @@ async fn reconcile_existing_stream_config(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.stream.reconcile.started",
         stream_name = %stream_name,
         subject_pattern = %subject_pattern,
@@ -302,7 +294,6 @@ async fn reconcile_existing_stream_config(
         warn!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "backend",
             event_name = "backend.jetstream.stream.reconcile.failed",
             stream_name = %stream_name,
             subject_pattern = %subject_pattern,
@@ -318,7 +309,6 @@ async fn reconcile_existing_stream_config(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.stream.reconcile.succeeded",
         stream_name = %stream_name,
         subject_pattern = %subject_pattern,

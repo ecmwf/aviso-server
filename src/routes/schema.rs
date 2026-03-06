@@ -47,7 +47,6 @@ pub async fn get_notification_schema() -> HttpResponse {
             info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "api",
                 event_name = "api.schema.list.succeeded",
                 schema_count = api_schema.len(),
                 event_types = ?api_schema.keys().collect::<Vec<_>>(),
@@ -65,7 +64,6 @@ pub async fn get_notification_schema() -> HttpResponse {
             info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "api",
                 event_name = "api.schema.list.empty",
                 "No notification schema configured, returning empty schema"
             );
@@ -115,7 +113,6 @@ pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
                 info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "api",
                     event_name = "api.schema.get.succeeded",
                     event_type = %event_type,
                     field_count = api_schema.identifier.len(),

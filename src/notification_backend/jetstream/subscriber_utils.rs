@@ -122,7 +122,6 @@ pub async fn create_jetstream_consumer(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.consumer.created",
         backend_pattern = %backend_pattern,
         stream_name = %stream_name,

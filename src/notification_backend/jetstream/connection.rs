@@ -53,7 +53,6 @@ pub async fn connect(config: JetStreamConfig) -> Result<JetStreamBackend> {
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.connection.started",
         url = %config.nats_url,
         "Connecting to NATS"
@@ -76,7 +75,6 @@ pub async fn connect(config: JetStreamConfig) -> Result<JetStreamBackend> {
                 warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.jetstream.connection.retry",
                     url = %config.nats_url,
                     attempt = attempt,

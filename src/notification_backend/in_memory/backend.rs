@@ -80,7 +80,6 @@ impl InMemoryBackend {
         info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "backend",
             event_name = "backend.in_memory.initialization.started",
             max_history_per_topic = config.max_history_per_topic,
             max_topics = config.max_topics,
@@ -96,7 +95,6 @@ impl InMemoryBackend {
             warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "backend",
                 event_name = "backend.in_memory.channel.capacity.clamped",
                 requested_channel_capacity,
                 effective_channel_capacity = channel_capacity,
@@ -168,7 +166,6 @@ impl InMemoryBackend {
                 warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.in_memory.topic.evicted",
                     removed_topic = %topic_to_remove,
                     max_topics = self.config.max_topics,
@@ -196,7 +193,6 @@ impl InMemoryBackend {
             info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "backend",
                 event_name = "backend.in_memory.topic.created",
                 topic = %topic,
                 max_history = self.config.max_history_per_topic,
@@ -317,7 +313,6 @@ impl NotificationBackend for InMemoryBackend {
         info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "backend",
             event_name = "backend.in_memory.stream.wiped",
             stream_name = %stream_name,
             subjects_removed = removed_subjects,
@@ -348,7 +343,6 @@ impl NotificationBackend for InMemoryBackend {
         info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "backend",
             event_name = "backend.in_memory.storage.wiped",
             subjects_removed = subjects_count,
             notifications_removed = total_notifications,
@@ -377,7 +371,6 @@ impl NotificationBackend for InMemoryBackend {
                 info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "admin",
                     event_name = "admin.notification.delete.succeeded",
                     stream_key = %stream_key,
                     sequence = sequence,
@@ -452,7 +445,6 @@ impl NotificationBackend for InMemoryBackend {
                             warn!(
                                 service_name = SERVICE_NAME,
                                 service_version = SERVICE_VERSION,
-                                event_domain = "backend",
                                 event_name = "backend.in_memory.subscription.lagged",
                                 skipped = skipped,
                                 "In-memory subscription lagged; dropped notifications"

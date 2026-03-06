@@ -92,7 +92,6 @@ pub async fn wipe_stream(
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "admin",
         event_name = "admin.stream.wipe.requested",
         stream_name = %req.stream_name,
         "Received request to wipe stream"
@@ -103,7 +102,6 @@ pub async fn wipe_stream(
             tracing::info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.stream.wipe.succeeded",
                 stream_name = %req.stream_name,
                 "Successfully wiped stream"
@@ -117,7 +115,6 @@ pub async fn wipe_stream(
             tracing::error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.stream.wipe.failed",
                 stream_name = %req.stream_name,
                 error = %e,
@@ -148,7 +145,6 @@ pub async fn wipe_all(
     tracing::warn!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "admin",
         event_name = "admin.all.wipe.requested",
         "Received request to wipe ALL data - this will remove everything!"
     );
@@ -158,7 +154,6 @@ pub async fn wipe_all(
             tracing::warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.all.wipe.succeeded",
                 "Successfully wiped ALL data from backend"
             );
@@ -171,7 +166,6 @@ pub async fn wipe_all(
             tracing::error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.all.wipe.failed",
                 error = %e,
                 "Failed to wipe all data"
@@ -210,7 +204,6 @@ pub async fn delete_notification(
             tracing::warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.notification.delete.invalid_id",
                 notification_id = %raw_id,
                 "Invalid notification ID format"
@@ -232,7 +225,6 @@ pub async fn delete_notification(
             tracing::info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.notification.delete.succeeded",
                 notification_id = %raw_id,
                 stream_key = %resolved_stream_key,
@@ -249,7 +241,6 @@ pub async fn delete_notification(
             tracing::warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.notification.delete.not_found",
                 notification_id = %raw_id,
                 stream_key = %resolved_stream_key,
@@ -266,7 +257,6 @@ pub async fn delete_notification(
             tracing::error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "admin",
                 event_name = "admin.notification.delete.failed",
                 notification_id = %raw_id,
                 stream_key = %resolved_stream_key,

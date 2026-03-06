@@ -103,7 +103,6 @@ pub async fn create_watch_sse_stream(
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "streaming",
         event_name = "stream.watch.live.created",
         topic = %decode_subject_for_display(&topic),
         timeout_seconds = connection_timeout.as_secs(),

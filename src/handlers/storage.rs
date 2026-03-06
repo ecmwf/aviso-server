@@ -55,7 +55,6 @@ pub async fn save_to_backend(
         info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "notification",
             event_name = "notification.storage.spatial.succeeded",
             topic = %display_topic,
             event_type = %result.event_type,
@@ -71,7 +70,6 @@ pub async fn save_to_backend(
         info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "notification",
             event_name = "notification.storage.succeeded",
             topic = %display_topic,
             event_type = %result.event_type,

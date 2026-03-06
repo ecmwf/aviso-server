@@ -100,7 +100,6 @@ pub async fn get_messages_batch(
                         warn!(
                             service_name = SERVICE_NAME,
                             service_version = SERVICE_VERSION,
-                            event_domain = "backend",
                             event_name = "backend.jetstream.replay.message_transform.failed",
                             error = %e,
                             subject = %msg.subject,
@@ -154,7 +153,6 @@ pub async fn get_messages_batch(
         warn!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "backend",
             event_name = "backend.jetstream.replay.limit.reached",
             retrieved_messages = filtered_messages.len(),
             max_allowed = effective_limit,
@@ -180,7 +178,6 @@ pub async fn get_messages_batch(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.replay.batch.succeeded",
         topic = %decode_subject_for_display(&params.topic),
         stream_name = %stream_name,
@@ -236,7 +233,6 @@ async fn create_pull_consumer(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.replay.consumer.created",
         stream_name = %stream_name,
         backend_pattern = %backend_pattern,

@@ -39,7 +39,6 @@ async fn main() -> Result<(), std::io::Error> {
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "startup",
         event_name = "startup.configuration.dumped",
         config = %redacted_config,
         "Server effective configuration (redacted)"
@@ -49,7 +48,6 @@ async fn main() -> Result<(), std::io::Error> {
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "startup",
         event_name = "startup.configuration.loaded",
         bind_host = %configuration.application.host,
         bind_port = configuration.application.port,
@@ -75,7 +73,6 @@ async fn main() -> Result<(), std::io::Error> {
                     info!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "startup",
                         event_name = "startup.signal.sigint.received",
                         "Received SIGINT (Ctrl+C), initiating graceful shutdown"
                     );
@@ -84,7 +81,6 @@ async fn main() -> Result<(), std::io::Error> {
                     info!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "startup",
                         event_name = "startup.signal.sigterm.received",
                         "Received SIGTERM, initiating graceful shutdown"
                     );
@@ -98,7 +94,6 @@ async fn main() -> Result<(), std::io::Error> {
             info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "startup",
                 event_name = "startup.signal.ctrlc.received",
                 "Received Ctrl+C, initiating graceful shutdown"
             );
@@ -107,7 +102,6 @@ async fn main() -> Result<(), std::io::Error> {
         info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "startup",
             event_name = "startup.shutdown.token.cancelled",
             "Shutdown signal received – cancelling token"
         );
@@ -120,7 +114,6 @@ async fn main() -> Result<(), std::io::Error> {
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "startup",
         event_name = "startup.server.started",
         port = application.port(),
         swagger_url = format!("{}:{}/swagger-ui/", host, application.port()),

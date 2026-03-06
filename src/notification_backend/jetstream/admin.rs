@@ -32,7 +32,6 @@ pub async fn wipe_stream(backend: &JetStreamBackend, stream_name: &str) -> Resul
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "admin",
         event_name = "admin.stream.wipe.succeeded",
         stream_name = %stream_name,
         messages_purged = total_messages,
@@ -53,7 +52,6 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "admin",
         event_name = "admin.all.wipe.started",
         "Starting complete wipe of all JetStream data"
     );
@@ -78,7 +76,6 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
                         info!(
                             service_name = SERVICE_NAME,
                             service_version = SERVICE_VERSION,
-                            event_domain = "admin",
                             event_name = "admin.stream.wipe.succeeded",
                             stream = %stream_name,
                             messages = message_count,
@@ -89,7 +86,6 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
                         warn!(
                             service_name = SERVICE_NAME,
                             service_version = SERVICE_VERSION,
-                            event_domain = "admin",
                             event_name = "admin.stream.wipe.failed",
                             stream = %stream_name,
                             error = %e,
@@ -102,7 +98,6 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
                 warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "admin",
                     event_name = "admin.stream.info.failed",
                     error = %e,
                     "Failed to get stream info during wipe_all operation"
@@ -114,7 +109,6 @@ pub async fn wipe_all(backend: &JetStreamBackend) -> Result<()> {
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "admin",
         event_name = "admin.all.wipe.completed",
         streams_purged = total_streams_purged,
         messages_purged = total_messages_purged,
@@ -150,7 +144,6 @@ pub async fn delete_message(
         info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "admin",
             event_name = "admin.notification.delete.succeeded",
             stream_name = %stream_name,
             sequence,

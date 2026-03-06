@@ -46,7 +46,6 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "configuration",
         event_name = "configuration.load.succeeded",
         host = %settings.application.host,
         port = settings.application.port,
