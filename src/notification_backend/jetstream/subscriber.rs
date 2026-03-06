@@ -24,7 +24,6 @@ pub async fn subscribe_to_topic(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.subscription.started",
         topic = %topic,
         "Starting subscription to topic with hybrid wildcard filtering"
@@ -55,7 +54,6 @@ pub async fn subscribe_to_topic(
                     info!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "backend",
                         event_name = "backend.jetstream.subscription.retry_succeeded",
                         topic = %topic_owned,
                         attempt = attempt,
@@ -65,7 +63,6 @@ pub async fn subscribe_to_topic(
                     info!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "backend",
                         event_name = "backend.jetstream.subscription.succeeded",
                         topic = %topic_owned,
                         "Successfully created subscription"
@@ -78,7 +75,6 @@ pub async fn subscribe_to_topic(
                     error!(
                         service_name = SERVICE_NAME,
                         service_version = SERVICE_VERSION,
-                        event_domain = "backend",
                         event_name = "backend.jetstream.subscription.failed",
                         error = %e,
                         topic = %topic_owned,
@@ -92,7 +88,6 @@ pub async fn subscribe_to_topic(
                 warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.jetstream.subscription.retry",
                     error = %e,
                     topic = %topic_owned,
@@ -158,7 +153,6 @@ async fn create_subscription_internal(
                             warn!(
                                 service_name = SERVICE_NAME,
                                 service_version = SERVICE_VERSION,
-                                event_domain = "backend",
                                 event_name = "backend.jetstream.message.transform.failed",
                                 error = %e,
                                 topic = %topic_for_closure,
@@ -183,7 +177,6 @@ async fn create_subscription_internal(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = "backend.jetstream.subscription.ready",
         topic = %topic,
         backend_pattern = %backend_pattern,

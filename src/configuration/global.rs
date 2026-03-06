@@ -22,7 +22,6 @@ impl Settings {
         tracing::info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
-            event_domain = "configuration",
             event_name = "configuration.global.initialized",
             has_notification_schema = self.notification_schema.is_some(),
             has_logging_config = self.logging.is_some(),

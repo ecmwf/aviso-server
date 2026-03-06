@@ -153,7 +153,7 @@ impl LogRecordBuilder {
         S: Subscriber + for<'span> LookupSpan<'span>,
         N: for<'writer> FormatFields<'writer> + 'static,
     {
-        // Keep library events raw: if a log does not set event_name/event_domain,
+        // Keep library events raw: if a log does not set event_name,
         // we do not synthesize fallback values.
         populate_request_id_from_span(ctx, &mut self.attributes);
         self
@@ -169,15 +169,33 @@ impl LogRecordBuilder {
         self
     }
 
-    fn build_json(self, formatter: &OTelLogFormatter, metadata: &tracing::Metadata<'_>) -> Value {
-        json!({
+    fn build_json(
+        mut self,
+        formatter: &OTelLogFormatter,
+        metadata: &tracing::Metadata<'_>,
+    ) -> Value {
+        // traceId and spanId are top-level LogRecord fields per the OTel log data model,
+        // not per-event attributes.
+        let trace_id = self.attributes.remove("traceId");
+        let span_id = self.attributes.remove("spanId");
+
+        let mut record = json!({
             "timestamp": Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true),
-            "severity_text": metadata.level().as_str(),
-            "severity_number": OTelLogFormatter::severity_number(metadata.level()),
+            "severityText": metadata.level().as_str(),
+            "severityNumber": OTelLogFormatter::severity_number(metadata.level()),
             "body": self.body,
             "resource": formatter.resource_json(),
             "attributes": self.attributes
-        })
+        });
+
+        if let Some(id) = trace_id {
+            record["traceId"] = id;
+        }
+        if let Some(id) = span_id {
+            record["spanId"] = id;
+        }
+
+        record
     }
 }
 
@@ -222,11 +240,10 @@ fn normalize_attribute_key(raw: &str) -> String {
     // Normalize selected callsite keys to the canonical attribute names we expose.
     match raw {
         "event_name" => "event.name".to_string(),
-        "event_domain" => "event.domain".to_string(),
         "service_name" => "service.name".to_string(),
         "service_version" => "service.version".to_string(),
         "error_type" => "error.type".to_string(),
-        "error_message" => "error.message".to_string(),
+        "error_message" => "exception.message".to_string(),
         _ => raw.to_string(),
     }
 }
@@ -268,12 +285,13 @@ fn finalize_attributes(attributes: &mut Map<String, Value>) {
 }
 
 fn promote_trace_correlation(attributes: &mut Map<String, Value>) {
-    // Promote trace/span ids to canonical top-level correlation keys.
+    // Rename OTel span extension keys to camelCase LogRecord field names so that
+    // build_json() can lift them to the top level.
     if let Some(trace_id) = attributes.remove("otel.trace_id") {
-        attributes.insert("trace_id".to_string(), trace_id);
+        attributes.insert("traceId".to_string(), trace_id);
     }
     if let Some(span_id) = attributes.remove("otel.span_id") {
-        attributes.insert("span_id".to_string(), span_id);
+        attributes.insert("spanId".to_string(), span_id);
     }
 }
 
@@ -453,13 +471,15 @@ mod tests {
         let mut attrs = Map::new();
         attrs.insert("service.name".to_string(), json!("aviso-server"));
         attrs.insert("service.version".to_string(), json!("0.1.3"));
-        attrs.insert("trace_id".to_string(), json!("trace"));
+        attrs.insert("otel.trace_id".to_string(), json!("abc123"));
 
         finalize_attributes(&mut attrs);
 
         assert!(!attrs.contains_key("service.name"));
         assert!(!attrs.contains_key("service.version"));
-        assert_eq!(attrs.get("trace_id"), Some(&json!("trace")));
+        // otel.trace_id is promoted to traceId for top-level placement in build_json.
+        assert!(!attrs.contains_key("otel.trace_id"));
+        assert_eq!(attrs.get("traceId"), Some(&json!("abc123")));
     }
 
     #[test]

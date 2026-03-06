@@ -54,7 +54,6 @@ pub fn notification_to_sse_event(
             warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "streaming",
                 event_name = "stream.sse.cloudevent.creation.failed",
                 error = %e,
                 topic = %display_topic,

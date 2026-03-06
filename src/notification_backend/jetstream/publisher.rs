@@ -39,7 +39,6 @@ async fn publish_with_retry(
                 tracing::warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.jetstream.publish.retry.channel_closed",
                     topic = %topic,
                     payload_size = payload_size,
@@ -73,7 +72,6 @@ async fn publish_once(
             tracing::warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "backend",
                 event_name = "backend.jetstream.ensure_stream.failed",
                 topic = %topic,
                 error = %error,
@@ -122,7 +120,6 @@ async fn publish_once(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "backend",
         event_name = event_name,
         topic = %topic,
         stream_name = %stream_name,

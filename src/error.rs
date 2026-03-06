@@ -187,7 +187,6 @@ impl ResponseError for ApiError {
                 warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "http",
                     event_name = "api.request.parse.failed",
                     outcome = "error",
                     error_code = code.as_str(),
@@ -214,7 +213,6 @@ impl ResponseError for ApiError {
                 warn!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "http",
                     event_name = "api.request.validation.failed",
                     outcome = "error",
                     error_code = code.as_str(),
@@ -241,7 +239,6 @@ impl ResponseError for ApiError {
                 error!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "http",
                     event_name = "api.request.processing.failed",
                     outcome = "error",
                     error_code = code.as_str(),
@@ -270,7 +267,6 @@ impl ResponseError for ApiError {
                 error!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "streaming",
                     event_name = "stream.sse.initialization.failed",
                     outcome = "error",
                     error_code = code.as_str(),

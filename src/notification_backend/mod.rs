@@ -116,7 +116,6 @@ pub async fn build_backend(
             tracing::info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "backend",
                 event_name = "backend.in_memory.initialization.started",
                 "Building in-memory notification backend"
             );
@@ -127,7 +126,6 @@ pub async fn build_backend(
             tracing::info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
-                event_domain = "backend",
                 event_name = "backend.jetstream.initialization.started",
                 "Building JetStream notification backend"
             );
@@ -137,7 +135,6 @@ pub async fn build_backend(
                 tracing::info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.jetstream.auth.token_configured",
                     "NATS token configured"
                 );
@@ -145,7 +142,6 @@ pub async fn build_backend(
                 tracing::info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
-                    event_domain = "backend",
                     event_name = "backend.jetstream.auth.unauthenticated",
                     "No NATS token configured - using unauthenticated connection"
                 );

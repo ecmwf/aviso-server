@@ -77,7 +77,6 @@ pub fn extract_aviso_notification(
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "notification",
         event_name = "notification.aviso.processed",
         operation = ?operation,
         aviso_event_type = processing_result.event_type,

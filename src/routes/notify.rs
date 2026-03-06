@@ -130,7 +130,6 @@ pub async fn notify(
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
-        event_domain = "notification",
         event_name = "api.notification.processed",
         outcome = "success",
         topic = %display_topic,
