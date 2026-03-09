@@ -60,6 +60,7 @@ async fn assert_jetstream_test_schema_is_available(client: &reqwest::Client, bas
         .get("schema")
         .and_then(|schema| schema.get("identifier"))
         .and_then(|identifier| identifier.get("polygon"))
+        .and_then(|field| field.get("rules"))
         .and_then(|rules| rules.as_array())
         .expect("schema response missing identifier.polygon rules");
     assert!(

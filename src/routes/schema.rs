@@ -2,8 +2,8 @@
 //!
 //! This module provides endpoints for querying the notification schema
 //! configuration, allowing clients to discover available event types,
-//! validation rules, and field requirements. Internal configuration
-//! details like topic structure are excluded from API responses.
+//! identifier field descriptions, validation rules, and field requirements.
+//! Internal configuration details like topic structure are excluded from API responses.
 
 use crate::configuration::{ApiEventSchema, Settings};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
@@ -16,6 +16,7 @@ use tracing::info;
 ///
 /// Returns a filtered notification schema configuration including:
 /// - All event types (dissemination, mars, etc.)
+/// - Optional description for each identifier field
 /// - Validation rules for each identifier field
 /// - Required vs optional fields
 /// - Payload configuration

@@ -2,6 +2,7 @@ use aviso_server::{
     configuration::ApplicationSettings,
     configuration::EventSchema,
     configuration::EventStoragePolicy,
+    configuration::IdentifierFieldConfig,
     configuration::InMemorySettings,
     configuration::JetStreamSettings,
     configuration::LoggingSettings,
@@ -59,18 +60,18 @@ fn build_test_polygon_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
         "date".to_string(),
-        vec![ValidationRules::DateHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::DateHandler {
             canonical_format: "%Y%m%d".to_string(),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "time".to_string(),
-        vec![ValidationRules::TimeHandler { required: false }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler { required: false }]),
     );
     identifier.insert(
         "polygon".to_string(),
-        vec![ValidationRules::PolygonHandler { required: true }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::PolygonHandler { required: true }]),
     );
 
     EventSchema {
@@ -89,18 +90,18 @@ fn build_test_polygon_js_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
         "date".to_string(),
-        vec![ValidationRules::DateHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::DateHandler {
             canonical_format: "%Y%m%d".to_string(),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "time".to_string(),
-        vec![ValidationRules::TimeHandler { required: false }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler { required: false }]),
     );
     identifier.insert(
         "polygon".to_string(),
-        vec![ValidationRules::PolygonHandler { required: true }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::PolygonHandler { required: true }]),
     );
 
     EventSchema {
@@ -134,18 +135,20 @@ fn build_test_polygon_optional_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
         "date".to_string(),
-        vec![ValidationRules::DateHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::DateHandler {
             canonical_format: "%Y%m%d".to_string(),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "time".to_string(),
-        vec![ValidationRules::TimeHandler { required: false }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler { required: false }]),
     );
     identifier.insert(
         "polygon".to_string(),
-        vec![ValidationRules::PolygonHandler { required: false }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::PolygonHandler {
+            required: false,
+        }]),
     );
 
     EventSchema {
@@ -164,21 +167,24 @@ fn build_mars_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
         "class".to_string(),
-        vec![ValidationRules::StringHandler {
-            max_length: Some(2),
-            required: true,
-        }],
+        IdentifierFieldConfig::with_description(
+            "MARS class, for example od for operational data.",
+            vec![ValidationRules::StringHandler {
+                max_length: Some(2),
+                required: true,
+            }],
+        ),
     );
     identifier.insert(
         "expver".to_string(),
-        vec![ValidationRules::ExpverHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::ExpverHandler {
             default: Some("0001".to_string()),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "domain".to_string(),
-        vec![ValidationRules::EnumHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::EnumHandler {
             values: vec![
                 "a".to_string(),
                 "b".to_string(),
@@ -208,32 +214,32 @@ fn build_mars_schema() -> EventSchema {
                 "z".to_string(),
             ],
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "date".to_string(),
-        vec![ValidationRules::DateHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::DateHandler {
             canonical_format: "%Y%m%d".to_string(),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "time".to_string(),
-        vec![ValidationRules::TimeHandler { required: false }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler { required: false }]),
     );
     identifier.insert(
         "stream".to_string(),
-        vec![ValidationRules::StringHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::StringHandler {
             max_length: None,
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "step".to_string(),
-        vec![ValidationRules::IntHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::IntHandler {
             range: Some([0, 100000]),
             required: false,
-        }],
+        }]),
     );
 
     EventSchema {
@@ -260,35 +266,35 @@ fn build_dissemination_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
         "destination".to_string(),
-        vec![ValidationRules::StringHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::StringHandler {
             max_length: None,
             required: true,
-        }],
+        }]),
     );
     identifier.insert(
         "target".to_string(),
-        vec![ValidationRules::StringHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::StringHandler {
             max_length: None,
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "class".to_string(),
-        vec![ValidationRules::StringHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::StringHandler {
             max_length: Some(2),
             required: true,
-        }],
+        }]),
     );
     identifier.insert(
         "expver".to_string(),
-        vec![ValidationRules::ExpverHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::ExpverHandler {
             default: Some("0001".to_string()),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "domain".to_string(),
-        vec![ValidationRules::EnumHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::EnumHandler {
             values: vec![
                 "a".to_string(),
                 "b".to_string(),
@@ -318,32 +324,32 @@ fn build_dissemination_schema() -> EventSchema {
                 "z".to_string(),
             ],
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "date".to_string(),
-        vec![ValidationRules::DateHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::DateHandler {
             canonical_format: "%Y%m%d".to_string(),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "time".to_string(),
-        vec![ValidationRules::TimeHandler { required: false }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler { required: false }]),
     );
     identifier.insert(
         "stream".to_string(),
-        vec![ValidationRules::StringHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::StringHandler {
             max_length: None,
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "step".to_string(),
-        vec![ValidationRules::IntHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::IntHandler {
             range: Some([0, 100000]),
             required: false,
-        }],
+        }]),
     );
 
     EventSchema {
@@ -372,7 +378,7 @@ fn build_extreme_event_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
         "region".to_string(),
-        vec![ValidationRules::EnumHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::EnumHandler {
             values: vec![
                 "north".to_string(),
                 "south".to_string(),
@@ -380,25 +386,25 @@ fn build_extreme_event_schema() -> EventSchema {
                 "west".to_string(),
             ],
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "run_time".to_string(),
-        vec![ValidationRules::TimeHandler { required: false }],
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler { required: false }]),
     );
     identifier.insert(
         "severity".to_string(),
-        vec![ValidationRules::IntHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::IntHandler {
             range: Some([1, 7]),
             required: false,
-        }],
+        }]),
     );
     identifier.insert(
         "anomaly".to_string(),
-        vec![ValidationRules::FloatHandler {
+        IdentifierFieldConfig::with_rules(vec![ValidationRules::FloatHandler {
             range: Some([0.0, 200.0]),
             required: false,
-        }],
+        }]),
     );
 
     EventSchema {

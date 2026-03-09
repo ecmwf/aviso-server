@@ -46,12 +46,42 @@ pub struct TopicConfig {
     pub key_order: Vec<String>,
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct IdentifierFieldConfig {
+    /// Optional human-readable explanation exposed by schema endpoints.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    /// Rules stay grouped under one field so metadata like descriptions is not duplicated.
+    pub rules: Vec<ValidationRules>,
+}
+
+impl IdentifierFieldConfig {
+    pub fn with_rules(rules: Vec<ValidationRules>) -> Self {
+        Self {
+            description: None,
+            rules,
+        }
+    }
+
+    pub fn with_description(description: impl Into<String>, rules: Vec<ValidationRules>) -> Self {
+        Self {
+            description: Some(description.into()),
+            rules,
+        }
+    }
+
+    pub fn is_required(&self) -> bool {
+        self.rules.iter().any(|rule| rule.is_required())
+    }
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct EventSchema {
     pub payload: Option<PayloadConfig>,
     pub topic: Option<TopicConfig>,
     pub endpoint: Option<TopicConfig>,
-    pub identifier: HashMap<String, Vec<ValidationRules>>,
+    pub identifier: HashMap<String, IdentifierFieldConfig>,
     /// Optional per-schema storage policy (backend capability validated at startup).
     pub storage_policy: Option<EventStoragePolicy>,
 }
@@ -71,7 +101,7 @@ pub struct EventStoragePolicy {
 #[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
 pub struct ApiEventSchema {
     pub payload: Option<PayloadConfig>,
-    pub identifier: HashMap<String, Vec<ValidationRules>>,
+    pub identifier: HashMap<String, IdentifierFieldConfig>,
 }
 
 impl From<&EventSchema> for ApiEventSchema {
@@ -185,7 +215,7 @@ pub struct Settings {
 
 #[cfg(test)]
 mod tests {
-    use super::{JetStreamSettings, JetStreamStorageType, PayloadConfig};
+    use super::{IdentifierFieldConfig, JetStreamSettings, JetStreamStorageType, PayloadConfig};
 
     #[test]
     fn jetstream_settings_accept_lowercase_storage_type() {
@@ -209,5 +239,19 @@ mod tests {
             r#"{"required":true,"type":["String","HashMap"]}"#,
         );
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn identifier_field_config_accepts_optional_description() {
+        let field: IdentifierFieldConfig = serde_json::from_str(
+            r#"{
+                "description":"MARS class identifier",
+                "rules":[{"type":"StringHandler","max_length":2,"required":true}]
+            }"#,
+        )
+        .expect("should deserialize identifier field config");
+
+        assert_eq!(field.description.as_deref(), Some("MARS class identifier"));
+        assert_eq!(field.rules.len(), 1);
     }
 }
