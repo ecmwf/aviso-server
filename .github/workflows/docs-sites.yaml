@@ -35,6 +35,9 @@ jobs:
   build-docs:
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action != 'closed') }}
     runs-on: ubuntu-latest
+    env:
+      MDBOOK_VERSION: "0.4.52"
+      MDBOOK_MERMAID_VERSION: "0.14.0"
     outputs:
       artifact-id: ${{ steps.upload-docs.outputs.artifact-id }}
     steps:
@@ -44,9 +47,24 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
 
+      # Cache cargo install artifacts for mdBook tooling.
+      # Key includes pinned versions so tool upgrades refresh cache automatically.
+      - name: Cache cargo install artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/bin
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: ${{ runner.os }}-docs-tools-${{ env.MDBOOK_VERSION }}-${{ env.MDBOOK_MERMAID_VERSION }}
+          restore-keys: |
+            ${{ runner.os }}-docs-tools-
+
       - name: Build docs toolchain
         run: |
-          cargo install --locked mdbook mdbook-mermaid
+          cargo install --locked mdbook --version "${MDBOOK_VERSION}"
+          cargo install --locked mdbook-mermaid --version "${MDBOOK_MERMAID_VERSION}"
 
       - name: Build mdBook
         run: |
