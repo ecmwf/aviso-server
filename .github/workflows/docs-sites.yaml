@@ -124,6 +124,48 @@ jobs:
     secrets:
       sites-token: ${{ secrets.ECMWF_SITES_DOCS_DEV_SECTION_TOKEN }}
 
+  # Compute a safe publish id used for docs publish path segments.
+  # This prevents malformed or path-like values from workflow inputs/tags.
+  compute-publish-id:
+    if: >-
+      ${{
+        (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_type == 'tag')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+      }}
+    runs-on: ubuntu-latest
+    outputs:
+      publish-id: ${{ steps.sanitize.outputs.publish_id }}
+    steps:
+      - name: Compute raw publish id
+        id: raw
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            if [ -n "${{ github.event.inputs.publish_id }}" ]; then
+              RAW_ID="${{ github.event.inputs.publish_id }}"
+            else
+              RAW_ID="manual-${{ github.run_id }}"
+            fi
+          else
+            RAW_ID="${{ github.ref_name }}"
+          fi
+          echo "raw_id=${RAW_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Sanitize publish id
+        id: sanitize
+        run: |
+          set -euo pipefail
+          RAW_ID="${{ steps.raw.outputs.raw_id }}"
+
+          # Keep only URL/path-safe characters and normalize separators.
+          SANITIZED="$(printf '%s' "$RAW_ID" | sed -E 's|/+|-|g; s|[^A-Za-z0-9._-]|-|g; s|^[.-]+||; s|[.-]+$||')"
+
+          if [ -z "$SANITIZED" ]; then
+            echo "Sanitized publish id is empty; refusing to publish." >&2
+            exit 1
+          fi
+
+          echo "publish_id=${SANITIZED}" >> "$GITHUB_OUTPUT"
+
   # Publish canonical docs on:
   # - push to main/tags, or
   # - manual run when publish=true.
@@ -133,16 +175,17 @@ jobs:
         (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_type == 'tag')) ||
         (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
       }}
-    needs: build-docs
+    needs:
+      - build-docs
+      - compute-publish-id
     uses: ecmwf/reusable-workflows/.github/workflows/docs-publish.yml@5a1d1cb1442aa632f7823e4088d639b980627afc
     with:
       artifact-id: ${{ needs.build-docs.outputs.artifact-id }}
       space: docs
       name: dev-section
       path: aviso-server
-      # Push events use ref name (main/tag); manual events can override with publish_id.
-      # If publish_id is empty, fallback to `manual-<run_id>`.
-      id: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.publish_id != '' && github.event.inputs.publish_id || format('manual-{0}', github.run_id)) || github.ref_name }}
+      # Use sanitized id from compute-publish-id.
+      id: ${{ needs.compute-publish-id.outputs.publish-id }}
       # Keep stable aliases only for push events:
       # - tag publish => stable
       # - main publish => latest
