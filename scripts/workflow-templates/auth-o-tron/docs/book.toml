@@ -1,0 +1,8 @@
+[book]
+title = "auth-o-tron Documentation"
+authors = ["ECMWF"]
+language = "en"
+src = "src"
+
+[build]
+build-dir = "book"
