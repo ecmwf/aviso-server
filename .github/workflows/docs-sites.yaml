@@ -30,8 +30,9 @@ permissions:
   contents: read
 
 jobs:
-  # Always build docs for push/manual and open PR events.
-  # This artifact is consumed by preview/publish jobs.
+  # Build docs for push/manual and all open PRs (including forks).
+  # Fork PRs do not publish previews because secrets are unavailable there.
+  # This artifact is consumed by preview/publish jobs when eligible.
   build-docs:
     if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action != 'closed') }}
     runs-on: ubuntu-latest
@@ -70,6 +71,7 @@ jobs:
 
             if command -v "${bin}" >/dev/null 2>&1; then
               local current
+              # mdbook tools report versions like `v0.4.x`; normalize to `0.4.x`.
               current="$("${bin}" --version | awk '{print $2}')"
               current="${current#v}"
               if [ "${current}" = "${version}" ]; then
@@ -139,15 +141,15 @@ jobs:
       - name: Compute raw publish id
         id: raw
         run: |
+          RAW_ID="${{ github.ref_name }}"
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            if [ -n "${{ github.event.inputs.publish_id }}" ]; then
-              RAW_ID="${{ github.event.inputs.publish_id }}"
-            else
+            RAW_ID="${{ github.event.inputs.publish_id }}"
+            if [ -z "$RAW_ID" ]; then
               RAW_ID="manual-${{ github.run_id }}"
             fi
-          else
-            RAW_ID="${{ github.ref_name }}"
           fi
+
           echo "raw_id=${RAW_ID}" >> "$GITHUB_OUTPUT"
 
       - name: Sanitize publish id
@@ -156,8 +158,8 @@ jobs:
           set -euo pipefail
           RAW_ID="${{ steps.raw.outputs.raw_id }}"
 
-          # Keep only URL/path-safe characters and normalize separators.
-          SANITIZED="$(printf '%s' "$RAW_ID" | sed -E 's|/+|-|g; s|[^A-Za-z0-9._-]|-|g; s|^[.-]+||; s|[.-]+$||')"
+          # Keep only URL/path-safe chars and normalize repeated separators.
+          SANITIZED="$(printf '%s' "$RAW_ID" | sed -E 's|/+|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|\.+|.|g; s|^[.-]+||; s|[.-]+$||')"
 
           if [ -z "$SANITIZED" ]; then
             echo "Sanitized publish id is empty; refusing to publish." >&2
