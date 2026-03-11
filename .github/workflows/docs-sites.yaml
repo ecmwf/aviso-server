@@ -64,8 +64,25 @@ jobs:
 
       - name: Build docs toolchain
         run: |
-          cargo install --locked mdbook --version "${MDBOOK_VERSION}"
-          cargo install --locked mdbook-mermaid --version "${MDBOOK_MERMAID_VERSION}"
+          ensure_tool() {
+            local bin="$1"
+            local crate="$2"
+            local version="$3"
+
+            if command -v "${bin}" >/dev/null 2>&1; then
+              local current
+              current="$("${bin}" --version | awk '{print $2}')"
+              if [ "${current}" = "${version}" ]; then
+                echo "${bin} ${version} already present; skipping install."
+                return 0
+              fi
+            fi
+
+            cargo install --locked "${crate}" --version "${version}" --force
+          }
+
+          ensure_tool mdbook mdbook "${MDBOOK_VERSION}"
+          ensure_tool mdbook-mermaid mdbook-mermaid "${MDBOOK_MERMAID_VERSION}"
 
       - name: Build mdBook
         run: |
