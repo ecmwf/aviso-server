@@ -1,0 +1,112 @@
+# Builds mdBook docs and publishes them to ECMWF Sites:
+# - PRs get preview publish/unpublish under `aviso-server/pull-requests`.
+# - Pushes to `main`/tags publish canonical docs under `aviso-server`.
+# - Manual runs are build-only by default; publish is opt-in.
+name: Docs Sites Publish
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  push:
+    branches:
+      - main
+    tags:
+      - "*"
+  workflow_dispatch:
+    inputs:
+      # Safe default: allow validating workflow/build from GitHub UI without publishing.
+      publish:
+        description: "Also publish docs to sites (default: build artifact only)"
+        required: false
+        type: boolean
+        default: false
+      # Optional override for manual publish id/path segment.
+      publish_id:
+        description: "Optional publish id when publish=true (default: manual-<run_id>)"
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  # Always build docs for push/manual and open PR events.
+  # This artifact is consumed by preview/publish jobs.
+  build-docs:
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action != 'closed') }}
+    runs-on: ubuntu-latest
+    outputs:
+      artifact-id: ${{ steps.upload-docs.outputs.artifact-id }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Build docs toolchain
+        run: |
+          cargo install --locked mdbook mdbook-mermaid
+
+      - name: Build mdBook
+        run: |
+          mdbook build docs
+
+      - name: Archive documentation
+        id: upload-docs
+        uses: actions/upload-artifact@v4
+        with:
+          name: aviso-server-docs
+          path: docs/book
+
+  # Publish PR preview docs and attach preview link to the PR.
+  preview-publish:
+    if: ${{ github.event_name == 'pull_request' && github.event.action != 'closed' }}
+    needs: build-docs
+    uses: ecmwf/reusable-workflows/.github/workflows/pr-preview-publish.yml@main
+    with:
+      artifact-id: ${{ needs.build-docs.outputs.artifact-id }}
+      space: docs
+      name: dev-section
+      path: aviso-server/pull-requests
+      link-tag: PREVIEW-PUBLISH-AVISO-DOCS
+      link-text: "Docs Preview"
+    secrets:
+      sites-token: ${{ secrets.ECMWF_SITES_DOCS_DEV_SECTION_TOKEN }}
+
+  # Remove preview docs when PR is closed to avoid stale preview content.
+  preview-unpublish:
+    if: ${{ github.event_name == 'pull_request' && github.event.action == 'closed' }}
+    uses: ecmwf/reusable-workflows/.github/workflows/pr-preview-unpublish.yml@main
+    with:
+      space: docs
+      name: dev-section
+      path: aviso-server/pull-requests
+    secrets:
+      sites-token: ${{ secrets.ECMWF_SITES_DOCS_DEV_SECTION_TOKEN }}
+
+  # Publish canonical docs on:
+  # - push to main/tags, or
+  # - manual run when publish=true.
+  publish-docs:
+    if: >-
+      ${{
+        (github.event_name == 'push' && (github.ref_name == 'main' || github.ref_type == 'tag')) ||
+        (github.event_name == 'workflow_dispatch' && github.event.inputs.publish == 'true')
+      }}
+    needs: build-docs
+    uses: ecmwf/reusable-workflows/.github/workflows/docs-publish.yml@main
+    with:
+      artifact-id: ${{ needs.build-docs.outputs.artifact-id }}
+      space: docs
+      name: dev-section
+      path: aviso-server
+      # Push events use ref name (main/tag); manual events can override with publish_id.
+      # If publish_id is empty, fallback to `manual-<run_id>`.
+      id: ${{ github.event_name == 'workflow_dispatch' && (github.event.inputs.publish_id != '' && github.event.inputs.publish_id || format('manual-{0}', github.run_id)) || github.ref_name }}
+      # Keep stable aliases only for push events:
+      # - tag publish => stable
+      # - main publish => latest
+      softlink: ${{ github.event_name == 'push' && (github.ref_type == 'tag' && 'stable' || github.ref_name == 'main' && 'latest') || '' }}
+    secrets:
+      sites-token: ${{ secrets.ECMWF_SITES_DOCS_DEV_SECTION_TOKEN }}
