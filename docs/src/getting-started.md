@@ -46,14 +46,12 @@ notification_schema:
     identifier:
       region:
         description: "Geographic region label."
-        rules:
-          - type: EnumHandler
-            values: ["north", "south", "east", "west"]
-            required: true
+        type: EnumHandler
+        values: ["north", "south", "east", "west"]
+        required: true
       date:
-        rules:
-          - type: DateHandler
-            required: true
+        type: DateHandler
+        required: true
     payload:
       required: false
 ```

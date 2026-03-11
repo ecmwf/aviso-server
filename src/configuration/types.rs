@@ -1,5 +1,5 @@
 use aviso_validators::ValidationRules;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_aux::field_attributes::deserialize_number_from_string;
 use std::collections::HashMap;
 use utoipa::ToSchema;
@@ -46,33 +46,97 @@ pub struct TopicConfig {
     pub key_order: Vec<String>,
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
-#[serde(deny_unknown_fields)]
+#[derive(Clone, Debug, ToSchema)]
 pub struct IdentifierFieldConfig {
     /// Optional human-readable explanation exposed by schema endpoints.
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
-    /// Rules stay grouped under one field so metadata like descriptions is not duplicated.
-    pub rules: Vec<ValidationRules>,
+    pub rule: ValidationRules,
 }
 
 impl IdentifierFieldConfig {
-    pub fn with_rules(rules: Vec<ValidationRules>) -> Self {
+    pub fn with_rule(rule: ValidationRules) -> Self {
         Self {
             description: None,
-            rules,
+            rule,
         }
     }
 
-    pub fn with_description(description: impl Into<String>, rules: Vec<ValidationRules>) -> Self {
+    pub fn with_description(description: impl Into<String>, rule: ValidationRules) -> Self {
         Self {
             description: Some(description.into()),
-            rules,
+            rule,
         }
     }
 
     pub fn is_required(&self) -> bool {
-        self.rules.iter().any(|rule| rule.is_required())
+        self.rule.is_required()
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct IdentifierFieldConfigRepr {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<String>,
+    #[serde(flatten)]
+    rule_fields: HashMap<String, serde_json::Value>,
+}
+
+impl<'de> Deserialize<'de> for IdentifierFieldConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        // Keep config/API shape flat (`description` + rule fields) while
+        // reusing `ValidationRules` as the internal representation.
+        let repr = IdentifierFieldConfigRepr::deserialize(deserializer)?;
+        let rule_value = serde_json::Value::Object(repr.rule_fields.into_iter().collect());
+        let rule = serde_json::from_value(rule_value.clone()).map_err(serde::de::Error::custom)?;
+
+        // ValidationRules ignores unknown fields by default, so explicitly reject
+        // extras to keep config errors deterministic for operators.
+        let normalized_rule = serde_json::to_value(&rule).map_err(serde::de::Error::custom)?;
+        let input_fields = rule_value
+            .as_object()
+            .expect("rule_value is always serialized as object");
+        let normalized_fields = normalized_rule
+            .as_object()
+            .expect("validation rule must serialize to object");
+        let unknown_fields: Vec<&str> = input_fields
+            .keys()
+            .filter(|field| !normalized_fields.contains_key(*field))
+            .map(String::as_str)
+            .collect();
+        if !unknown_fields.is_empty() {
+            return Err(serde::de::Error::custom(format!(
+                "unknown field(s): {}",
+                unknown_fields.join(", ")
+            )));
+        }
+
+        Ok(Self {
+            description: repr.description,
+            rule,
+        })
+    }
+}
+
+impl Serialize for IdentifierFieldConfig {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let rule_value = serde_json::to_value(&self.rule).map_err(serde::ser::Error::custom)?;
+        let serde_json::Value::Object(rule_fields) = rule_value else {
+            return Err(serde::ser::Error::custom(
+                "validation rule must serialize to an object",
+            ));
+        };
+
+        IdentifierFieldConfigRepr {
+            description: self.description.clone(),
+            rule_fields: rule_fields.into_iter().collect(),
+        }
+        .serialize(serializer)
     }
 }
 
@@ -216,6 +280,7 @@ pub struct Settings {
 #[cfg(test)]
 mod tests {
     use super::{IdentifierFieldConfig, JetStreamSettings, JetStreamStorageType, PayloadConfig};
+    use aviso_validators::ValidationRules;
 
     #[test]
     fn jetstream_settings_accept_lowercase_storage_type() {
@@ -246,12 +311,63 @@ mod tests {
         let field: IdentifierFieldConfig = serde_json::from_str(
             r#"{
                 "description":"MARS class identifier",
-                "rules":[{"type":"StringHandler","max_length":2,"required":true}]
+                "type":"StringHandler",
+                "max_length":2,
+                "required":true
             }"#,
         )
         .expect("should deserialize identifier field config");
 
         assert_eq!(field.description.as_deref(), Some("MARS class identifier"));
-        assert_eq!(field.rules.len(), 1);
+        assert!(matches!(
+            field.rule,
+            ValidationRules::StringHandler {
+                max_length: Some(2),
+                required: true
+            }
+        ));
+    }
+
+    #[test]
+    fn identifier_field_config_serializes_flat_without_rule_wrapper() {
+        let field =
+            IdentifierFieldConfig::with_rule(ValidationRules::TimeHandler { required: false });
+
+        let serialized =
+            serde_json::to_value(&field).expect("should serialize identifier field config");
+        let object = serialized
+            .as_object()
+            .expect("identifier field config should serialize as object");
+
+        assert_eq!(
+            object.get("type").and_then(|v| v.as_str()),
+            Some("TimeHandler")
+        );
+        assert_eq!(
+            object.get("required").and_then(|v| v.as_bool()),
+            Some(false)
+        );
+        assert!(
+            object.get("rule").is_none(),
+            "serialized field must not include nested `rule` object"
+        );
+        assert!(
+            object.get("description").is_none(),
+            "description should be omitted when not configured"
+        );
+    }
+
+    #[test]
+    fn identifier_field_config_rejects_unknown_rule_field() {
+        let result = serde_json::from_str::<IdentifierFieldConfig>(
+            r#"{
+                "type":"StringHandler",
+                "max_length":2,
+                "required":true,
+                "unknown_field":"oops"
+            }"#,
+        );
+
+        assert!(result.is_err());
     }
 }

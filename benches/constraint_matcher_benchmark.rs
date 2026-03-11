@@ -65,51 +65,49 @@ fn init_benchmark_schema() {
         let mut mars_identifier = HashMap::new();
         mars_identifier.insert(
             "class".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::StringHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
                 max_length: Some(2),
                 required: true,
-            }]),
+            }),
         );
         mars_identifier.insert(
             "expver".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::ExpverHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::ExpverHandler {
                 default: Some("0001".to_string()),
                 required: false,
-            }]),
+            }),
         );
         mars_identifier.insert(
             "domain".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::EnumHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::EnumHandler {
                 values: vec!["g".to_string(), "a".to_string(), "z".to_string()],
                 required: false,
-            }]),
+            }),
         );
         mars_identifier.insert(
             "date".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::DateHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::DateHandler {
                 canonical_format: "%Y%m%d".to_string(),
                 required: false,
-            }]),
+            }),
         );
         mars_identifier.insert(
             "time".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler {
-                required: false,
-            }]),
+            IdentifierFieldConfig::with_rule(ValidationRules::TimeHandler { required: false }),
         );
         mars_identifier.insert(
             "stream".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::StringHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
                 max_length: None,
                 required: false,
-            }]),
+            }),
         );
         mars_identifier.insert(
             "step".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::IntHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::IntHandler {
                 range: Some([0, 100000]),
                 required: false,
-            }]),
+            }),
         );
         notification_schema.insert(
             "mars".to_string(),
@@ -136,30 +134,28 @@ fn init_benchmark_schema() {
         let mut extreme_identifier = HashMap::new();
         extreme_identifier.insert(
             "region".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::EnumHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::EnumHandler {
                 values: vec!["north".to_string(), "south".to_string()],
                 required: false,
-            }]),
+            }),
         );
         extreme_identifier.insert(
             "run_time".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::TimeHandler {
-                required: false,
-            }]),
+            IdentifierFieldConfig::with_rule(ValidationRules::TimeHandler { required: false }),
         );
         extreme_identifier.insert(
             "severity".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::IntHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::IntHandler {
                 range: Some([1, 7]),
                 required: false,
-            }]),
+            }),
         );
         extreme_identifier.insert(
             "anomaly".to_string(),
-            IdentifierFieldConfig::with_rules(vec![ValidationRules::FloatHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::FloatHandler {
                 range: Some([0.0, 200.0]),
                 required: false,
-            }]),
+            }),
         );
         notification_schema.insert(
             "extreme".to_string(),
