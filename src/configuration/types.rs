@@ -46,7 +46,7 @@ pub struct TopicConfig {
     pub key_order: Vec<String>,
 }
 
-#[derive(Clone, Debug, ToSchema)]
+#[derive(Clone, Debug)]
 pub struct IdentifierFieldConfig {
     /// Optional human-readable explanation exposed by schema endpoints.
     pub description: Option<String>,
@@ -165,6 +165,8 @@ pub struct EventStoragePolicy {
 #[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
 pub struct ApiEventSchema {
     pub payload: Option<PayloadConfig>,
+    /// Flattened identifier field objects keyed by identifier name.
+    #[schema(value_type = Object)]
     pub identifier: HashMap<String, IdentifierFieldConfig>,
 }
 

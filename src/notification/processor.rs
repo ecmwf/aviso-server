@@ -138,7 +138,7 @@ impl<'a> NotificationProcessor<'a> {
             )?;
 
             // Polygon fields attach spatial metadata for downstream filtering.
-            if matches!(field_config.rule, ValidationRules::PolygonHandler { .. }) {
+            if matches!(&field_config.rule, ValidationRules::PolygonHandler { .. }) {
                 let coordinates = PolygonHandler::parse_polygon_coordinates(&scalar_value)?;
 
                 spatial_metadata = Some(SpatialMetadata::from_coordinates(&coordinates)?);

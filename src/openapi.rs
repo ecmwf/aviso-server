@@ -35,7 +35,6 @@ use utoipa::OpenApi;
 
             // Configuration types (add these if they have ToSchema)
             crate::configuration::ApiEventSchema,
-            crate::configuration::IdentifierFieldConfig,
             crate::configuration::PayloadConfig,
 
             // Admin endpoints
