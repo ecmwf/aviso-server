@@ -56,7 +56,7 @@ async fn assert_jetstream_test_schema_is_available(client: &reqwest::Client, bas
         "unexpected event_type returned for schema lookup"
     );
 
-    let polygon_rules = body
+    let polygon_type = body
         .get("schema")
         .and_then(|schema| schema.get("identifier"))
         .and_then(|identifier| identifier.get("polygon"))
@@ -64,7 +64,7 @@ async fn assert_jetstream_test_schema_is_available(client: &reqwest::Client, bas
         .and_then(|value| value.as_str())
         .expect("schema response missing identifier.polygon type");
     assert_eq!(
-        polygon_rules, "PolygonHandler",
+        polygon_type, "PolygonHandler",
         "schema response must expose polygon identifier type"
     );
 }

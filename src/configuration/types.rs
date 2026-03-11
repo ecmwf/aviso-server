@@ -165,16 +165,39 @@ pub struct EventStoragePolicy {
 #[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
 pub struct ApiEventSchema {
     pub payload: Option<PayloadConfig>,
-    /// Flattened identifier field objects keyed by identifier name.
-    #[schema(value_type = Object)]
-    pub identifier: HashMap<String, IdentifierFieldConfig>,
+    pub identifier: HashMap<String, ApiIdentifierFieldConfig>,
+}
+
+/// OpenAPI-facing identifier field shape for schema endpoints.
+///
+/// This mirrors the flattened runtime JSON contract:
+/// `description` plus handler fields at the same level.
+#[derive(Deserialize, Serialize, Clone, Debug, ToSchema)]
+pub struct ApiIdentifierFieldConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(flatten)]
+    pub rule: ValidationRules,
+}
+
+impl From<&IdentifierFieldConfig> for ApiIdentifierFieldConfig {
+    fn from(field: &IdentifierFieldConfig) -> Self {
+        Self {
+            description: field.description.clone(),
+            rule: field.rule.clone(),
+        }
+    }
 }
 
 impl From<&EventSchema> for ApiEventSchema {
     fn from(schema: &EventSchema) -> Self {
         Self {
             payload: schema.payload.clone(),
-            identifier: schema.identifier.clone(),
+            identifier: schema
+                .identifier
+                .iter()
+                .map(|(key, value)| (key.clone(), ApiIdentifierFieldConfig::from(value)))
+                .collect(),
         }
     }
 }
