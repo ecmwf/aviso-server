@@ -45,12 +45,13 @@ notification_schema:
       key_order: ["region", "date"]
     identifier:
       region:
-        - type: EnumHandler
-          values: ["north", "south", "east", "west"]
-          required: true
+        description: "Geographic region label."
+        type: EnumHandler
+        values: ["north", "south", "east", "west"]
+        required: true
       date:
-        - type: DateHandler
-          required: true
+        type: DateHandler
+        required: true
     payload:
       required: false
 ```

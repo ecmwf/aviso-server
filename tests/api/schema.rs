@@ -1,4 +1,5 @@
 use crate::helpers::spawn_streaming_test_app;
+use serde_json::Value;
 
 #[tokio::test]
 async fn schema_list_does_not_expose_storage_policy() {
@@ -37,5 +38,60 @@ async fn event_schema_does_not_expose_storage_policy() {
     assert!(
         !body.contains("\"storage_policy\""),
         "event schema response must not expose storage_policy; body: {body}"
+    );
+}
+
+#[tokio::test]
+async fn event_schema_exposes_identifier_description_when_configured() {
+    let app = spawn_streaming_test_app().await;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/schema/mars", app.address))
+        .send()
+        .await
+        .expect("failed to call event schema endpoint");
+
+    assert_eq!(response.status().as_u16(), 200);
+    let body: Value = response
+        .json()
+        .await
+        .expect("failed to parse event schema response");
+
+    let description = body
+        .get("schema")
+        .and_then(|schema| schema.get("identifier"))
+        .and_then(|identifier| identifier.get("class"))
+        .and_then(|field| field.get("description"))
+        .and_then(|description| description.as_str());
+
+    assert_eq!(
+        description,
+        Some("MARS class, for example od for operational data.")
+    );
+}
+
+#[tokio::test]
+async fn event_schema_omits_identifier_description_when_not_configured() {
+    let app = spawn_streaming_test_app().await;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/schema/mars", app.address))
+        .send()
+        .await
+        .expect("failed to call event schema endpoint");
+
+    assert_eq!(response.status().as_u16(), 200);
+    let body: Value = response
+        .json()
+        .await
+        .expect("failed to parse event schema response");
+
+    let time_field = body
+        .get("schema")
+        .and_then(|schema| schema.get("identifier"))
+        .and_then(|identifier| identifier.get("time"))
+        .expect("schema response missing identifier.time");
+
+    assert!(
+        time_field.get("description").is_none(),
+        "identifier.time description should be omitted when not configured"
     );
 }

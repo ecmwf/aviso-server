@@ -69,7 +69,6 @@ fn is_notification_validation_error(error: &anyhow::Error) -> bool {
         message.starts_with("required field ")
             || message.starts_with("payload is required")
             || message.contains("unknown event type")
-            || message.starts_with("no validation rules found for field")
             || message.starts_with("field '")
             || message.contains("must be a valid")
     })

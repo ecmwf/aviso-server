@@ -64,8 +64,8 @@ impl NotificationRegistry {
             let required_keys: Vec<String> = schema
                 .identifier
                 .iter()
-                .filter_map(|(key, rules)| {
-                    let is_required = rules.iter().any(|rule| rule.is_required());
+                .filter_map(|(key, field_config)| {
+                    let is_required = field_config.is_required();
                     if is_required { Some(key.clone()) } else { None }
                 })
                 .collect();

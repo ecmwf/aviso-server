@@ -117,7 +117,7 @@ impl<'a> NotificationProcessor<'a> {
         let mut canonicalized = HashMap::new();
         let mut spatial_metadata = None;
 
-        for (field_name, rules) in &schema.identifier {
+        for (field_name, field_config) in &schema.identifier {
             let value = request_params.get(field_name).context(format!(
                 "Required field '{}' missing for notify operation",
                 field_name
@@ -131,11 +131,14 @@ impl<'a> NotificationProcessor<'a> {
             let scalar_value =
                 NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
 
-            let canonicalized_value =
-                self.validate_and_canonicalize_field(field_name, &scalar_value, rules)?;
+            let canonicalized_value = self.validate_and_canonicalize_field(
+                field_name,
+                &scalar_value,
+                &field_config.rule,
+            )?;
 
             // Polygon fields attach spatial metadata for downstream filtering.
-            if matches!(rules.first(), Some(ValidationRules::PolygonHandler { .. })) {
+            if matches!(&field_config.rule, ValidationRules::PolygonHandler { .. }) {
                 let coordinates = PolygonHandler::parse_polygon_coordinates(&scalar_value)?;
 
                 spatial_metadata = Some(SpatialMetadata::from_coordinates(&coordinates)?);
@@ -205,19 +208,23 @@ impl<'a> NotificationProcessor<'a> {
         let mut identifier_constraints = HashMap::new();
         let has_point = request_params.contains_key("point");
 
-        for (field_name, rules) in &schema.identifier {
-            let is_required = rules.iter().any(|rule| rule.is_required());
+        for (field_name, field_config) in &schema.identifier {
+            let is_required = field_config.is_required();
 
             if let Some(value) = request_params.get(field_name) {
                 if value.is_object() {
-                    let constraint = self.parse_identifier_constraint(field_name, value, rules)?;
+                    let constraint =
+                        self.parse_identifier_constraint(field_name, value, &field_config.rule)?;
                     canonicalized.insert(field_name.clone(), "*".to_string());
                     identifier_constraints.insert(field_name.clone(), constraint);
                 } else {
                     let scalar_value =
                         NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
-                    let canonicalized_value =
-                        self.validate_and_canonicalize_field(field_name, &scalar_value, rules)?;
+                    let canonicalized_value = self.validate_and_canonicalize_field(
+                        field_name,
+                        &scalar_value,
+                        &field_config.rule,
+                    )?;
                     canonicalized.insert(field_name.clone(), canonicalized_value);
                 }
             } else if is_required {
@@ -296,14 +303,8 @@ impl<'a> NotificationProcessor<'a> {
         &self,
         field_name: &str,
         value: &str,
-        rules: &[ValidationRules],
+        rule: &ValidationRules,
     ) -> Result<String> {
-        // Current schema model uses one effective rule per field.
-        let rule = rules.first().context(format!(
-            "No validation rules found for field '{}'",
-            field_name
-        ))?;
-
         match rule {
             ValidationRules::StringHandler { max_length, .. } => {
                 StringHandler::validate_and_canonicalize(value, *max_length, field_name)
@@ -336,13 +337,8 @@ impl<'a> NotificationProcessor<'a> {
         &self,
         field_name: &str,
         value: &Value,
-        rules: &[ValidationRules],
+        rule: &ValidationRules,
     ) -> Result<IdentifierConstraint> {
-        let rule = rules.first().context(format!(
-            "No validation rules found for field '{}'",
-            field_name
-        ))?;
-
         match rule {
             ValidationRules::IntHandler { range, .. } => Ok(IdentifierConstraint::Int(
                 parse_int_constraint(field_name, value, range.as_ref())?,
@@ -364,7 +360,7 @@ impl<'a> NotificationProcessor<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::configuration::{EventSchema, PayloadConfig, TopicConfig};
+    use crate::configuration::{EventSchema, IdentifierFieldConfig, PayloadConfig, TopicConfig};
     use aviso_validators::ValidationRules;
     use std::collections::HashMap;
 
@@ -372,24 +368,24 @@ mod tests {
         let mut identifier = HashMap::new();
         identifier.insert(
             "class".to_string(),
-            vec![ValidationRules::StringHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
                 max_length: Some(2),
                 required: true,
-            }],
+            }),
         );
         identifier.insert(
             "destination".to_string(),
-            vec![ValidationRules::StringHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
                 max_length: None,
                 required: true,
-            }],
+            }),
         );
         identifier.insert(
             "optional_field".to_string(),
-            vec![ValidationRules::StringHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
                 max_length: None,
                 required: false,
-            }],
+            }),
         );
 
         EventSchema {
@@ -408,18 +404,18 @@ mod tests {
         let mut identifier = HashMap::new();
         identifier.insert(
             "date".to_string(),
-            vec![ValidationRules::DateHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::DateHandler {
                 canonical_format: "%Y%m%d".to_string(),
                 required: false,
-            }],
+            }),
         );
         identifier.insert(
             "time".to_string(),
-            vec![ValidationRules::TimeHandler { required: false }],
+            IdentifierFieldConfig::with_rule(ValidationRules::TimeHandler { required: false }),
         );
         identifier.insert(
             "polygon".to_string(),
-            vec![ValidationRules::PolygonHandler { required: true }],
+            IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler { required: true }),
         );
 
         EventSchema {
@@ -438,10 +434,10 @@ mod tests {
         let mut identifier = HashMap::new();
         identifier.insert(
             "severity".to_string(),
-            vec![ValidationRules::FloatHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::FloatHandler {
                 range: Some([1.0, 7.0]),
                 required: true,
-            }],
+            }),
         );
 
         EventSchema {
@@ -896,56 +892,22 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_rule_not_found() {
-        let mut identifier = HashMap::new();
-        identifier.insert("field".to_string(), vec![]); // Empty rules
-
-        let schema = EventSchema {
-            payload: None,
-            topic: None,
-            endpoint: None,
-            identifier,
-            storage_policy: None,
-        };
-
-        let mut schemas = HashMap::new();
-        schemas.insert("test_event".to_string(), schema);
-        let registry = NotificationRegistry::from_config(&schemas);
-        let processor = NotificationProcessor::new(&registry);
-
-        let mut params = HashMap::new();
-        params.insert("field".to_string(), "value".to_string());
-
-        let payload = None;
-        let result =
-            processor.process_request("test_event", &params, &payload, OperationType::Notify);
-
-        assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("No validation rules found")
-        );
-    }
-
-    #[test]
     fn test_payload_extraction_optional_missing() {
         // Create a schema with optional payload configuration
         let mut identifier = HashMap::new();
         identifier.insert(
             "class".to_string(),
-            vec![ValidationRules::StringHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
                 max_length: Some(2),
                 required: true,
-            }],
+            }),
         );
         identifier.insert(
             "destination".to_string(),
-            vec![ValidationRules::StringHandler {
+            IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
                 max_length: None,
                 required: true,
-            }],
+            }),
         );
 
         let schema = EventSchema {
