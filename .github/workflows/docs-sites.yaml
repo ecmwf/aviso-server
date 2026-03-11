@@ -26,6 +26,11 @@ on:
         required: false
         type: string
 
+concurrency:
+  # Keep only the latest run per PR/ref to avoid stale docs publishes.
+  group: docs-sites-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -141,6 +146,8 @@ jobs:
       - name: Compute raw publish id
         id: raw
         run: |
+          set -euo pipefail
+
           RAW_ID="${{ github.ref_name }}"
 
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
@@ -150,7 +157,12 @@ jobs:
             fi
           fi
 
-          echo "raw_id=${RAW_ID}" >> "$GITHUB_OUTPUT"
+          # Use multiline-safe output format to avoid output injection.
+          {
+            echo "raw_id<<EOF"
+            printf '%s\n' "$RAW_ID"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Sanitize publish id
         id: sanitize
