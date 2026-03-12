@@ -35,6 +35,7 @@
 - [Deployment Modes](./deployment-modes.md)
 - [Configuration](./configuration.md)
 - [Configuration Reference](./configuration-reference.md)
+- [Authentication](./authentication.md)
 
 ---
 

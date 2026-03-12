@@ -38,12 +38,13 @@ AVISOSERVER_NOTIFICATION_BACKEND__JETSTREAM__NATS_URL=nats://localhost:4222
 
 ## Config File Structure
 
-The five top-level sections are:
+The top-level sections are:
 
 | Section | Purpose |
 |---|---|
 | `application` | Server host, port, static files path |
 | `logging` | Log level and format |
+| `auth` | Authentication mode, secrets, admin roles |
 | `notification_backend` | Backend selection and backend-specific settings |
 | `notification_schema` | Per-event-type validation, topic ordering, storage policy |
 | `watch_endpoint` | SSE heartbeat, connection limits, replay batch settings |
