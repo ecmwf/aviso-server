@@ -73,6 +73,17 @@ pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
         }
 
         if settings.auth.enabled {
+            if !stream_auth.required
+                && stream_auth
+                    .allowed_roles
+                    .as_ref()
+                    .is_some_and(|roles| !roles.is_empty())
+            {
+                bail!(
+                    "Schema '{event_type}' sets auth.allowed_roles while auth.required=false; \
+                     set auth.required=true or remove auth.allowed_roles"
+                );
+            }
             continue;
         }
 
@@ -929,6 +940,41 @@ mod tests {
         assert!(
             err.to_string()
                 .contains("auth.allowed_roles must not contain empty or whitespace-only entries")
+        );
+    }
+
+    #[test]
+    fn rejects_allowed_roles_when_required_is_false_and_auth_enabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: false,
+                    allowed_roles: Some(vec!["reader".to_string()]),
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles = vec!["admin".to_string()];
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.allowed_roles while auth.required=false")
         );
     }
 

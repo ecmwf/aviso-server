@@ -337,7 +337,7 @@ fn resolve_direct_credentials(req: &ServiceRequest) -> Result<Option<String>, Au
                 "Authorization header cannot be empty",
             ));
         }
-        let Some((scheme, _)) = value.split_once(' ') else {
+        let Some((scheme, credentials)) = value.split_once(' ') else {
             return Err(AuthFailure::Unauthorized(
                 "Authorization header must use Bearer or Basic scheme",
             ));
@@ -345,6 +345,11 @@ fn resolve_direct_credentials(req: &ServiceRequest) -> Result<Option<String>, Au
         if !scheme.eq_ignore_ascii_case("Bearer") && !scheme.eq_ignore_ascii_case("Basic") {
             return Err(AuthFailure::Unauthorized(
                 "Authorization header must use Bearer or Basic scheme",
+            ));
+        }
+        if credentials.trim().is_empty() {
+            return Err(AuthFailure::Unauthorized(
+                "Authorization header credentials cannot be empty",
             ));
         }
         return Ok(Some(value.to_string()));
