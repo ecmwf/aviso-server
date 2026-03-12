@@ -117,9 +117,11 @@ notification_schema:
 
 | `auth.required` | `auth.allowed_roles` | Result |
 |-----------------|----------------------|--------|
-| `false` or omitted | — | Anonymous access (no credentials needed) |
+| `false` (or `auth` block omitted) | — | Anonymous access (no credentials needed) |
 | `true` | omitted | Any authenticated user can access |
 | `true` | `["admin"]` | Only users with listed roles can access |
+
+When a per-stream `auth` block is present, `auth.required` must be explicitly set to either `true` or `false`.
 
 ## Admin Endpoints
 

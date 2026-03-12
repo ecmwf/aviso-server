@@ -103,11 +103,11 @@ You can configure authentication requirements per stream in your notification sc
 
 ```yaml
 notification_schema:
-  # Public stream - any authenticated user
+  # Authenticated stream - any valid user
   public_stream:
     # ... other config
     auth:
-      required: true  # Auth required, but any role allowed
+      required: true  # Any authenticated user allowed
 
   # Restricted stream - specific roles only
   admin_stream:
