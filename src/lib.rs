@@ -1,3 +1,4 @@
+pub mod auth;
 pub mod cloudevents;
 pub mod configuration;
 pub mod error;

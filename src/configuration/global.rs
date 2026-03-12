@@ -61,5 +61,6 @@ impl Settings {
         GLOBAL_NOTIFICATION_SCHEMA.get().is_some()
             && GLOBAL_LOGGING_SETTINGS.get().is_some()
             && GLOBAL_APPLICATION_SETTINGS.get().is_some()
+            && GLOBAL_WATCH_SETTINGS.get().is_some()
     }
 }

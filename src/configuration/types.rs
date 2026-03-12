@@ -1,3 +1,4 @@
+use super::AuthSettings;
 use aviso_validators::ValidationRules;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_aux::field_attributes::deserialize_number_from_string;
@@ -148,6 +149,7 @@ pub struct EventSchema {
     pub identifier: HashMap<String, IdentifierFieldConfig>,
     /// Optional per-schema storage policy (backend capability validated at startup).
     pub storage_policy: Option<EventStoragePolicy>,
+    pub auth: Option<StreamAuthConfig>,
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug, Default)]
@@ -159,6 +161,13 @@ pub struct EventStoragePolicy {
     pub max_size: Option<String>,
     pub allow_duplicates: Option<bool>,
     pub compression: Option<bool>,
+}
+
+#[derive(Deserialize, Serialize, Clone, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct StreamAuthConfig {
+    pub required: bool,
+    pub allowed_roles: Option<Vec<String>>,
 }
 
 /// Client-facing schema shape for schema endpoints.
@@ -300,12 +309,18 @@ pub struct Settings {
     pub notification_schema: Option<HashMap<String, EventSchema>>,
     #[serde(default)]
     pub watch_endpoint: WatchEndpointSettings,
+    #[serde(default)]
+    pub auth: AuthSettings,
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{IdentifierFieldConfig, JetStreamSettings, JetStreamStorageType, PayloadConfig};
+    use super::{
+        ApiEventSchema, EventSchema, IdentifierFieldConfig, JetStreamSettings,
+        JetStreamStorageType, PayloadConfig, StreamAuthConfig,
+    };
     use aviso_validators::ValidationRules;
+    use std::collections::HashMap;
 
     #[test]
     fn jetstream_settings_accept_lowercase_storage_type() {
@@ -394,5 +409,155 @@ mod tests {
         );
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn event_schema_deserializes_auth_config() {
+        let schema: EventSchema = serde_json::from_str(
+            r#"{
+                "identifier": {
+                    "class": {
+                        "type": "StringHandler",
+                        "required": true
+                    }
+                },
+                "auth": {
+                    "required": true,
+                    "allowed_roles": ["admin", "operator"]
+                }
+            }"#,
+        )
+        .expect("should deserialize event schema with auth config");
+
+        let auth = schema.auth.expect("auth should be configured");
+        assert!(auth.required);
+        assert_eq!(
+            auth.allowed_roles,
+            Some(vec!["admin".to_string(), "operator".to_string()])
+        );
+    }
+
+    #[test]
+    fn event_schema_deserializes_auth_without_role_restrictions() {
+        let schema: EventSchema = serde_json::from_str(
+            r#"{
+                "identifier": {
+                    "class": {
+                        "type": "StringHandler",
+                        "required": true
+                    }
+                },
+                "auth": {
+                    "required": false
+                }
+            }"#,
+        )
+        .expect("should deserialize event schema with unrestricted auth roles");
+
+        let auth = schema.auth.expect("auth should be configured");
+        assert!(!auth.required);
+        assert_eq!(auth.allowed_roles, None);
+    }
+
+    #[test]
+    fn event_schema_rejects_unknown_stream_auth_fields() {
+        let result: Result<EventSchema, _> = serde_json::from_str(
+            r#"{
+                "identifier": {
+                    "class": {
+                        "type": "StringHandler",
+                        "required": true
+                    }
+                },
+                "auth": {
+                    "required": true,
+                    "allowed_role": ["admin"]
+                }
+            }"#,
+        );
+
+        assert!(result.is_err());
+        let err = result.unwrap_err().to_string();
+        assert!(err.contains("allowed_role"));
+    }
+
+    #[test]
+    fn api_event_schema_does_not_expose_auth_config() {
+        let schema = EventSchema {
+            payload: Some(PayloadConfig { required: true }),
+            topic: None,
+            endpoint: None,
+            identifier: HashMap::new(),
+            storage_policy: None,
+            auth: Some(StreamAuthConfig {
+                required: true,
+                allowed_roles: Some(vec!["admin".to_string()]),
+            }),
+        };
+
+        let api_schema = ApiEventSchema::from(&schema);
+        let serialized =
+            serde_json::to_value(&api_schema).expect("should serialize api event schema");
+
+        assert!(
+            serialized.get("auth").is_none(),
+            "api schema must not expose internal auth configuration"
+        );
+    }
+
+    #[test]
+    fn settings_deserialize_with_default_auth_settings_when_missing() {
+        let settings: super::Settings = serde_json::from_str(
+            r#"{
+                "application": {
+                    "host": "127.0.0.1",
+                    "port": 8080,
+                    "base_url": "http://localhost",
+                    "static_files_path": "/tmp"
+                },
+                "notification_backend": {
+                    "kind": "in_memory"
+                }
+            }"#,
+        )
+        .expect("should deserialize settings");
+
+        assert!(!settings.auth.enabled);
+        assert_eq!(settings.auth.timeout_ms, 5_000);
+        assert!(settings.auth.admin_roles.is_empty());
+    }
+
+    #[test]
+    fn settings_deserialize_with_auth_settings_override() {
+        let settings: super::Settings = serde_json::from_str(
+            r#"{
+                "application": {
+                    "host": "127.0.0.1",
+                    "port": 8080,
+                    "base_url": "http://localhost",
+                    "static_files_path": "/tmp"
+                },
+                "notification_backend": {
+                    "kind": "in_memory"
+                },
+                "auth": {
+                    "enabled": true,
+                    "auth_o_tron_url": "http://auth-o-tron:8080",
+                    "jwt_secret": "secret",
+                    "admin_roles": ["admin"],
+                    "timeout_ms": 1000
+                }
+            }"#,
+        )
+        .expect("should deserialize settings with auth");
+
+        assert!(settings.auth.enabled);
+        assert_eq!(
+            settings.auth.auth_o_tron_url,
+            "http://auth-o-tron:8080".to_string()
+        );
+        assert_eq!(settings.auth.jwt_secret, "secret".to_string());
+        assert_eq!(settings.auth.admin_roles, vec!["admin".to_string()]);
+        assert_eq!(settings.auth.timeout_ms, 1000);
     }
 }

@@ -6,11 +6,11 @@ use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_val
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::replay::StartAt;
-use crate::routes::streaming::record_start_at_span_fields;
+use crate::routes::streaming::{enforce_stream_auth, record_start_at_span_fields};
 use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::NotificationRequest;
-use actix_web::{HttpResponse, web};
+use actix_web::{HttpRequest, HttpResponse, web};
 use std::sync::Arc;
 use std::time::Instant;
 use tokio_util::sync::CancellationToken;
@@ -46,6 +46,7 @@ use tracing_actix_web::RequestId;
 )]
 pub async fn watch(
     body: web::Bytes,
+    http_request: HttpRequest,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
@@ -55,6 +56,12 @@ pub async fn watch(
         Ok(req) => req,
         Err(e) => return request_parse_error_response(RequestKind::Watch, e),
     };
+
+    // Enforce schema-level auth before stream setup to fail fast.
+    if let Err(response) = enforce_stream_auth(&http_request, &notification_request.event_type) {
+        return response;
+    }
+
     // Process request using shared processor
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,

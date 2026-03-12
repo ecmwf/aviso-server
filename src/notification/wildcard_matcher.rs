@@ -527,8 +527,8 @@ pub fn create_pattern_matcher(watch_pattern: Vec<String>) -> impl Fn(&str) -> bo
 mod tests {
     use super::*;
     use crate::configuration::{
-        ApplicationSettings, EventSchema, NotificationBackendSettings, PayloadConfig, Settings,
-        TopicConfig, WatchEndpointSettings,
+        ApplicationSettings, AuthSettings, EventSchema, NotificationBackendSettings, PayloadConfig,
+        Settings, TopicConfig, WatchEndpointSettings,
     };
     use aviso_validators::{EnumConstraint, NumericConstraint};
     use std::collections::HashMap;
@@ -555,6 +555,7 @@ mod tests {
                 endpoint: None,
                 identifier: HashMap::new(),
                 storage_policy: None,
+                auth: None,
             };
             let extreme_schema = EventSchema {
                 payload: Some(PayloadConfig { required: false }),
@@ -565,6 +566,7 @@ mod tests {
                 endpoint: None,
                 identifier: HashMap::new(),
                 storage_policy: None,
+                auth: None,
             };
             let dissemination_schema = EventSchema {
                 payload: Some(PayloadConfig { required: false }),
@@ -575,6 +577,7 @@ mod tests {
                 endpoint: None,
                 identifier: HashMap::new(),
                 storage_policy: None,
+                auth: None,
             };
 
             let settings = Settings {
@@ -596,6 +599,7 @@ mod tests {
                     ("dissemination".to_string(), dissemination_schema),
                 ])),
                 watch_endpoint: WatchEndpointSettings::default(),
+                auth: AuthSettings::default(),
             };
 
             settings.init_global_config();
