@@ -1,5 +1,8 @@
+use actix_web::{App, HttpRequest, HttpResponse, HttpServer, http::header, web};
 use aviso_server::{
+    auth::client::is_jwt_like,
     configuration::ApplicationSettings,
+    configuration::AuthSettings,
     configuration::EventSchema,
     configuration::EventStoragePolicy,
     configuration::IdentifierFieldConfig,
@@ -9,13 +12,17 @@ use aviso_server::{
     configuration::NotificationBackendSettings,
     configuration::PayloadConfig,
     configuration::Settings,
+    configuration::StreamAuthConfig,
     configuration::TopicConfig,
     configuration::WatchEndpointSettings,
     startup::Application,
     telemetry::{get_subscriber, init_subscriber},
 };
 use aviso_validators::ValidationRules;
+use chrono::Utc;
+use jsonwebtoken::{EncodingKey, Header, encode};
 use std::collections::HashMap;
+use std::net::TcpListener;
 use std::sync::LazyLock;
 use std::sync::OnceLock;
 use tokio::sync::OnceCell;
@@ -43,12 +50,15 @@ static TRACING: LazyLock<()> = LazyLock::new(|| {
 
 static DEFAULT_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
+static STREAMING_AUTH_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
+static STREAMING_TRUSTED_PROXY_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static TEST_GLOBAL_CONFIG: OnceLock<()> = OnceLock::new();
 
 struct RunningServer {
     address: String,
     _shutdown_token: CancellationToken,
     _server_handle: JoinHandle<Result<(), std::io::Error>>,
+    _auth_server_handle: Option<JoinHandle<std::io::Result<()>>>,
 }
 
 #[derive(Clone)]
@@ -83,6 +93,7 @@ fn build_test_polygon_schema() -> EventSchema {
         endpoint: None,
         identifier,
         storage_policy: None,
+        auth: None,
     }
 }
 
@@ -114,6 +125,7 @@ fn build_test_polygon_js_schema() -> EventSchema {
         endpoint: None,
         identifier,
         storage_policy: None,
+        auth: None,
     }
 }
 
@@ -158,6 +170,7 @@ fn build_test_polygon_optional_schema() -> EventSchema {
         endpoint: None,
         identifier,
         storage_policy: None,
+        auth: None,
     }
 }
 
@@ -257,6 +270,7 @@ fn build_mars_schema() -> EventSchema {
         endpoint: None,
         identifier,
         storage_policy: None,
+        auth: None,
     }
 }
 
@@ -369,6 +383,7 @@ fn build_dissemination_schema() -> EventSchema {
         endpoint: None,
         identifier,
         storage_policy: None,
+        auth: None,
     }
 }
 
@@ -419,10 +434,11 @@ fn build_extreme_event_schema() -> EventSchema {
         endpoint: None,
         identifier,
         storage_policy: None,
+        auth: None,
     }
 }
 
-fn ensure_test_notification_schema(configuration: &mut Settings) {
+fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_schemas: bool) {
     let schema = configuration
         .notification_schema
         .get_or_insert_with(HashMap::new);
@@ -439,16 +455,59 @@ fn ensure_test_notification_schema(configuration: &mut Settings) {
         "test_polygon_js".to_string(),
         build_test_polygon_js_schema(),
     );
+
+    if include_auth_schemas {
+        let mut auth_any = build_test_polygon_schema();
+        auth_any
+            .topic
+            .as_mut()
+            .expect("test schema must have topic")
+            .base = "polygon_auth_any".to_string();
+        auth_any.auth = Some(StreamAuthConfig {
+            required: true,
+            allowed_roles: None,
+        });
+        schema.insert("test_polygon_auth_any".to_string(), auth_any);
+
+        let mut auth_admin = build_test_polygon_schema();
+        auth_admin
+            .topic
+            .as_mut()
+            .expect("test schema must have topic")
+            .base = "polygon_auth_admin".to_string();
+        auth_admin.auth = Some(StreamAuthConfig {
+            required: true,
+            allowed_roles: Some(vec!["admin".to_string()]),
+        });
+        schema.insert("test_polygon_auth_admin".to_string(), auth_admin);
+
+        let mut auth_optional = build_test_polygon_schema();
+        auth_optional
+            .topic
+            .as_mut()
+            .expect("test schema must have topic")
+            .base = "polygon_auth_optional".to_string();
+        auth_optional.auth = Some(StreamAuthConfig {
+            required: false,
+            allowed_roles: None,
+        });
+        schema.insert("test_polygon_auth_optional".to_string(), auth_optional);
+    }
 }
 
 fn set_streaming_test_notification_schema(configuration: &mut Settings) {
     configuration.notification_schema = Some(HashMap::new());
-    ensure_test_notification_schema(configuration);
+    ensure_test_notification_schema(configuration, false);
+}
+
+fn set_streaming_auth_test_notification_schema(configuration: &mut Settings) {
+    configuration.notification_schema = Some(HashMap::new());
+    ensure_test_notification_schema(configuration, true);
 }
 
 fn set_jetstream_test_notification_schema(configuration: &mut Settings) {
     configuration.notification_schema = Some(HashMap::new());
-    ensure_test_notification_schema(configuration);
+    ensure_test_notification_schema(configuration, false);
     if let Some(schema) = configuration.notification_schema.as_mut() {
         apply_jetstream_test_polygon_js_policy(schema);
     }
@@ -474,13 +533,14 @@ fn base_test_settings() -> Settings {
         logging: None,
         notification_schema: None,
         watch_endpoint: WatchEndpointSettings::default(),
+        auth: AuthSettings::default(),
     }
 }
 
 fn ensure_test_global_config_initialized() {
     TEST_GLOBAL_CONFIG.get_or_init(|| {
         let mut configuration = base_test_settings();
-        ensure_test_notification_schema(&mut configuration);
+        ensure_test_notification_schema(&mut configuration, true);
         if let Some(schema) = configuration.notification_schema.as_mut() {
             apply_jetstream_test_polygon_js_policy(schema);
         }
@@ -490,7 +550,10 @@ fn ensure_test_global_config_initialized() {
     });
 }
 
-async fn spawn_server(mut configuration: Settings) -> RunningServer {
+async fn spawn_server(
+    mut configuration: Settings,
+    auth_server_handle: Option<JoinHandle<std::io::Result<()>>>,
+) -> RunningServer {
     LazyLock::force(&TRACING);
     configuration.application.port = 0;
     ensure_test_global_config_initialized();
@@ -505,6 +568,7 @@ async fn spawn_server(mut configuration: Settings) -> RunningServer {
         address,
         _shutdown_token: shutdown_token,
         _server_handle: server_handle,
+        _auth_server_handle: auth_server_handle,
     }
 }
 
@@ -512,8 +576,8 @@ pub async fn spawn_app() -> TestApp {
     let running = DEFAULT_SERVER
         .get_or_init(|| async {
             let mut configuration = base_test_settings();
-            ensure_test_notification_schema(&mut configuration);
-            spawn_server(configuration).await
+            ensure_test_notification_schema(&mut configuration, false);
+            spawn_server(configuration, None).await
         })
         .await;
 
@@ -528,7 +592,54 @@ pub async fn spawn_streaming_test_app() -> TestApp {
             let mut configuration = base_test_settings();
             set_streaming_test_notification_schema(&mut configuration);
 
-            spawn_server(configuration).await
+            spawn_server(configuration, None).await
+        })
+        .await;
+
+    TestApp {
+        address: running.address.clone(),
+    }
+}
+
+pub async fn spawn_streaming_test_app_with_auth() -> TestApp {
+    let running = STREAMING_AUTH_SERVER
+        .get_or_init(|| async {
+            let mut configuration = base_test_settings();
+            set_streaming_auth_test_notification_schema(&mut configuration);
+            let (auth_o_tron_url, auth_server_handle) = start_mock_auth_o_tron_server()
+                .await
+                .expect("mock auth-o-tron server must start");
+            configuration.auth = AuthSettings {
+                enabled: true,
+                auth_o_tron_url,
+                jwt_secret: "test-jwt-secret".to_string(),
+                admin_roles: vec!["admin".to_string()],
+                timeout_ms: 5_000,
+                ..AuthSettings::default()
+            };
+            spawn_server(configuration, Some(auth_server_handle)).await
+        })
+        .await;
+
+    TestApp {
+        address: running.address.clone(),
+    }
+}
+
+pub async fn spawn_streaming_test_app_with_trusted_proxy_auth() -> TestApp {
+    let running = STREAMING_TRUSTED_PROXY_SERVER
+        .get_or_init(|| async {
+            let mut configuration = base_test_settings();
+            set_streaming_auth_test_notification_schema(&mut configuration);
+            configuration.auth = AuthSettings {
+                enabled: true,
+                mode: aviso_server::configuration::AuthMode::TrustedProxy,
+                jwt_secret: "test-jwt-secret".to_string(),
+                admin_roles: vec!["admin".to_string()],
+                timeout_ms: 5_000,
+                ..AuthSettings::default()
+            };
+            spawn_server(configuration, None).await
         })
         .await;
 
@@ -565,10 +676,76 @@ pub async fn spawn_jetstream_test_app() -> TestApp {
         publish_retry_base_delay_ms: Some(150),
     });
     set_jetstream_test_notification_schema(&mut configuration);
-    let running = spawn_server(configuration).await;
+    let running = spawn_server(configuration, None).await;
     TestApp {
         address: running.address,
     }
+}
+
+async fn mock_authenticate(req: HttpRequest) -> HttpResponse {
+    fn issue_mock_token(username: &str, roles: &[&str]) -> String {
+        let claims = serde_json::json!({
+            "sub": username,
+            "username": username,
+            "roles": roles,
+            "attributes": {},
+            "exp": (Utc::now().timestamp() + 3600) as usize,
+            "iat": Utc::now().timestamp() as usize,
+        });
+        encode(
+            &Header::default(),
+            &claims,
+            &EncodingKey::from_secret("test-jwt-secret".as_bytes()),
+        )
+        .expect("mock token should encode")
+    }
+
+    let authorization = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+
+    let token = match authorization {
+        Some("Basic YWRtaW4tdXNlcjphZG1pbi1wYXNz") => {
+            Some(issue_mock_token("admin-user", &["admin"]))
+        }
+        Some("Basic cmVhZGVyLXVzZXI6cmVhZGVyLXBhc3M=") => {
+            Some(issue_mock_token("reader-user", &["reader"]))
+        }
+        Some(value) => {
+            let mut parts = value.split_whitespace();
+            match (parts.next(), parts.next(), parts.next()) {
+                (Some(scheme), Some(candidate), None)
+                    if scheme.eq_ignore_ascii_case("Bearer") && is_jwt_like(candidate) =>
+                {
+                    Some(candidate.to_string())
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    };
+
+    match token {
+        Some(token) => HttpResponse::Ok()
+            .append_header((header::AUTHORIZATION, format!("Bearer {token}")))
+            .body("Authenticated successfully"),
+        None => HttpResponse::Unauthorized().finish(),
+    }
+}
+
+async fn start_mock_auth_o_tron_server()
+-> std::io::Result<(String, JoinHandle<std::io::Result<()>>)> {
+    // Runtime-local ephemeral server to keep auth integration tests deterministic
+    // and independent from external auth-o-tron availability.
+    let listener = TcpListener::bind("127.0.0.1:0")?;
+    let address = listener.local_addr()?;
+    let server =
+        HttpServer::new(|| App::new().route("/authenticate", web::get().to(mock_authenticate)))
+            .listen(listener)?
+            .run();
+    let server_handle = tokio::spawn(server);
+    Ok((format!("http://{}", address), server_handle))
 }
 
 pub async fn spawn_jetstream_test_app_with_backend_defaults(
@@ -601,7 +778,7 @@ pub async fn spawn_jetstream_test_app_with_backend_defaults(
         publish_retry_base_delay_ms: Some(150),
     });
     set_jetstream_test_notification_schema(&mut configuration);
-    let running = spawn_server(configuration).await;
+    let running = spawn_server(configuration, None).await;
     TestApp {
         address: running.address,
     }

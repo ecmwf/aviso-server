@@ -1,4 +1,4 @@
-use crate::helpers::spawn_streaming_test_app;
+use crate::helpers::{spawn_streaming_test_app, spawn_streaming_test_app_with_auth};
 use serde_json::Value;
 
 #[tokio::test]
@@ -94,4 +94,28 @@ async fn event_schema_omits_identifier_description_when_not_configured() {
         time_field.get("description").is_none(),
         "identifier.time description should be omitted when not configured"
     );
+}
+
+#[tokio::test]
+async fn schema_list_is_public_when_auth_is_enabled() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/schema", app.address))
+        .send()
+        .await
+        .expect("failed to call schema list endpoint");
+
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn event_schema_is_public_when_auth_is_enabled() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/schema/mars", app.address))
+        .send()
+        .await
+        .expect("failed to call event schema endpoint");
+
+    assert_eq!(response.status().as_u16(), 200);
 }
