@@ -119,3 +119,29 @@ async fn event_schema_is_public_when_auth_is_enabled() {
 
     assert_eq!(response.status().as_u16(), 200);
 }
+
+#[tokio::test]
+async fn schema_list_ignores_malformed_authorization_header() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/schema", app.address))
+        .header("Authorization", "BadScheme garbage")
+        .send()
+        .await
+        .expect("failed to call schema list endpoint");
+
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+#[tokio::test]
+async fn event_schema_ignores_malformed_authorization_header() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/schema/mars", app.address))
+        .header("Authorization", "BadScheme garbage")
+        .send()
+        .await
+        .expect("failed to call event schema endpoint");
+
+    assert_eq!(response.status().as_u16(), 200);
+}

@@ -128,6 +128,15 @@ where
                 mode: settings.mode,
             });
 
+            // Schema endpoints are always public — skip auth entirely so
+            // malformed headers or auth-o-tron outages cannot block them.
+            if req.path().starts_with("/api/v1/schema") {
+                return service
+                    .call(req)
+                    .await
+                    .map(ServiceResponse::map_into_left_body);
+            }
+
             let is_admin_path = req.path().starts_with("/api/v1/admin");
             let user =
                 match resolve_user(&req, &settings, auth_client.as_deref(), is_admin_path).await {
