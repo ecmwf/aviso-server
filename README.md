@@ -66,3 +66,67 @@ cargo install mdbook
 mdbook build docs
 mdbook serve docs --open
 ```
+
+## Authentication (Optional)
+
+Aviso Server supports authentication via [auth-o-tron](https://github.com/ecmwf/auth-o-tron) as an external authentication service.
+
+### Quick Start with Auth
+
+1. Start auth-o-tron using Docker:
+```bash
+./scripts/auth-o-tron-docker.sh
+```
+
+By default this uses `scripts/example_auth_config.yaml`.
+Use a custom config if needed:
+
+```bash
+AUTH_O_TRON_CONFIG_FILE=/path/to/auth-config.yaml ./scripts/auth-o-tron-docker.sh
+```
+
+2. Configure auth in `configuration/config.yaml`:
+```yaml
+auth:
+  enabled: true
+  auth_o_tron_url: "http://localhost:8080"
+  jwt_secret: "your-shared-secret" # must match auth-o-tron jwt.secret
+  admin_roles: ["admin", "superuser"]
+  timeout_ms: 5000
+```
+
+3. Run aviso-server with auth enabled
+
+### Per-Stream Authentication
+
+You can configure authentication requirements per stream in your notification schema:
+
+```yaml
+notification_schema:
+  # Public stream - any authenticated user
+  public_stream:
+    # ... other config
+    auth:
+      required: true  # Auth required, but any role allowed
+
+  # Restricted stream - specific roles only
+  admin_stream:
+    # ... other config
+    auth:
+      required: true
+      allowed_roles: ["admin", "operator"]
+```
+
+### Admin Endpoints
+
+Admin endpoints (`/api/v1/admin/*`) require users to have one of the configured `admin_roles`.
+
+### Disabling Auth
+
+To disable authentication completely:
+```yaml
+auth:
+  enabled: false
+```
+
+Or omit the `auth` section entirely from your configuration.
