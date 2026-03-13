@@ -174,6 +174,16 @@ notification_schema:
 | `replay_batch_delay_ms` | `u64` | `100` | Delay between historical replay batches. |
 | `concurrent_notification_processing` | `usize` | `15` | Live stream CloudEvent conversion concurrency. |
 
+## Custom config file path
+
+Set `AVISOSERVER_CONFIG_FILE` to use a specific config file instead of the default search cascade:
+
+```bash
+AVISOSERVER_CONFIG_FILE=/path/to/config.yaml cargo run
+```
+
+When set, only this file is loaded as a file source (startup fails if it does not exist). The default locations (`./configuration/config.yaml`, `/etc/aviso_server/config.yaml`, `$HOME/.aviso_server/config.yaml`) are skipped. `AVISOSERVER_*` field-level overrides still apply on top.
+
 ## Environment override examples
 
 ```bash
