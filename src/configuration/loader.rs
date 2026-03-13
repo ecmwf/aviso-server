@@ -19,43 +19,30 @@ const CONFIG_FILE_ENV: &str = "AVISOSERVER_CONFIG_FILE";
 pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     let mut settings = config::Config::builder();
 
-    if let Ok(config_file) = std::env::var(CONFIG_FILE_ENV).map(|v| v.trim().to_string()) {
-        if config_file.is_empty() {
+    settings = match std::env::var(CONFIG_FILE_ENV) {
+        Err(std::env::VarError::NotPresent) => add_default_file_sources(settings),
+        Err(std::env::VarError::NotUnicode(_)) => {
             return Err(config::ConfigError::NotFound(format!(
-                "{CONFIG_FILE_ENV} is set but empty"
+                "{CONFIG_FILE_ENV} contains non-Unicode value"
             )));
         }
-        let path = std::path::Path::new(&config_file);
-        if !path.exists() {
-            return Err(config::ConfigError::NotFound(format!(
-                "{CONFIG_FILE_ENV} points to non-existent file: {config_file}"
-            )));
-        }
-        tracing::info!(path = %config_file, "Loading configuration from {CONFIG_FILE_ENV}");
-        settings = settings.add_source(config::File::from(path.to_path_buf()));
-    } else {
-        let base_path = std::env::current_dir().expect("Failed to get current directory");
-        let config_dir = base_path.join("configuration").join("config.yaml");
-        if config_dir.exists() {
-            tracing::debug!(path = ?config_dir, "Loading base configuration");
-            settings = settings.add_source(config::File::from(config_dir));
-        }
-
-        let etc_path = "/etc/aviso_server/config.yaml";
-        if std::path::Path::new(etc_path).exists() {
-            tracing::debug!(path = etc_path, "Loading system configuration");
-            settings = settings.add_source(config::File::with_name(etc_path).required(false));
-        }
-
-        if let Some(home_dir) = dirs::home_dir() {
-            let user_config_path = home_dir.join(".aviso_server/config.yaml");
-            if user_config_path.exists() {
-                tracing::debug!(path = ?user_config_path, "Loading user configuration");
-                settings =
-                    settings.add_source(config::File::from(user_config_path).required(false));
+        Ok(raw) => {
+            let config_file = raw.trim().to_string();
+            if config_file.is_empty() {
+                return Err(config::ConfigError::NotFound(format!(
+                    "{CONFIG_FILE_ENV} is set but empty"
+                )));
             }
+            let path = std::path::Path::new(&config_file);
+            if !path.is_file() {
+                return Err(config::ConfigError::NotFound(format!(
+                    "{CONFIG_FILE_ENV} does not point to a file: {config_file}"
+                )));
+            }
+            tracing::info!(path = %config_file, "Loading configuration from {CONFIG_FILE_ENV}");
+            settings.add_source(config::File::from(path.to_path_buf()))
         }
-    }
+    };
 
     settings = settings.add_source(
         config::Environment::with_prefix("AVISOSERVER")
@@ -77,4 +64,31 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
     );
 
     Ok(settings)
+}
+
+fn add_default_file_sources(
+    mut settings: config::ConfigBuilder<config::builder::DefaultState>,
+) -> config::ConfigBuilder<config::builder::DefaultState> {
+    let base_path = std::env::current_dir().expect("Failed to get current directory");
+    let config_dir = base_path.join("configuration").join("config.yaml");
+    if config_dir.exists() {
+        tracing::debug!(path = ?config_dir, "Loading base configuration");
+        settings = settings.add_source(config::File::from(config_dir));
+    }
+
+    let etc_path = "/etc/aviso_server/config.yaml";
+    if std::path::Path::new(etc_path).exists() {
+        tracing::debug!(path = etc_path, "Loading system configuration");
+        settings = settings.add_source(config::File::with_name(etc_path).required(false));
+    }
+
+    if let Some(home_dir) = dirs::home_dir() {
+        let user_config_path = home_dir.join(".aviso_server/config.yaml");
+        if user_config_path.exists() {
+            tracing::debug!(path = ?user_config_path, "Loading user configuration");
+            settings = settings.add_source(config::File::from(user_config_path).required(false));
+        }
+    }
+
+    settings
 }
