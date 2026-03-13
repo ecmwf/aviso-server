@@ -167,7 +167,7 @@ pub struct EventStoragePolicy {
 #[serde(deny_unknown_fields)]
 pub struct StreamAuthConfig {
     pub required: bool,
-    pub allowed_roles: Option<Vec<String>>,
+    pub allowed_roles: Option<HashMap<String, Vec<String>>>,
 }
 
 /// Client-facing schema shape for schema endpoints.
@@ -423,7 +423,7 @@ mod tests {
                 },
                 "auth": {
                     "required": true,
-                    "allowed_roles": ["admin", "operator"]
+                    "allowed_roles": {"ecmwf": ["admin", "operator"]}
                 }
             }"#,
         )
@@ -431,9 +431,10 @@ mod tests {
 
         let auth = schema.auth.expect("auth should be configured");
         assert!(auth.required);
+        let roles = auth.allowed_roles.expect("allowed_roles should be set");
         assert_eq!(
-            auth.allowed_roles,
-            Some(vec!["admin".to_string(), "operator".to_string()])
+            roles.get("ecmwf").map(Vec::as_slice),
+            Some(["admin".to_string(), "operator".to_string()].as_slice())
         );
     }
 
@@ -491,7 +492,10 @@ mod tests {
             storage_policy: None,
             auth: Some(StreamAuthConfig {
                 required: true,
-                allowed_roles: Some(vec!["admin".to_string()]),
+                allowed_roles: Some(HashMap::from([(
+                    "testrealm".to_string(),
+                    vec!["admin".to_string()],
+                )])),
             }),
         };
 
@@ -544,7 +548,7 @@ mod tests {
                     "enabled": true,
                     "auth_o_tron_url": "http://auth-o-tron:8080",
                     "jwt_secret": "secret",
-                    "admin_roles": ["admin"],
+                    "admin_roles": {"testrealm": ["admin"]},
                     "timeout_ms": 1000
                 }
             }"#,
@@ -557,7 +561,14 @@ mod tests {
             "http://auth-o-tron:8080".to_string()
         );
         assert_eq!(settings.auth.jwt_secret, "secret".to_string());
-        assert_eq!(settings.auth.admin_roles, vec!["admin".to_string()]);
+        assert_eq!(
+            settings
+                .auth
+                .admin_roles
+                .get("testrealm")
+                .map(Vec::as_slice),
+            Some(["admin".to_string()].as_slice())
+        );
         assert_eq!(settings.auth.timeout_ms, 1000);
     }
 }

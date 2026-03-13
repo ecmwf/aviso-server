@@ -1,4 +1,5 @@
 use serde::{Deserialize, Serialize, Serializer};
+use std::collections::HashMap;
 use std::fmt;
 
 #[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -17,7 +18,7 @@ pub struct AuthSettings {
     pub auth_o_tron_url: String,
     #[serde(serialize_with = "serialize_redacted_jwt_secret")]
     pub jwt_secret: String,
-    pub admin_roles: Vec<String>,
+    pub admin_roles: HashMap<String, Vec<String>>,
     pub timeout_ms: u64,
 }
 
@@ -48,7 +49,7 @@ impl Default for AuthSettings {
             mode: AuthMode::Direct,
             auth_o_tron_url: String::new(),
             jwt_secret: String::new(),
-            admin_roles: Vec::new(),
+            admin_roles: HashMap::new(),
             timeout_ms: 5_000,
         }
     }
@@ -57,6 +58,7 @@ impl Default for AuthSettings {
 #[cfg(test)]
 mod tests {
     use super::{AuthMode, AuthSettings};
+    use std::collections::HashMap;
 
     #[test]
     fn auth_settings_default_to_disabled() {
@@ -78,7 +80,7 @@ mod tests {
                 "mode": "trusted_proxy",
                 "auth_o_tron_url": "http://auth-o-tron:8080",
                 "jwt_secret": "top-secret",
-                "admin_roles": ["admin", "operator"],
+                "admin_roles": {"ecmwf": ["admin", "operator"]},
                 "timeout_ms": 1200
             }"#,
         )
@@ -88,7 +90,10 @@ mod tests {
         assert_eq!(settings.mode, AuthMode::TrustedProxy);
         assert_eq!(settings.auth_o_tron_url, "http://auth-o-tron:8080");
         assert_eq!(settings.jwt_secret, "top-secret");
-        assert_eq!(settings.admin_roles, vec!["admin", "operator"]);
+        assert_eq!(
+            settings.admin_roles.get("ecmwf").map(Vec::as_slice),
+            Some(["admin".to_string(), "operator".to_string()].as_slice())
+        );
         assert_eq!(settings.timeout_ms, 1200);
     }
 
@@ -113,7 +118,7 @@ mod tests {
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
             jwt_secret: "super-secret".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             timeout_ms: 5000,
         };
 
@@ -129,7 +134,7 @@ mod tests {
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
             jwt_secret: "super-secret".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             timeout_ms: 5000,
         };
 
