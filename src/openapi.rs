@@ -7,11 +7,35 @@ use crate::routes::notify;
 use crate::routes::replay;
 use crate::routes::schema;
 use crate::routes::watch;
-use utoipa::OpenApi;
+use utoipa::openapi::security::{Http, HttpAuthScheme, SecurityScheme};
+use utoipa::{Modify, OpenApi};
+
+/// Registers Bearer (JWT) and Basic authentication schemes in the OpenAPI spec.
+/// Swagger UI renders these as an "Authorize" button so users can test protected endpoints.
+struct SecurityAddon;
+
+impl Modify for SecurityAddon {
+    fn modify(&self, openapi: &mut utoipa::openapi::OpenApi) {
+        let components = openapi.components.get_or_insert_default();
+        components.add_security_scheme(
+            "bearer_jwt",
+            SecurityScheme::Http({
+                let mut http = Http::new(HttpAuthScheme::Bearer);
+                http.bearer_format = Some("JWT".to_string());
+                http
+            }),
+        );
+        components.add_security_scheme(
+            "basic",
+            SecurityScheme::Http(Http::new(HttpAuthScheme::Basic)),
+        );
+    }
+}
 
 /// OpenAPI specification for the Aviso notification service
 #[derive(OpenApi)]
 #[openapi(
+    modifiers(&SecurityAddon),
     paths(
         health_check::health_check,
         home::homepage,
@@ -33,7 +57,6 @@ use utoipa::OpenApi;
             crate::types::request::NotificationRequest,
             crate::types::NotificationResponse,
 
-            // Configuration types (add these if they have ToSchema)
             crate::configuration::ApiEventSchema,
             crate::configuration::PayloadConfig,
 
@@ -62,7 +85,7 @@ use utoipa::OpenApi;
         (name = "schema", description = "API schema discovery and validation rules"),
         (name = "notification", description = "Send notifications to the system"),
         (name = "streaming", description = "Real-time streaming and replay functionality"),
-        (name = "admin", description = "⚠️ Administrative operations - use with extreme caution")  // Add this tag
+        (name = "admin", description = "⚠️ Administrative operations - use with extreme caution")
     )
 )]
 pub struct ApiDoc;
