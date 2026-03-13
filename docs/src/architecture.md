@@ -17,21 +17,26 @@ graph TB
 
     subgraph "Aviso Server"
         direction TB
+        AM["Auth Middleware<br/>(optional)"]
         RT["Routes<br/>HTTP handlers"]
         VP["Validation &<br/>Processing"]
         NC["Notification<br/>Core"]
         BE["Backend<br/>Abstraction"]
     end
 
+    AOT["auth-o-tron<br/>(external)"]
+
     subgraph Backend
         JS[("JetStream<br/>NATS")]
         IM[("In-Memory<br/>Process")]
     end
 
-    P -->|POST /api/v1/notification| RT
-    W -->|POST /api/v1/watch| RT
-    R -->|POST /api/v1/replay| RT
+    P -->|POST /api/v1/notification| AM
+    W -->|POST /api/v1/watch| AM
+    R -->|POST /api/v1/replay| AM
 
+    AM -.->|verify credentials| AOT
+    AM --> RT
     RT --> VP
     VP --> NC
     NC --> BE
@@ -53,13 +58,19 @@ When a publisher sends `POST /api/v1/notification`:
 ```mermaid
 sequenceDiagram
     participant C as Publisher
+    participant A as Auth Middleware
     participant R as Route Handler
     participant V as Validator
     participant P as Processor
     participant T as Topic Builder
     participant B as Backend
 
-    C->>R: POST /api/v1/notification (JSON)
+    C->>A: POST /api/v1/notification (JSON)
+    alt stream requires auth
+        A->>A: resolve user (JWT or auth-o-tron)
+        A-->>C: 401/403 if unauthorized
+    end
+    A->>R: forward request (+ user identity)
     R->>V: parse & shape-check JSON
     V-->>R: 400 if malformed
     R->>P: process_notification_request()
@@ -90,12 +101,18 @@ replay phase before transitioning to live delivery.
 ```mermaid
 sequenceDiagram
     participant C as Subscriber
+    participant A as Auth Middleware
     participant R as Route Handler
     participant P as Stream Processor
     participant F as Hybrid Filter
     participant B as Backend
 
-    C->>R: POST /api/v1/watch (JSON)
+    C->>A: POST /api/v1/watch (JSON)
+    alt stream requires auth
+        A->>A: resolve user (JWT or auth-o-tron)
+        A-->>C: 401/403 if unauthorized
+    end
+    A->>R: forward request (+ user identity)
     R->>P: process_request (ValidationConfig::for_watch)
     P->>P: allow optional fields & constraint objects
     P->>P: analyze_watch_pattern() → coarse + precise patterns
@@ -127,11 +144,17 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant C as Client
+    participant A as Auth Middleware
     participant R as Route Handler
     participant P as Stream Processor
     participant B as Backend
 
-    C->>R: POST /api/v1/replay (JSON + from_id or from_date)
+    C->>A: POST /api/v1/replay (JSON + from_id or from_date)
+    alt stream requires auth
+        A->>A: resolve user (JWT or auth-o-tron)
+        A-->>C: 401/403 if unauthorized
+    end
+    A->>R: forward request (+ user identity)
     R->>P: process_request (ValidationConfig::for_replay)
     P->>B: batch fetch from StartAt::Sequence or StartAt::Date
     loop batches
@@ -173,6 +196,7 @@ so individual endpoint handlers don't need to reimplement it.
 | Component | Path | Role |
 |---|---|---|
 | Routes | `src/routes/` | Thin HTTP handlers — parse request, delegate, return response |
+| Auth | `src/auth/` | Middleware, JWT validation, role matching, auth-o-tron client |
 | Handlers | `src/handlers/` | Shared parsing, validation, and processing logic |
 | Notification core | `src/notification/` | Schema registry, topic builder/codec/parser, wildcard matcher, spatial |
 | Backend abstraction | `src/notification_backend/` | `NotificationBackend` trait + JetStream and InMemory implementations |

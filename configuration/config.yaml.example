@@ -55,9 +55,10 @@ auth:
   # For scripts/example_auth_config.yaml, this should be "your-shared-secret".
   jwt_secret: "your-shared-secret"
 
-  # Roles allowed on /api/v1/admin/* (must be non-empty when enabled=true).
+  # Realm-scoped roles allowed on /api/v1/admin/* (must be non-empty when enabled=true).
+  # Maps realm names (from JWT `realm` claim) to authorized role lists.
   admin_roles:
-    - "admin"
+    localrealm: ["admin"]
 
   # auth-o-tron request timeout (milliseconds).
   timeout_ms: 5000
@@ -128,8 +129,7 @@ notification_schema:
     auth:
       required: true
       allowed_roles:
-        - "admin"
-        - "reader"
+        localrealm: ["admin", "reader"]
 
 # Quick checks:
 # 1) watch public_events without Authorization => 200
