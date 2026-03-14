@@ -466,10 +466,12 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             .base = "polygon_auth_any".to_string();
         auth_any.auth = Some(StreamAuthConfig {
             required: true,
-            allowed_roles: None,
+            read_roles: None,
+            write_roles: None,
         });
         schema.insert("test_polygon_auth_any".to_string(), auth_any);
 
+        // Read restricted to admin role; write defaults to admin-only (no write_roles).
         let mut auth_admin = build_test_polygon_schema();
         auth_admin
             .topic
@@ -478,10 +480,11 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             .base = "polygon_auth_admin".to_string();
         auth_admin.auth = Some(StreamAuthConfig {
             required: true,
-            allowed_roles: Some(HashMap::from([(
+            read_roles: Some(HashMap::from([(
                 "localrealm".to_string(),
                 vec!["admin".to_string()],
             )])),
+            write_roles: None,
         });
         schema.insert("test_polygon_auth_admin".to_string(), auth_admin);
 
@@ -493,9 +496,27 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             .base = "polygon_auth_optional".to_string();
         auth_optional.auth = Some(StreamAuthConfig {
             required: false,
-            allowed_roles: None,
+            read_roles: None,
+            write_roles: None,
         });
         schema.insert("test_polygon_auth_optional".to_string(), auth_optional);
+
+        // Explicit write_roles: only "producer" role from "localrealm" can write.
+        let mut auth_write = build_test_polygon_schema();
+        auth_write
+            .topic
+            .as_mut()
+            .expect("test schema must have topic")
+            .base = "polygon_auth_write".to_string();
+        auth_write.auth = Some(StreamAuthConfig {
+            required: true,
+            read_roles: None,
+            write_roles: Some(HashMap::from([(
+                "localrealm".to_string(),
+                vec!["producer".to_string()],
+            )])),
+        });
+        schema.insert("test_polygon_auth_write".to_string(), auth_write);
     }
 }
 

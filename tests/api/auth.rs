@@ -122,7 +122,7 @@ async fn watch_auth_required_allows_any_authenticated_role_when_roles_not_set() 
 }
 
 #[tokio::test]
-async fn watch_auth_required_enforces_allowed_roles() {
+async fn watch_auth_required_enforces_read_roles() {
     let app = spawn_streaming_test_app_with_auth().await;
     let client = reqwest::Client::new();
     let token = auth_token("reader-user", &["reader"]);
@@ -245,6 +245,103 @@ async fn notify_auth_optional_allows_anonymous() {
     let client = reqwest::Client::new();
 
     let response = post_notify(&client, &app.address, "test_polygon_auth_optional", None).await;
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
+
+// --- Read/write role separation tests ---
+
+#[tokio::test]
+async fn notify_write_defaults_to_admin_only_when_write_roles_absent() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    // "reader" is authenticated but not admin → rejected for write on auth_any (no write_roles).
+    let token = auth_token("reader-user", &["reader"]);
+
+    let response = post_notify(
+        &client,
+        &app.address,
+        "test_polygon_auth_any",
+        Some(&format!("Bearer {token}")),
+    )
+    .await;
+
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn notify_write_allowed_with_explicit_write_roles() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    let token = auth_token("producer-user", &["producer"]);
+
+    let response = post_notify(
+        &client,
+        &app.address,
+        "test_polygon_auth_write",
+        Some(&format!("Bearer {token}")),
+    )
+    .await;
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn notify_write_rejected_without_matching_write_role() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    let token = auth_token("reader-user", &["reader"]);
+
+    let response = post_notify(
+        &client,
+        &app.address,
+        "test_polygon_auth_write",
+        Some(&format!("Bearer {token}")),
+    )
+    .await;
+
+    assert_eq!(response.status(), reqwest::StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn notify_admin_can_always_write_regardless_of_write_roles() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    let token = auth_token("admin-user", &["admin"]);
+
+    let response = post_notify(
+        &client,
+        &app.address,
+        "test_polygon_auth_write",
+        Some(&format!("Bearer {token}")),
+    )
+    .await;
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn watch_read_allowed_for_any_authenticated_when_read_roles_absent() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    // auth_write has read_roles: None → any authenticated user can read.
+    let token = auth_token("reader-user", &["reader"]);
+
+    let response = client
+        .post(format!("{}/api/v1/watch", app.address))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "event_type": "test_polygon_auth_write",
+            "identifier": {
+                "date": "20250706",
+                "time": "1200",
+                "polygon": "(0,0,0,1,1,1,0,0)"
+            }
+        }))
+        .send()
+        .await
+        .expect("watch request should complete");
 
     assert_eq!(response.status(), reqwest::StatusCode::OK);
 }
