@@ -156,9 +156,9 @@ impl Application {
                     "Shutdown signal received, stopping Actix server"
                 );
 
-                // Stop both servers (metrics server has a short timeout).
+                // Stop metrics server gracefully, then the main server.
                 if let Some(mh) = metrics_handle {
-                    mh.stop(false).await;
+                    mh.stop(true).await;
                 }
                 handle.stop(true).await;
 
