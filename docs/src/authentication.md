@@ -36,12 +36,13 @@ To use your own config:
 AUTH_O_TRON_CONFIG_FILE=/path/to/auth-config.yaml ./scripts/auth-o-tron-docker.sh start
 ```
 
-The bundled example config defines two local test users in realm `localrealm`:
+The bundled example config defines three local test users in realm `localrealm`:
 
 | User | Password | Role |
 |------|----------|------|
 | `admin-user` | `admin-pass` | `admin` |
 | `reader-user` | `reader-pass` | `reader` |
+| `producer-user` | `producer-pass` | `producer` |
 
 ### 2. Enable auth in config
 

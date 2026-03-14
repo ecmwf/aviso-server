@@ -57,25 +57,16 @@ pub async fn notify(
     request_id: RequestId,
     metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
-    // Helper to record notification outcome when metrics are enabled.
-    let record = |event_type: &str, status: &str| {
-        if let Some(ref m) = metrics {
-            m.notifications_total
-                .with_label_values(&[event_type, status])
-                .inc();
-        }
-    };
-
     // Parse and validate request structure
     let payload = match parse_and_validate_request(&body) {
         Ok(p) => p,
         Err(e) => {
-            record("unknown", "error");
+            record_notification(&metrics, "unknown", "error");
             return request_parse_error_response(RequestKind::Notification, e);
         }
     };
     if payload.identifier.contains_key("point") {
-        record(&payload.event_type, "error");
+        record_notification(&metrics, &payload.event_type, "error");
         return request_validation_error_response(
             RequestKind::Notification,
             anyhow::anyhow!(
@@ -91,7 +82,7 @@ pub async fn notify(
 
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
-        record(event_type, "rejected");
+        record_notification(&metrics, event_type, "rejected");
         return response;
     }
 
@@ -105,11 +96,11 @@ pub async fn notify(
         Ok(result) => result,
         Err(e) => match e.kind {
             NotificationErrorKind::Validation => {
-                record(event_type, "error");
+                record_notification(&metrics, event_type, "error");
                 return request_validation_error_response(RequestKind::Notification, e.source);
             }
             NotificationErrorKind::Processing => {
-                record(event_type, "error");
+                record_notification(&metrics, event_type, "error");
                 return processing_error_response(ProcessingKind::NotificationProcessing, e.source);
             }
         },
@@ -138,11 +129,11 @@ pub async fn notify(
     )
     .await
     {
-        record(event_type, "error");
+        record_notification(&metrics, event_type, "error");
         return processing_error_response(ProcessingKind::NotificationStorage, e);
     }
 
-    record(event_type, "success");
+    record_notification(&metrics, event_type, "success");
 
     // Build success response
     let response = NotificationResponse {
@@ -177,6 +168,14 @@ pub async fn notify(
     );
 
     HttpResponse::Ok().json(response)
+}
+
+fn record_notification(metrics: &Option<web::Data<AppMetrics>>, event_type: &str, status: &str) {
+    if let Some(m) = metrics {
+        m.notifications_total
+            .with_label_values(&[event_type, status])
+            .inc();
+    }
 }
 
 fn json_value_kind(value: &serde_json::Value) -> &'static str {
