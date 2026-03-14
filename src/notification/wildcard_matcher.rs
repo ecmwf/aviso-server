@@ -527,8 +527,8 @@ pub fn create_pattern_matcher(watch_pattern: Vec<String>) -> impl Fn(&str) -> bo
 mod tests {
     use super::*;
     use crate::configuration::{
-        ApplicationSettings, AuthSettings, EventSchema, NotificationBackendSettings, PayloadConfig,
-        Settings, TopicConfig, WatchEndpointSettings,
+        ApplicationSettings, AuthSettings, EventSchema, MetricsSettings,
+        NotificationBackendSettings, PayloadConfig, Settings, TopicConfig, WatchEndpointSettings,
     };
     use aviso_validators::{EnumConstraint, NumericConstraint};
     use std::collections::HashMap;
@@ -600,6 +600,7 @@ mod tests {
                 ])),
                 watch_endpoint: WatchEndpointSettings::default(),
                 auth: AuthSettings::default(),
+                metrics: MetricsSettings::default(),
             };
 
             settings.init_global_config();

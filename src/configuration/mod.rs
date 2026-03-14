@@ -15,5 +15,6 @@ pub use loader::get_configuration;
 pub use types::*;
 pub use units::{parse_duration_spec, parse_retention_time_spec, parse_size_spec};
 pub use validation::{
-    validate_auth_settings, validate_schema_storage_policy_support, validate_stream_auth_settings,
+    validate_auth_settings, validate_metrics_settings, validate_schema_storage_policy_support,
+    validate_stream_auth_settings,
 };
