@@ -79,66 +79,120 @@ logging:
 
 # Schema definitions
 # Each stream defines topic shape, identifier validation, payload requirement,
-# and optional auth policy.
+# and optional auth policy. These schemas are used by scripts/smoke_test.py.
 notification_schema:
-  # Public stream (auth omitted => anonymous access when auth.enabled=true).
-  public_events:
+  # Public stream (no auth block => anonymous access even when auth.enabled=true).
+  test_polygon:
     payload:
       required: true
     topic:
-      base: "public"
-      key_order: ["event_type", "date"]
+      base: "polygon"
+      key_order: ["date", "time"]
     identifier:
-      event_type:
-        type: StringHandler
-        required: true
-        description: "Business event category for public notifications."
       date:
         type: DateHandler
         canonical_format: "%Y%m%d"
         required: false
-        description: "Production date in YYYYMMDD format."
+      time:
+        type: TimeHandler
+        required: false
+      polygon:
+        type: PolygonHandler
+        required: true
 
-  # Authenticated stream (any authenticated user; no role restriction).
-  private_events:
+  # Authenticated stream with read/write role separation.
+  # - Any authenticated user in localrealm can read (wildcard).
+  # - Only producer or admin roles can write.
+  mars:
     payload:
-      required: true
+      required: false
     topic:
-      base: "private"
-      key_order: ["event_type", "date"]
-    identifier:
-      event_type:
-        type: StringHandler
-        required: true
-      date:
-        type: DateHandler
-        canonical_format: "%Y%m%d"
-        required: false
+      base: "mars"
+      key_order: ["class", "expver", "domain", "date", "time", "stream", "step"]
     auth:
       required: true
-
-  # Role-restricted stream.
-  ops_events:
-    payload:
-      required: true
-    topic:
-      base: "ops"
-      key_order: ["event_type", "date"]
+      read_roles:
+        localrealm: ["*"]
+      write_roles:
+        localrealm: ["producer"]
     identifier:
-      event_type:
+      class:
         type: StringHandler
+        max_length: 2
         required: true
       date:
         type: DateHandler
         canonical_format: "%Y%m%d"
         required: false
+      domain:
+        type: EnumHandler
+        values: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"]
+        required: false
+      expver:
+        type: ExpverHandler
+        default: "0001"
+        required: false
+      step:
+        type: IntHandler
+        range: [0, 100000]
+        required: false
+      stream:
+        type: StringHandler
+        required: false
+      time:
+        type: TimeHandler
+        required: false
+
+  # Authenticated stream with admin-only writes.
+  # - Any authenticated user can read (no read_roles restriction).
+  # - Only admins can write (no write_roles => defaults to admin_roles).
+  dissemination:
+    payload:
+      required: true
+    topic:
+      base: "diss"
+      key_order: ["destination", "target", "class", "expver", "domain", "date", "time", "stream", "step"]
     auth:
       required: true
-      allowed_roles:
-        localrealm: ["admin", "reader"]
+    identifier:
+      class:
+        type: StringHandler
+        max_length: 2
+        required: true
+      date:
+        type: DateHandler
+        canonical_format: "%Y%m%d"
+        required: false
+      destination:
+        type: StringHandler
+        required: true
+      target:
+        type: StringHandler
+        required: false
+      domain:
+        type: EnumHandler
+        values: ["a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"]
+        required: false
+      expver:
+        type: ExpverHandler
+        default: "0001"
+        required: false
+      step:
+        type: IntHandler
+        range: [0, 100000]
+        required: false
+      stream:
+        type: StringHandler
+        required: false
+      time:
+        type: TimeHandler
+        required: false
 
-# Quick checks:
-# 1) watch public_events without Authorization => 200
-# 2) watch private_events without Authorization => 401
-# 3) watch private_events with valid token => 200
-# 4) watch ops_events with a token missing admin/reader role => 403
+# Smoke test auth verification (with scripts/example_auth_config.yaml):
+# 1) test_polygon without Authorization => 200 (no auth block)
+# 2) mars without Authorization => 401 (auth.required=true)
+# 3) mars with reader-user => read 200, write 403
+# 4) mars with producer-user => write 200
+# 5) mars with admin-user => read 200, write 200
+# 6) dissemination with reader-user => read 200, write 403 (admin-only writes)
+# 7) dissemination with admin-user => read 200, write 200
