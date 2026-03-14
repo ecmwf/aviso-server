@@ -4,14 +4,26 @@
 Run:
     python3 scripts/smoke_test.py
 
-Prerequisite:
+Prerequisites:
     pip install httpx
+
+    Copy configuration/config.yaml.example to configuration/config.yaml,
+    or point the server at it with AVISOSERVER_CONFIG_FILE.
+
+    When auth is enabled (the example config default), start auth-o-tron first:
+        ./scripts/auth-o-tron-docker.sh
 
 Environment:
     BASE_URL=http://127.0.0.1:8000
     BACKEND=in_memory|jetstream
     NATS_URL=nats://localhost:4222
     TIMEOUT_SECONDS=8
+
+    AUTH_ENABLED=true|false (default: true)
+        Must match the server's auth.enabled setting.
+        When false, auth headers are omitted and auth-specific tests are skipped.
+    AUTH_ADMIN_USER=admin-user
+    AUTH_ADMIN_PASS=admin-pass
 
 Optional JetStream expectation checks:
     JETSTREAM_POLICY_STREAM_NAME=POLYGON
@@ -23,6 +35,7 @@ Optional JetStream expectation checks:
 
 from __future__ import annotations
 
+import base64
 import json
 import os
 import shutil
@@ -51,6 +64,11 @@ TEST_POLYGON = "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
 OUTSIDE_POLYGON = "(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"
 
 
+def _basic_auth_header(username: str, password: str) -> str:
+    credentials = base64.b64encode(f"{username}:{password}".encode()).decode()
+    return f"Basic {credentials}"
+
+
 @dataclass(frozen=True)
 class Config:
     base_url: str = os.getenv("BASE_URL", "http://127.0.0.1:8000")
@@ -62,7 +80,20 @@ class Config:
     expect_max_bytes: str = os.getenv("EXPECT_MAX_BYTES", "")
     expect_max_messages_per_subject: str = os.getenv("EXPECT_MAX_MESSAGES_PER_SUBJECT", "")
     expect_compression: str = os.getenv("EXPECT_COMPRESSION", "")
+    auth_enabled: bool = os.getenv("AUTH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    auth_admin_user: str = os.getenv("AUTH_ADMIN_USER", "admin-user")
+    auth_admin_pass: str = os.getenv("AUTH_ADMIN_PASS", "admin-pass")
     verbose: bool = False
+
+    def admin_auth_headers(self) -> dict[str, str]:
+        if not self.auth_enabled:
+            return {}
+        return {"Authorization": _basic_auth_header(self.auth_admin_user, self.auth_admin_pass)}
+
+    def auth_headers_for(self, username: str, password: str) -> dict[str, str]:
+        if not self.auth_enabled:
+            return {}
+        return {"Authorization": _basic_auth_header(username, password)}
 
 
 @dataclass(frozen=True)
@@ -139,8 +170,16 @@ def publish_burst(action: Callable[[], None], *, count: int = 3, interval_second
         time.sleep(interval_seconds)
 
 
-def request_json(config: Config, method: str, path: str, body: dict | None = None) -> tuple[int, str]:
+def request_json(
+    config: Config,
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    headers: dict[str, str] | None = None,
+) -> tuple[int, str]:
     timeout = build_timeout(config)
+    request_headers = headers if headers is not None else {}
     try:
         with httpx.Client(base_url=config.base_url, timeout=timeout) as client:
             verbose_log(
@@ -152,7 +191,7 @@ def request_json(config: Config, method: str, path: str, body: dict | None = Non
                     else f"HTTP {method} {path} request=<none>"
                 ),
             )
-            response = client.request(method, path, json=body)
+            response = client.request(method, path, json=body, headers=request_headers)
     except httpx.HTTPError as exc:
         raise SmokeFailure(f"request failed ({method} {path}): {exc}") from exc
     verbose_log(
@@ -165,7 +204,15 @@ def request_json(config: Config, method: str, path: str, body: dict | None = Non
     return response.status_code, response.text
 
 
-def post_notification(config: Config, *, event_type: str, identifier: dict[str, str], payload: object) -> None:
+def post_notification(
+    config: Config,
+    *,
+    event_type: str,
+    identifier: dict[str, str],
+    payload: object,
+    headers: dict[str, str] | None = None,
+) -> None:
+    auth_headers = headers if headers is not None else config.admin_auth_headers()
     status, body = request_json(
         config,
         "POST",
@@ -175,6 +222,7 @@ def post_notification(config: Config, *, event_type: str, identifier: dict[str, 
             "identifier": identifier,
             "payload": payload,
         },
+        headers=auth_headers,
     )
     if status != 200:
         raise SmokeFailure(f"notification failed with status {status}: {body}")
@@ -243,11 +291,12 @@ def post_dissemination_notification(config: Config, *, note: str, target_value: 
     )
 
 
-def replay_body(config: Config, body: dict) -> str:
+def replay_body(config: Config, body: dict, *, headers: dict[str, str] | None = None) -> str:
     timeout = build_timeout(config)
+    auth_headers = headers if headers is not None else config.admin_auth_headers()
     chunks: list[str] = []
     try:
-        with httpx.Client(base_url=config.base_url, timeout=timeout) as client:
+        with httpx.Client(base_url=config.base_url, timeout=timeout, headers=auth_headers) as client:
             verbose_log(
                 config,
                 "HTTP POST /api/v1/replay stream request=\n"
@@ -281,15 +330,17 @@ def capture_watch_output(
     publish_trigger: str,
     startup_deadline_seconds: float = 5.0,
     post_publish_capture_seconds: float = 4.0,
+    headers: dict[str, str] | None = None,
 ) -> str:
     timeout = build_timeout(config, read=0.5)
+    auth_headers = headers if headers is not None else config.admin_auth_headers()
     output_parts: list[str] = []
     accumulated_output = ""
     startup_deadline = time.monotonic() + startup_deadline_seconds
     after_start_done = False
 
     try:
-        with httpx.Client(base_url=config.base_url, timeout=timeout) as client:
+        with httpx.Client(base_url=config.base_url, timeout=timeout, headers=auth_headers) as client:
             verbose_log(
                 config,
                 "HTTP POST /api/v1/watch stream request=\n"
@@ -619,6 +670,197 @@ def test_mars_replay_with_enum_in_predicate(config: Config) -> None:
     assert_not_contains(output, exclude_note, "mars enum-predicate replay output")
 
 
+def test_auth_public_stream_no_credentials(config: Config) -> None:
+    """test_polygon has no auth block — requests without credentials should succeed."""
+    if not config.auth_enabled:
+        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+        return
+    post_notification(
+        config,
+        event_type="test_polygon",
+        identifier={"date": DEFAULT_DATE, "time": DEFAULT_TIME, "polygon": TEST_POLYGON},
+        payload={"note": "auth-public-no-creds"},
+        headers={},
+    )
+
+
+def test_auth_mars_unauthenticated_rejected(config: Config) -> None:
+    """mars has auth.required=true — unauthenticated requests should get 401."""
+    if not config.auth_enabled:
+        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+        return
+    status, _ = request_json(
+        config,
+        "POST",
+        "/api/v1/notification",
+        {
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": "oper",
+                "step": "1",
+            },
+            "payload": "auth-test",
+        },
+        headers={},
+    )
+    if status != 401:
+        raise SmokeFailure(f"expected 401 for unauthenticated mars notify, got {status}")
+
+
+def test_auth_mars_reader_can_read(config: Config) -> None:
+    """mars read_roles: localrealm: ["*"] — reader-user should be able to replay."""
+    if not config.auth_enabled:
+        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+        return
+    reader_headers = config.auth_headers_for("reader-user", "reader-pass")
+    stream_value = unique_token("auth-reader-read")
+    seed_note = unique_token("auth-reader-seed")
+    post_mars_notification(config, note=seed_note, stream_value=stream_value)
+    output = replay_body(
+        config,
+        {
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": stream_value,
+                "step": "1",
+            },
+            "from_id": "1",
+        },
+        headers=reader_headers,
+    )
+    assert_contains(output, seed_note, "mars replay as reader-user")
+
+
+def test_auth_mars_reader_cannot_write(config: Config) -> None:
+    """mars write_roles: localrealm: ["producer"] — reader-user should get 403 on notify."""
+    if not config.auth_enabled:
+        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+        return
+    reader_headers = config.auth_headers_for("reader-user", "reader-pass")
+    status, _ = request_json(
+        config,
+        "POST",
+        "/api/v1/notification",
+        {
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": "oper",
+                "step": "1",
+            },
+            "payload": "auth-test-write-blocked",
+        },
+        headers=reader_headers,
+    )
+    if status != 403:
+        raise SmokeFailure(f"expected 403 for reader writing to mars, got {status}")
+
+
+def test_auth_mars_producer_can_write(config: Config) -> None:
+    """mars write_roles: localrealm: ["producer"] — producer-user should succeed."""
+    if not config.auth_enabled:
+        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+        return
+    producer_headers = config.auth_headers_for("producer-user", "producer-pass")
+    status, _ = request_json(
+        config,
+        "POST",
+        "/api/v1/notification",
+        {
+            "event_type": "mars",
+            "identifier": {
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": "oper",
+                "step": "1",
+            },
+            "payload": "auth-test-producer-write",
+        },
+        headers=producer_headers,
+    )
+    if status != 200:
+        raise SmokeFailure(f"expected 200 for producer writing to mars, got {status}")
+
+
+def test_auth_dissemination_reader_can_read(config: Config) -> None:
+    """dissemination has no read_roles — any authenticated user can replay."""
+    if not config.auth_enabled:
+        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+        return
+    reader_headers = config.auth_headers_for("reader-user", "reader-pass")
+    target_value = unique_token("auth-diss-reader")
+    seed_note = unique_token("auth-diss-seed")
+    post_dissemination_notification(config, note=seed_note, target_value=target_value)
+    output = replay_body(
+        config,
+        {
+            "event_type": "dissemination",
+            "identifier": {
+                "destination": "FOO",
+                "target": target_value,
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": "enfo",
+                "step": "1",
+            },
+            "from_id": "1",
+        },
+        headers=reader_headers,
+    )
+    assert_contains(output, seed_note, "dissemination replay as reader-user")
+
+
+def test_auth_dissemination_reader_cannot_write(config: Config) -> None:
+    """dissemination has no write_roles — only admins can write. reader-user should get 403."""
+    if not config.auth_enabled:
+        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+        return
+    reader_headers = config.auth_headers_for("reader-user", "reader-pass")
+    status, _ = request_json(
+        config,
+        "POST",
+        "/api/v1/notification",
+        {
+            "event_type": "dissemination",
+            "identifier": {
+                "destination": "FOO",
+                "target": "bar",
+                "class": "od",
+                "expver": "0001",
+                "domain": "g",
+                "date": DEFAULT_DATE,
+                "time": DEFAULT_TIME,
+                "stream": "enfo",
+                "step": "1",
+            },
+            "payload": {"note": "auth-test-diss-blocked"},
+        },
+        headers=reader_headers,
+    )
+    if status != 403:
+        raise SmokeFailure(f"expected 403 for reader writing to dissemination, got {status}")
+
+
 def expected_compression_value(raw: str) -> str:
     normalized = raw.strip().lower()
     if normalized in {"true", "s2"}:
@@ -749,6 +991,34 @@ def main() -> int:
             test_mars_replay_with_enum_in_predicate,
         ),
         SmokeCase(
+            "auth: public stream accepts unauthenticated requests",
+            test_auth_public_stream_no_credentials,
+        ),
+        SmokeCase(
+            "auth: mars rejects unauthenticated requests",
+            test_auth_mars_unauthenticated_rejected,
+        ),
+        SmokeCase(
+            "auth: mars reader can replay (wildcard read_roles)",
+            test_auth_mars_reader_can_read,
+        ),
+        SmokeCase(
+            "auth: mars reader cannot write (missing producer role)",
+            test_auth_mars_reader_cannot_write,
+        ),
+        SmokeCase(
+            "auth: mars producer can write",
+            test_auth_mars_producer_can_write,
+        ),
+        SmokeCase(
+            "auth: dissemination reader can replay (no read_roles restriction)",
+            test_auth_dissemination_reader_can_read,
+        ),
+        SmokeCase(
+            "auth: dissemination reader cannot write (admin-only)",
+            test_auth_dissemination_reader_cannot_write,
+        ),
+        SmokeCase(
             "jetstream stream policy is inspectable (and optionally matches expected values)",
             test_jetstream_policy_visibility,
         ),
@@ -756,7 +1026,7 @@ def main() -> int:
 
     print(
         f"[INFO] running smoke tests against {config.base_url} "
-        f"(backend={config.backend}, timeout={config.timeout_seconds}s)"
+        f"(backend={config.backend}, auth={config.auth_enabled}, timeout={config.timeout_seconds}s)"
     )
     passed = 0
     failed = 0
