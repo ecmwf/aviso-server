@@ -769,6 +769,7 @@ async fn start_mock_auth_o_tron_server()
     let address = listener.local_addr()?;
     let server =
         HttpServer::new(|| App::new().route("/authenticate", web::get().to(mock_authenticate)))
+            .disable_signals()
             .listen(listener)?
             .run();
     let server_handle = tokio::spawn(server);

@@ -66,7 +66,7 @@ pub async fn notify(
         }
     };
     if payload.identifier.contains_key("point") {
-        record_notification(&metrics, &payload.event_type, "error");
+        record_notification(&metrics, "unknown", "error");
         return request_validation_error_response(
             RequestKind::Notification,
             anyhow::anyhow!(
@@ -82,11 +82,13 @@ pub async fn notify(
 
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
-        record_notification(&metrics, event_type, "rejected");
+        record_notification(&metrics, "unknown", "rejected");
         return response;
     }
 
-    // Process notification request with payload validation
+    // Process notification request with payload validation.
+    // After this point, event_type is confirmed to exist in notification_schema
+    // and is safe to use as a Prometheus label (bounded cardinality).
     let notification_result = match process_notification_request(
         event_type,
         request_params,
@@ -96,11 +98,11 @@ pub async fn notify(
         Ok(result) => result,
         Err(e) => match e.kind {
             NotificationErrorKind::Validation => {
-                record_notification(&metrics, event_type, "error");
+                record_notification(&metrics, "unknown", "error");
                 return request_validation_error_response(RequestKind::Notification, e.source);
             }
             NotificationErrorKind::Processing => {
-                record_notification(&metrics, event_type, "error");
+                record_notification(&metrics, "unknown", "error");
                 return processing_error_response(ProcessingKind::NotificationProcessing, e.source);
             }
         },

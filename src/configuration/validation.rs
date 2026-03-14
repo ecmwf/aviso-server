@@ -15,13 +15,27 @@ fn validate_realm_roles(
         if realm.trim().is_empty() {
             bail!("{field_name} must not contain empty or whitespace-only realm keys");
         }
+        if realm != realm.trim() {
+            bail!(
+                "{field_name} realm '{realm}' has leading/trailing whitespace — trim it to '{}'",
+                realm.trim()
+            );
+        }
         if roles.is_empty() {
             bail!("{field_name} realm '{realm}' must have at least one role");
         }
-        if roles.iter().any(|role| role.trim().is_empty()) {
-            bail!(
-                "{field_name} realm '{realm}' must not contain empty or whitespace-only role entries"
-            );
+        for role in roles {
+            if role.trim().is_empty() {
+                bail!(
+                    "{field_name} realm '{realm}' must not contain empty or whitespace-only role entries"
+                );
+            }
+            if role != role.trim() {
+                bail!(
+                    "{field_name} realm '{realm}' role '{role}' has leading/trailing whitespace — trim it to '{}'",
+                    role.trim()
+                );
+            }
         }
     }
     Ok(())
@@ -815,6 +829,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_enabled_auth_with_padded_admin_realm_key() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: HashMap::from([(" testrealm ".to_string(), vec!["admin".to_string()])]),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("leading/trailing whitespace"));
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_padded_admin_role() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin ".to_string()])]),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("leading/trailing whitespace"));
+    }
+
+    #[test]
     fn rejects_enabled_auth_with_zero_timeout() {
         let auth = AuthSettings {
             enabled: true,
@@ -1144,6 +1186,43 @@ mod tests {
 
         let err = validate_stream_auth_settings(&settings).expect_err("should fail");
         assert!(err.to_string().contains("must have at least one role"));
+    }
+
+    #[test]
+    fn rejects_stream_read_roles_with_padded_realm_key() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    read_roles: Some(HashMap::from([(
+                        " testrealm".to_string(),
+                        vec!["reader".to_string()],
+                    )])),
+                    write_roles: None,
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(err.to_string().contains("leading/trailing whitespace"));
     }
 
     #[test]
