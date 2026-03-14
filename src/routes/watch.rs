@@ -8,7 +8,7 @@ use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::replay::StartAt;
-use crate::routes::streaming::{enforce_stream_auth, record_start_at_span_fields};
+use crate::routes::streaming::{StreamOperation, enforce_stream_auth, record_start_at_span_fields};
 use crate::sse::{create_historical_then_live_stream, create_watch_sse_stream};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::NotificationRequest;
@@ -68,7 +68,11 @@ pub async fn watch(
     };
 
     // Enforce schema-level auth before stream setup to fail fast.
-    if let Err(response) = enforce_stream_auth(&http_request, &notification_request.event_type) {
+    if let Err(response) = enforce_stream_auth(
+        &http_request,
+        &notification_request.event_type,
+        StreamOperation::Read,
+    ) {
         return response;
     }
 

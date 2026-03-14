@@ -10,7 +10,7 @@ use crate::metrics::AppMetrics;
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::routes::streaming::enforce_stream_auth;
+use crate::routes::streaming::{StreamOperation, enforce_stream_auth};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -90,7 +90,7 @@ pub async fn notify(
     tracing::Span::current().record("event_type", event_type);
 
     // Reject unauthorized requests before validation/topic work.
-    if let Err(response) = enforce_stream_auth(&http_request, event_type) {
+    if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
         record(event_type, "rejected");
         return response;
     }

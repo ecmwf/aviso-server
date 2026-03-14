@@ -27,7 +27,7 @@ impl User {
     ///
     /// - Empty map: any authenticated user is allowed.
     /// - User realm not in map: denied.
-    /// - Realm present with empty role list: any user in that realm is allowed.
+    /// - Realm present with `["*"]`: any user in that realm is allowed.
     /// - Realm present with roles: user must hold at least one listed role.
     pub fn has_any_role(&self, realm_roles: &HashMap<String, Vec<String>>) -> bool {
         if realm_roles.is_empty() {
@@ -42,7 +42,7 @@ impl User {
             return false;
         };
 
-        if allowed.is_empty() {
+        if allowed.iter().any(|r| r == "*") {
             return true;
         }
 
@@ -289,16 +289,27 @@ mod tests {
     }
 
     #[test]
-    fn has_any_role_returns_true_when_realm_has_empty_roles_list() {
-        // Empty roles list for a realm means any user in that realm is allowed.
+    fn has_any_role_wildcard_grants_realm_wide_access() {
         let user = User {
             username: "reader".to_string(),
-            realm: Some("ecmwf".to_string()),
+            realm: Some("internal".to_string()),
             roles: vec!["anything".to_string()],
             attributes: HashMap::new(),
         };
-        let required = realm_roles(&[("ecmwf", &[])]);
+        let required = realm_roles(&[("internal", &["*"])]);
         assert!(user.has_any_role(&required));
+    }
+
+    #[test]
+    fn has_any_role_wildcard_does_not_grant_cross_realm_access() {
+        let user = User {
+            username: "reader".to_string(),
+            realm: Some("external".to_string()),
+            roles: vec!["admin".to_string()],
+            attributes: HashMap::new(),
+        };
+        let required = realm_roles(&[("internal", &["*"])]);
+        assert!(!user.has_any_role(&required));
     }
 
     #[test]

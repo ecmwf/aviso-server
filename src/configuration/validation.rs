@@ -83,23 +83,33 @@ pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
             continue;
         };
 
-        if let Some(realm_roles) = &stream_auth.allowed_roles {
+        if let Some(read_roles) = &stream_auth.read_roles {
             validate_realm_roles(
-                &format!("Schema '{event_type}' auth.allowed_roles"),
-                realm_roles,
+                &format!("Schema '{event_type}' auth.read_roles"),
+                read_roles,
+            )?;
+        }
+        if let Some(write_roles) = &stream_auth.write_roles {
+            validate_realm_roles(
+                &format!("Schema '{event_type}' auth.write_roles"),
+                write_roles,
             )?;
         }
 
+        let has_roles = stream_auth
+            .read_roles
+            .as_ref()
+            .is_some_and(|r| !r.is_empty())
+            || stream_auth
+                .write_roles
+                .as_ref()
+                .is_some_and(|r| !r.is_empty());
+
         if settings.auth.enabled {
-            if !stream_auth.required
-                && stream_auth
-                    .allowed_roles
-                    .as_ref()
-                    .is_some_and(|roles| !roles.is_empty())
-            {
+            if !stream_auth.required && has_roles {
                 bail!(
-                    "Schema '{event_type}' sets auth.allowed_roles while auth.required=false; \
-                     set auth.required=true or remove auth.allowed_roles"
+                    "Schema '{event_type}' sets auth roles while auth.required=false; \
+                     set auth.required=true or remove the role lists"
                 );
             }
             continue;
@@ -111,13 +121,9 @@ pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
             );
         }
 
-        if stream_auth
-            .allowed_roles
-            .as_ref()
-            .is_some_and(|roles| !roles.is_empty())
-        {
+        if has_roles {
             bail!(
-                "Schema '{event_type}' sets auth.allowed_roles but auth is globally disabled. Enable auth.enabled=true or remove schema auth config."
+                "Schema '{event_type}' sets auth roles but auth is globally disabled. Enable auth.enabled=true or remove schema auth config."
             );
         }
     }
@@ -854,7 +860,8 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: None,
+                    read_roles: None,
+                    write_roles: None,
                 }),
             },
         );
@@ -869,7 +876,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stream_auth_allowed_roles_when_global_auth_is_disabled() {
+    fn rejects_stream_auth_roles_when_global_auth_is_disabled() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "diss".to_string(),
@@ -884,20 +891,21 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: false,
-                    allowed_roles: Some(HashMap::from([(
+                    read_roles: Some(HashMap::from([(
                         "testrealm".to_string(),
-                        vec!["admin".to_string()],
+                        vec!["reader".to_string()],
                     )])),
+                    write_roles: None,
                 }),
             },
         );
 
         let settings = basic_settings_with_schema(schema_map);
         let err = validate_stream_auth_settings(&settings)
-            .expect_err("stream auth.allowed_roles should fail when auth is disabled");
+            .expect_err("stream auth roles should fail when auth is disabled");
         assert!(
             err.to_string()
-                .contains("Schema 'diss' sets auth.allowed_roles but auth is globally disabled")
+                .contains("Schema 'diss' sets auth roles but auth is globally disabled")
         );
     }
 
@@ -917,9 +925,13 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(HashMap::from([(
+                    read_roles: Some(HashMap::from([(
                         "testrealm".to_string(),
                         vec!["reader".to_string()],
+                    )])),
+                    write_roles: Some(HashMap::from([(
+                        "testrealm".to_string(),
+                        vec!["producer".to_string()],
                     )])),
                 }),
             },
@@ -938,7 +950,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_empty_stream_allowed_roles_when_global_auth_is_enabled() {
+    fn accepts_stream_auth_required_without_role_lists() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "events".to_string(),
@@ -953,7 +965,8 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(HashMap::new()),
+                    read_roles: None,
+                    write_roles: None,
                 }),
             },
         );
@@ -967,11 +980,11 @@ mod tests {
             HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
 
         validate_stream_auth_settings(&settings)
-            .expect("empty stream allowed_roles should be accepted");
+            .expect("required=true without role lists should be accepted");
     }
 
     #[test]
-    fn rejects_stream_allowed_roles_with_whitespace_entry_when_auth_enabled() {
+    fn rejects_stream_read_roles_with_whitespace_entry_when_auth_enabled() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "events".to_string(),
@@ -986,10 +999,11 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(HashMap::from([(
+                    read_roles: Some(HashMap::from([(
                         "testrealm".to_string(),
-                        vec!["admin".to_string(), " ".to_string()],
+                        vec!["reader".to_string(), " ".to_string()],
                     )])),
+                    write_roles: None,
                 }),
             },
         );
@@ -1010,7 +1024,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_allowed_roles_when_required_is_false_and_auth_enabled() {
+    fn rejects_roles_when_required_is_false_and_auth_enabled() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "events".to_string(),
@@ -1025,10 +1039,11 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: false,
-                    allowed_roles: Some(HashMap::from([(
+                    read_roles: Some(HashMap::from([(
                         "testrealm".to_string(),
                         vec!["reader".to_string()],
                     )])),
+                    write_roles: None,
                 }),
             },
         );
@@ -1044,7 +1059,7 @@ mod tests {
         let err = validate_stream_auth_settings(&settings).expect_err("should fail");
         assert!(
             err.to_string()
-                .contains("auth.allowed_roles while auth.required=false")
+                .contains("auth roles while auth.required=false")
         );
     }
 

@@ -7,7 +7,7 @@ use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_val
 use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::routes::streaming::{enforce_stream_auth, record_start_at_span_fields};
+use crate::routes::streaming::{StreamOperation, enforce_stream_auth, record_start_at_span_fields};
 use crate::sse::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -61,7 +61,11 @@ pub async fn replay(
     };
 
     // Enforce schema-level auth before replay setup to fail fast.
-    if let Err(response) = enforce_stream_auth(&http_request, &notification_request.event_type) {
+    if let Err(response) = enforce_stream_auth(
+        &http_request,
+        &notification_request.event_type,
+        StreamOperation::Read,
+    ) {
         return response;
     }
 
