@@ -43,6 +43,7 @@ pub async fn create_watch_sse_stream(
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
+    sse_guard: Option<crate::metrics::SseConnectionGuard>,
 ) -> Result<HttpResponse> {
     let app_settings = Settings::get_global_application_settings();
     let watch_config = Settings::get_global_watch_settings();
@@ -110,7 +111,7 @@ pub async fn create_watch_sse_stream(
         "SSE stream created with graceful-shutdown support and filtering"
     );
 
-    Ok(create_sse_response(byte_stream))
+    Ok(create_sse_response(byte_stream, sse_guard))
 }
 
 pub async fn filter_notification_message(

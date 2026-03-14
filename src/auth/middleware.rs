@@ -1,12 +1,14 @@
 use crate::auth::client::{AuthClient, AuthClientError};
 use crate::auth::{User, UserExtractionError, extract_bearer_token, validate_jwt};
 use crate::configuration::{AuthMode, AuthSettings};
+use crate::metrics::AppMetrics;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{
     Error, HttpMessage, HttpRequest, HttpResponse,
     body::{EitherBody, MessageBody},
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
     http::{StatusCode, header},
+    web,
 };
 use futures_util::future::{LocalBoxFuture, Ready, ready};
 use serde_json::json;
@@ -137,12 +139,23 @@ where
                     .map(ServiceResponse::map_into_left_body);
             }
 
+            let metrics = req.app_data::<web::Data<AppMetrics>>().cloned();
+            let mode_label = match settings.mode {
+                AuthMode::Direct => "direct",
+                AuthMode::TrustedProxy => "trusted_proxy",
+            };
+
             let is_admin_path = req.path().starts_with("/api/v1/admin");
             let user =
                 match resolve_user(&req, &settings, auth_client.as_deref(), is_admin_path).await {
                     Ok(user) => user,
                     Err(failure) => {
                         log_failure(req.path(), &failure, None);
+                        if let Some(ref m) = metrics {
+                            m.auth_requests_total
+                                .with_label_values(&[mode_label, failure.reason()])
+                                .inc();
+                        }
                         return Ok(req
                             .into_response(failure.response(settings.mode).map_into_right_body()));
                     }
@@ -153,9 +166,19 @@ where
                     let failure =
                         AuthFailure::Forbidden("User does not have required administrative role");
                     log_failure(req.path(), &failure, Some(&user.username));
+                    if let Some(ref m) = metrics {
+                        m.auth_requests_total
+                            .with_label_values(&[mode_label, "forbidden"])
+                            .inc();
+                    }
                     return Ok(
                         req.into_response(failure.response(settings.mode).map_into_right_body())
                     );
+                }
+                if let Some(ref m) = metrics {
+                    m.auth_requests_total
+                        .with_label_values(&[mode_label, "success"])
+                        .inc();
                 }
                 debug!(
                     event_name = "auth.middleware.user.resolved",

@@ -1,8 +1,10 @@
+use crate::auth::middleware::get_user;
 use crate::error::{
     RequestKind, request_parse_error_response, request_validation_error_response,
     sse_error_response,
 };
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
+use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::replay::StartAt;
@@ -42,7 +44,7 @@ use tracing_actix_web::RequestId;
     )
 )]
 #[tracing::instrument(
-    skip(notification_backend, shutdown),
+    skip(notification_backend, shutdown, metrics),
     fields(
         event_type = tracing::field::Empty,
         request_id = %request_id,
@@ -57,6 +59,7 @@ pub async fn watch(
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
+    metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
     // Parse and validate request structure
     let notification_request = match parse_and_validate_request(&body) {
@@ -87,6 +90,14 @@ pub async fn watch(
     let filtering_params = Arc::new(context.canonicalized_params.clone());
     let filtering_constraints = Arc::new(context.identifier_constraints.clone());
 
+    // Guard is created before stream setup so it can be moved into the SSE
+    // response body. On setup failure the guard drops immediately, causing a
+    // brief +1/-1 on the active gauge — acceptable for production metrics.
+    let sse_guard = metrics.as_ref().map(|m| {
+        let username = get_user(&http_request).map(|u| u.username);
+        m.track_sse_connection("watch", &context.event_type, username.as_deref())
+    });
+
     // Determine streaming mode and create appropriate stream
     let display_topic = decode_subject_for_display(&context.topic);
     let setup_started_at = Instant::now();
@@ -100,6 +111,7 @@ pub async fn watch(
                 shutdown.clone(),
                 filtering_params.clone(),
                 filtering_constraints.clone(),
+                sse_guard,
             )
             .await,
         )
@@ -112,6 +124,7 @@ pub async fn watch(
                 shutdown.clone(),
                 filtering_params.clone(),
                 filtering_constraints.clone(),
+                sse_guard,
             )
             .await,
         )

@@ -7,7 +7,8 @@ use tracing::{error, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::auth::middleware::AuthMiddleware;
-use crate::configuration::AuthSettings;
+use crate::configuration::{AuthSettings, validate_metrics_settings};
+use crate::metrics::AppMetrics;
 use crate::openapi::ApiDoc;
 use crate::routes::admin::{delete_notification, wipe_all, wipe_stream};
 use crate::routes::home::homepage;
@@ -31,6 +32,7 @@ use utoipa_swagger_ui::SwaggerUi;
 pub struct Application {
     port: u16,
     server: Server,
+    metrics_server: Option<Server>,
     shutdown: CancellationToken,
     backend: Arc<dyn NotificationBackend>, // backend reference for shutdown
 }
@@ -74,6 +76,17 @@ impl Application {
             return Err(std::io::Error::other(e));
         }
 
+        if let Err(e) = validate_metrics_settings(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.metrics.validation.failed",
+                error = %e,
+                "Metrics configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
         let address = format!(
             "{}:{}",
             configuration.application.host, configuration.application.port
@@ -96,11 +109,35 @@ impl Application {
             }
         };
 
+        let (app_metrics, metrics_server) = if configuration.metrics.enabled {
+            let metrics = AppMetrics::new();
+            crate::metrics::register_process_metrics(&metrics.registry);
+
+            let metrics_port = configuration.metrics.port.expect("validated above");
+            let metrics_addr = format!("{}:{}", configuration.application.host, metrics_port);
+            let metrics_listener = TcpListener::bind(&metrics_addr)?;
+
+            info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.metrics.server.binding",
+                port = metrics_port,
+                "Metrics server binding"
+            );
+
+            let server =
+                crate::metrics::run_metrics_server(metrics_listener, metrics.registry.clone())?;
+            (Some(metrics), Some(server))
+        } else {
+            (None, None)
+        };
+
         let server = run(
             listener,
             notification_backend.clone(),
             shutdown.clone(),
             Arc::new(configuration.auth.clone()),
+            app_metrics,
         )?;
 
         // stop Actix when the cancellation token is triggered
@@ -151,6 +188,7 @@ impl Application {
         Ok(Self {
             port,
             server,
+            metrics_server,
             shutdown,
             backend: notification_backend,
         })
@@ -164,7 +202,13 @@ impl Application {
 
     // This function is used to run the server
     pub async fn run_until_stopped(self) -> Result<(), std::io::Error> {
-        self.server.await
+        match self.metrics_server {
+            Some(metrics) => {
+                tokio::try_join!(self.server, metrics)?;
+                Ok(())
+            }
+            None => self.server.await,
+        }
     }
 }
 
@@ -230,9 +274,11 @@ pub fn run(
     notification_backend: Arc<dyn NotificationBackend>,
     shutdown: CancellationToken,
     auth_settings: Arc<AuthSettings>,
+    app_metrics: Option<AppMetrics>,
 ) -> Result<Server, std::io::Error> {
+    let metrics_data = app_metrics.map(web::Data::new);
     let server = HttpServer::new(move || {
-        App::new()
+        let mut app = App::new()
             .wrap(TracingLogger::default())
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
@@ -244,7 +290,13 @@ pub fn run(
                 move |cfg| configure_api_v1(cfg, Arc::clone(&auth_settings))
             })
             .app_data(web::Data::new(notification_backend.clone()))
-            .app_data(web::Data::new(shutdown.clone()))
+            .app_data(web::Data::new(shutdown.clone()));
+
+        if let Some(ref metrics) = metrics_data {
+            app = app.app_data(metrics.clone());
+        }
+
+        app
     })
     .listen(listener)?
     .shutdown_timeout(30)
