@@ -16,6 +16,8 @@ providers:
         password: "admin-pass"
       - username: "reader-user"
         password: "reader-pass"
+      - username: "producer-user"
+        password: "producer-pass"
 
 augmenters:
   - name: "plain-role-augmenter"
@@ -24,6 +26,7 @@ augmenters:
     roles:
       admin: ["admin-user"]
       reader: ["reader-user"]
+      producer: ["producer-user"]
 
 store:
   enabled: false
