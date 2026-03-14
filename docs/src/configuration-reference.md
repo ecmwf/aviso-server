@@ -28,7 +28,7 @@ See [Topic Encoding](./topic-encoding.md) for rules and examples.
 
 ## `auth`
 
-Authentication is optional. When disabled (default), all API endpoints are publicly accessible only if schemas do not define stream auth rules. Startup fails if global auth is disabled while a schema sets `auth.required=true` or non-empty `auth.allowed_roles`.
+Authentication is optional. When disabled (default), all API endpoints are publicly accessible only if schemas do not define stream auth rules. Startup fails if global auth is disabled while a schema sets `auth.required=true` or non-empty `auth.read_roles`/`auth.write_roles`.
 
 When enabled:
 - Admin endpoints always require a valid JWT and an admin role.
@@ -50,7 +50,8 @@ When enabled:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `required` | `bool` | — | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
-| `allowed_roles` | `map<string, string[]>` | `{}` | Realm-scoped roles. Maps realm names to allowed role lists. An empty role list for a realm means any user from that realm is allowed. Only enforced when `required: true`. |
+| `read_roles` | `map<string, string[]>` | — | Realm-scoped roles for read access (watch/replay). When omitted, any authenticated user can read. Use `["*"]` as the role list to grant realm-wide access. |
+| `write_roles` | `map<string, string[]>` | — | Realm-scoped roles for write access (notify). When omitted, only users matching global `admin_roles` can write. Use `["*"]` as the role list to grant realm-wide access. |
 
 See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
 

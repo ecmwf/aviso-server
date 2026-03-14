@@ -110,12 +110,14 @@ notification_schema:
     auth:
       required: true  # Any authenticated user allowed
 
-  # Restricted stream - specific roles from specific realms
-  admin_stream:
+  # Separate read/write access
+  restricted_stream:
     # ... other config
     auth:
       required: true
-      allowed_roles:
+      read_roles:
+        your-realm: ["*"]
+      write_roles:
         your-realm: ["admin", "operator"]
 ```
 
