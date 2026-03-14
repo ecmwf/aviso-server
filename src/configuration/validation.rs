@@ -165,9 +165,7 @@ pub fn validate_metrics_settings(settings: &Settings) -> Result<()> {
         .port
         .ok_or_else(|| anyhow::anyhow!("metrics.port is required when metrics.enabled=true"))?;
     if port == 0 {
-        bail!(
-            "metrics.port must not be 0 (ephemeral ports make the endpoint undiscoverable for scraping)"
-        );
+        bail!("metrics.port must not be 0");
     }
     if port == settings.application.port {
         bail!("metrics.port must differ from application.port");
