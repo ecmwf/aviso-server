@@ -343,16 +343,25 @@ async fn resolve_user(
 ) -> Result<Option<User>, AuthFailure> {
     // Keep credential extraction/authentication mode-specific, then apply a
     // single admin-route rule for missing credentials across both modes.
+    //
+    // On non-admin routes, malformed Authorization headers are treated as
+    // absent so that public endpoints are not disrupted by bad headers.
+    // Per-stream auth in enforce_stream_auth decides whether missing
+    // credentials should be rejected.
     let user = match settings.mode {
-        AuthMode::Direct => match resolve_direct_credentials(req)? {
-            Some(credentials) => {
+        AuthMode::Direct => match resolve_direct_credentials(req) {
+            Ok(Some(credentials)) => {
                 Some(authenticate_user(&credentials, settings, auth_client).await?)
             }
-            None => None,
+            Ok(None) => None,
+            Err(failure) if is_admin_path => return Err(failure),
+            Err(_) => None,
         },
-        AuthMode::TrustedProxy => match resolve_trusted_proxy_token(req)? {
-            Some(token) => Some(user_from_remote_token(&token, settings)?),
-            None => None,
+        AuthMode::TrustedProxy => match resolve_trusted_proxy_token(req) {
+            Ok(Some(token)) => Some(user_from_remote_token(&token, settings)?),
+            Ok(None) => None,
+            Err(failure) if is_admin_path => return Err(failure),
+            Err(_) => None,
         },
     };
 
@@ -690,5 +699,42 @@ mod tests {
             .filter_map(|value| value.to_str().ok())
             .collect();
         assert_eq!(challenges, vec!["Bearer"]);
+    }
+
+    #[actix_web::test]
+    async fn malformed_auth_header_passes_through_on_non_admin_route() {
+        let app = test::init_service(
+            App::new()
+                .wrap(AuthMiddleware::with_settings(local_auth_settings("secret")))
+                .route("/api/v1/watch", web::get().to(inspect_user)),
+        )
+        .await;
+
+        let request = test::TestRequest::get()
+            .uri("/api/v1/watch")
+            .insert_header((AUTHORIZATION, "Digest garbage"))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+
+        // Non-admin route treats malformed header as absent credentials.
+        assert_eq!(response.status(), StatusCode::OK);
+    }
+
+    #[actix_web::test]
+    async fn malformed_auth_header_rejected_on_admin_route() {
+        let app = test::init_service(
+            App::new()
+                .wrap(AuthMiddleware::with_settings(local_auth_settings("secret")))
+                .route("/api/v1/admin/wipe", web::delete().to(inspect_user)),
+        )
+        .await;
+
+        let request = test::TestRequest::delete()
+            .uri("/api/v1/admin/wipe")
+            .insert_header((AUTHORIZATION, "Digest garbage"))
+            .to_request();
+        let response = test::call_service(&app, request).await;
+
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

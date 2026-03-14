@@ -164,6 +164,11 @@ pub fn validate_metrics_settings(settings: &Settings) -> Result<()> {
     let port = metrics
         .port
         .ok_or_else(|| anyhow::anyhow!("metrics.port is required when metrics.enabled=true"))?;
+    if port == 0 {
+        bail!(
+            "metrics.port must not be 0 (ephemeral ports make the endpoint undiscoverable for scraping)"
+        );
+    }
     if port == settings.application.port {
         bail!("metrics.port must differ from application.port");
     }
@@ -1329,6 +1334,19 @@ mod tests {
             err.to_string()
                 .contains("metrics.port is required when metrics.enabled=true")
         );
+    }
+
+    #[test]
+    fn rejects_metrics_port_zero() {
+        let settings = settings_with_metrics(
+            8000,
+            MetricsSettings {
+                enabled: true,
+                port: Some(0),
+            },
+        );
+        let err = validate_metrics_settings(&settings).expect_err("should fail");
+        assert!(err.to_string().contains("metrics.port must not be 0"));
     }
 
     #[test]
