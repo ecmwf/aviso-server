@@ -20,9 +20,7 @@ use tracing_actix_web::RequestId;
 
 /// Notification endpoint handler
 ///
-/// Processes notification requests with all schema fields required.
-/// Validates request format, processes notification, and saves to backend.
-/// Now supports spatial metadata extraction for polygon fields.
+/// Validates request format, processes the notification, and saves to backend.
 #[utoipa::path(
     post,
     path = "/api/v1/notification",

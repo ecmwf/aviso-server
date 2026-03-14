@@ -6,7 +6,7 @@ use crate::notification_backend::{BackendCapabilities, capabilities_for_backend_
 use anyhow::{Result, bail};
 use std::collections::HashMap;
 
-/// Validates a realm → roles map for empty/whitespace realm keys and role entries.
+/// Validates a realm → roles map: rejects empty, whitespace-only, and whitespace-padded entries.
 fn validate_realm_roles(
     field_name: &str,
     realm_roles: &HashMap<String, Vec<String>>,
@@ -16,10 +16,7 @@ fn validate_realm_roles(
             bail!("{field_name} must not contain empty or whitespace-only realm keys");
         }
         if realm != realm.trim() {
-            bail!(
-                "{field_name} realm '{realm}' has leading/trailing whitespace — trim it to '{}'",
-                realm.trim()
-            );
+            bail!("{field_name} realm '{realm}' must not have leading or trailing whitespace");
         }
         if roles.is_empty() {
             bail!("{field_name} realm '{realm}' must have at least one role");
@@ -32,8 +29,7 @@ fn validate_realm_roles(
             }
             if role != role.trim() {
                 bail!(
-                    "{field_name} realm '{realm}' role '{role}' has leading/trailing whitespace — trim it to '{}'",
-                    role.trim()
+                    "{field_name} realm '{realm}' role '{role}' must not have leading or trailing whitespace"
                 );
             }
         }
@@ -839,7 +835,7 @@ mod tests {
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
-        assert!(err.to_string().contains("leading/trailing whitespace"));
+        assert!(err.to_string().contains("leading or trailing whitespace"));
     }
 
     #[test]
@@ -853,7 +849,7 @@ mod tests {
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
-        assert!(err.to_string().contains("leading/trailing whitespace"));
+        assert!(err.to_string().contains("leading or trailing whitespace"));
     }
 
     #[test]
@@ -1222,7 +1218,7 @@ mod tests {
             HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
 
         let err = validate_stream_auth_settings(&settings).expect_err("should fail");
-        assert!(err.to_string().contains("leading/trailing whitespace"));
+        assert!(err.to_string().contains("leading or trailing whitespace"));
     }
 
     #[test]
