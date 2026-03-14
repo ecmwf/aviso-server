@@ -153,7 +153,7 @@ impl Drop for SseConnectionGuard {
             if let Some(endpoint_users) = users.get_mut(&self.endpoint)
                 && let Some(count) = endpoint_users.get_mut(username)
             {
-                *count -= 1;
+                *count = count.saturating_sub(1);
                 if *count == 0 {
                     endpoint_users.remove(username);
                     self.metrics
