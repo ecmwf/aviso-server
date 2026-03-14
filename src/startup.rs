@@ -142,6 +142,7 @@ impl Application {
 
         // stop Actix when the cancellation token is triggered
         let handle = server.handle();
+        let metrics_handle = metrics_server.as_ref().map(|s| s.handle());
         let backend_for_shutdown = notification_backend.clone();
         task::spawn({
             let token = shutdown.clone();
@@ -155,7 +156,10 @@ impl Application {
                     "Shutdown signal received, stopping Actix server"
                 );
 
-                // First, stop accepting new connections
+                // Stop both servers (metrics server has a short timeout).
+                if let Some(mh) = metrics_handle {
+                    mh.stop(false).await;
+                }
                 handle.stop(true).await;
 
                 info!(
