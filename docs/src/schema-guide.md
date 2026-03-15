@@ -182,15 +182,15 @@ Constraints: at least 3 coordinate pairs (plus closing repeat), latitude in [-90
 
 See [Spatial Filtering](./practical-examples/spatial-filtering.md) for usage examples.
 
-#### PointHandler
+### Reserved Query-Time Fields
 
-Accepts a single `lat,lon` coordinate pair. This is a query-time field: clients send it on `/watch` or `/replay` to filter notifications whose polygon contains the point. The `/notification` endpoint rejects requests that include a `point` field.
+#### `point` (built-in)
 
-```yaml
-location:
-  type: PointHandler
-  required: false
-```
+The `point` field is a reserved identifier that clients can send on `/watch` or `/replay` to filter notifications whose polygon contains the given point. It accepts a single `lat,lon` coordinate pair.
+
+`point` is **not** a schema-configurable handler — it is always available on any schema that includes a `PolygonHandler` field. The `/notification` endpoint rejects requests that include `point`.
+
+See [Spatial Filtering](./practical-examples/spatial-filtering.md) for usage examples.
 
 ---
 
