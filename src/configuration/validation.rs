@@ -924,9 +924,10 @@ mod tests {
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
-        assert!(err
-            .to_string()
-            .contains("auth.auth_o_tron_url must not have leading or trailing whitespace"));
+        assert!(
+            err.to_string()
+                .contains("auth.auth_o_tron_url must not have leading or trailing whitespace")
+        );
     }
 
     #[test]
@@ -940,9 +941,10 @@ mod tests {
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
-        assert!(err
-            .to_string()
-            .contains("auth.jwt_secret must not have leading or trailing whitespace"));
+        assert!(
+            err.to_string()
+                .contains("auth.jwt_secret must not have leading or trailing whitespace")
+        );
     }
 
     #[test]
