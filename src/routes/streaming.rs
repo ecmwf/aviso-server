@@ -58,9 +58,14 @@ pub fn enforce_stream_auth(
         ));
     };
 
-    let auth_settings = req
-        .app_data::<web::Data<Arc<AuthSettings>>>()
-        .expect("AuthSettings must be registered as app_data");
+    let Some(auth_settings) = req.app_data::<web::Data<Arc<AuthSettings>>>() else {
+        tracing::error!("AuthSettings not found in app_data — server misconfiguration");
+        return Err(HttpResponse::InternalServerError().json(json!({
+            "code": "INTERNAL_ERROR",
+            "error": "internal_error",
+            "message": "Server configuration error"
+        })));
+    };
     let is_admin = user.is_admin(&auth_settings.admin_roles);
 
     match operation {
