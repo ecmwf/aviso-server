@@ -39,6 +39,7 @@ use tracing_actix_web::RequestId;
         (status = 503, description = "Authentication service unavailable (direct mode)")
     ),
     security(
+        (),
         ("bearer_jwt" = []),
         ("basic" = []),
     )
