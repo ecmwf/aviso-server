@@ -1,4 +1,4 @@
-use crate::auth::middleware::get_user;
+use crate::auth::middleware::get_username;
 use crate::error::{
     RequestKind, request_parse_error_response, request_validation_error_response,
     sse_error_response,
@@ -90,7 +90,7 @@ pub async fn replay(
 
     // See watch.rs for why the guard is created before stream setup.
     let sse_guard = metrics.as_ref().map(|m| {
-        let username = get_user(&http_request).map(|u| u.username);
+        let username = get_username(&http_request);
         m.track_sse_connection("replay", &context.event_type, username.as_deref())
     });
 

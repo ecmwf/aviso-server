@@ -39,7 +39,7 @@ pub fn get_configuration() -> Result<Settings, config::ConfigError> {
                     "{CONFIG_FILE_ENV} does not point to a file: {config_file}"
                 )));
             }
-            tracing::info!(path = %config_file, "Loading configuration from {CONFIG_FILE_ENV}");
+            tracing::info!(path = %config_file, env = CONFIG_FILE_ENV, "Loading configuration from override env var");
             settings.add_source(config::File::from(path.to_path_buf()))
         }
     };

@@ -1,4 +1,4 @@
-use crate::auth::middleware::get_user;
+use crate::auth::middleware::get_username;
 use crate::error::{
     RequestKind, request_parse_error_response, request_validation_error_response,
     sse_error_response,
@@ -98,7 +98,7 @@ pub async fn watch(
     // response body. On setup failure the guard drops immediately, causing a
     // brief +1/-1 on the active gauge — acceptable for production metrics.
     let sse_guard = metrics.as_ref().map(|m| {
-        let username = get_user(&http_request).map(|u| u.username);
+        let username = get_username(&http_request);
         m.track_sse_connection("watch", &context.event_type, username.as_deref())
     });
 

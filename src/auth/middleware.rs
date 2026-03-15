@@ -201,6 +201,11 @@ pub fn get_user(req: &HttpRequest) -> Option<User> {
     req.extensions().get::<User>().cloned()
 }
 
+/// Returns just the username without cloning the full User.
+pub fn get_username(req: &HttpRequest) -> Option<String> {
+    req.extensions().get::<User>().map(|u| u.username.clone())
+}
+
 pub fn is_auth_enabled(req: &HttpRequest) -> bool {
     req.extensions()
         .get::<AuthContext>()
