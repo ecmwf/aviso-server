@@ -62,6 +62,7 @@ Optional Prometheus metrics endpoint. When enabled, a separate HTTP server serve
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `enabled` | `bool` | `false` | Enable the metrics endpoint. |
+| `host` | `string` | `"127.0.0.1"` | Bind address for the metrics server. Defaults to loopback to avoid public exposure. |
 | `port` | `u16` | none | Required when `enabled=true`. Must differ from `application.port`. |
 
 Exposed metrics:

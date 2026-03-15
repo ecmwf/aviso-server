@@ -1325,6 +1325,7 @@ mod tests {
             MetricsSettings {
                 enabled: true,
                 port: None,
+                ..Default::default()
             },
         );
         let err = validate_metrics_settings(&settings).expect_err("should fail");
@@ -1341,6 +1342,7 @@ mod tests {
             MetricsSettings {
                 enabled: true,
                 port: Some(0),
+                ..Default::default()
             },
         );
         let err = validate_metrics_settings(&settings).expect_err("should fail");
@@ -1354,6 +1356,7 @@ mod tests {
             MetricsSettings {
                 enabled: true,
                 port: Some(8000),
+                ..Default::default()
             },
         );
         let err = validate_metrics_settings(&settings).expect_err("should fail");
@@ -1370,6 +1373,7 @@ mod tests {
             MetricsSettings {
                 enabled: true,
                 port: Some(9090),
+                ..Default::default()
             },
         );
         validate_metrics_settings(&settings).expect("distinct port should pass");

@@ -299,12 +299,30 @@ fn default_static_files_path() -> String {
     "/app/static".to_string()
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct MetricsSettings {
     #[serde(default)]
     pub enabled: bool,
+    /// Bind address for the metrics HTTP server. Defaults to `127.0.0.1`
+    /// so the endpoint is not publicly exposed.
+    #[serde(default = "default_metrics_host")]
+    pub host: String,
     /// Port for the internal metrics HTTP server (serves `/metrics`).
     pub port: Option<u16>,
+}
+
+fn default_metrics_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+impl Default for MetricsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_metrics_host(),
+            port: None,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]

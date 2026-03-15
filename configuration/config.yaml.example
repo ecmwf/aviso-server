@@ -69,6 +69,8 @@ auth:
 metrics:
   # Enable Prometheus metrics on a separate internal port.
   enabled: false
+  # Bind address for the metrics server. Defaults to 127.0.0.1 (loopback).
+  # host: "127.0.0.1"
   # Required when enabled=true; must differ from application.port.
   # port: 9090
 
