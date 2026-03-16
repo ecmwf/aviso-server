@@ -6,6 +6,24 @@ use crate::notification_backend::{BackendCapabilities, capabilities_for_backend_
 use anyhow::{Result, bail};
 use std::collections::HashMap;
 
+/// Validates a realm → roles map for empty/whitespace realm keys and role entries.
+fn validate_realm_roles(
+    field_name: &str,
+    realm_roles: &HashMap<String, Vec<String>>,
+) -> Result<()> {
+    for (realm, roles) in realm_roles {
+        if realm.trim().is_empty() {
+            bail!("{field_name} must not contain empty or whitespace-only realm keys");
+        }
+        if roles.iter().any(|role| role.trim().is_empty()) {
+            bail!(
+                "{field_name} realm '{realm}' must not contain empty or whitespace-only role entries"
+            );
+        }
+    }
+    Ok(())
+}
+
 /// Validates auth configuration
 ///
 /// Enforces mode-specific required fields when auth is enabled.
@@ -22,11 +40,14 @@ pub fn validate_auth_settings(auth: &AuthSettings) -> Result<()> {
     }
 
     if auth.admin_roles.is_empty() {
-        bail!("auth.enabled=true requires auth.admin_roles to contain at least one role");
+        bail!("auth.enabled=true requires auth.admin_roles to contain at least one realm");
     }
-    if auth.admin_roles.iter().any(|role| role.trim().is_empty()) {
-        bail!("auth.admin_roles must not contain empty or whitespace-only entries");
+    for (realm, roles) in &auth.admin_roles {
+        if roles.is_empty() {
+            bail!("auth.admin_roles realm '{realm}' must have at least one role");
+        }
     }
+    validate_realm_roles("auth.admin_roles", &auth.admin_roles)?;
 
     match auth.mode {
         AuthMode::Direct => {
@@ -62,14 +83,11 @@ pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
             continue;
         };
 
-        if stream_auth
-            .allowed_roles
-            .as_ref()
-            .is_some_and(|roles| roles.iter().any(|role| role.trim().is_empty()))
-        {
-            bail!(
-                "Schema '{event_type}' auth.allowed_roles must not contain empty or whitespace-only entries"
-            );
+        if let Some(realm_roles) = &stream_auth.allowed_roles {
+            validate_realm_roles(
+                &format!("Schema '{event_type}' auth.allowed_roles"),
+                realm_roles,
+            )?;
         }
 
         if settings.auth.enabled {
@@ -662,7 +680,7 @@ mod tests {
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
             jwt_secret: "secret".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         assert!(validate_auth_settings(&auth).is_ok());
@@ -674,7 +692,7 @@ mod tests {
             enabled: true,
             mode: AuthMode::Direct,
             jwt_secret: "secret".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
@@ -687,7 +705,7 @@ mod tests {
             enabled: true,
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
@@ -699,7 +717,7 @@ mod tests {
         let auth = AuthSettings {
             enabled: true,
             mode: AuthMode::Direct,
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
@@ -723,19 +741,36 @@ mod tests {
     }
 
     #[test]
+    fn rejects_enabled_auth_with_empty_admin_role_list_for_realm() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: HashMap::from([("testrealm".to_string(), vec![])]),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("must have at least one role"));
+    }
+
+    #[test]
     fn rejects_enabled_auth_with_whitespace_admin_role() {
         let auth = AuthSettings {
             enabled: true,
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
             jwt_secret: "secret".to_string(),
-            admin_roles: vec!["admin".to_string(), "   ".to_string()],
+            admin_roles: HashMap::from([(
+                "testrealm".to_string(),
+                vec!["admin".to_string(), "   ".to_string()],
+            )]),
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
         assert!(
             err.to_string()
-                .contains("auth.admin_roles must not contain empty or whitespace-only entries")
+                .contains("must not contain empty or whitespace-only role entries")
         );
     }
 
@@ -746,7 +781,7 @@ mod tests {
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
             jwt_secret: "secret".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             timeout_ms: 0,
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
@@ -763,7 +798,7 @@ mod tests {
             mode: AuthMode::Direct,
             auth_o_tron_url: "   ".to_string(),
             jwt_secret: "secret".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
@@ -777,7 +812,7 @@ mod tests {
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
             jwt_secret: "   ".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
@@ -830,7 +865,10 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: false,
-                    allowed_roles: Some(vec!["admin".to_string()]),
+                    allowed_roles: Some(HashMap::from([(
+                        "testrealm".to_string(),
+                        vec!["admin".to_string()],
+                    )])),
                 }),
             },
         );
@@ -860,7 +898,10 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(vec!["reader".to_string()]),
+                    allowed_roles: Some(HashMap::from([(
+                        "testrealm".to_string(),
+                        vec!["reader".to_string()],
+                    )])),
                 }),
             },
         );
@@ -870,7 +911,8 @@ mod tests {
         settings.auth.mode = AuthMode::Direct;
         settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
         settings.auth.jwt_secret = "secret".to_string();
-        settings.auth.admin_roles = vec!["admin".to_string()];
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
 
         validate_stream_auth_settings(&settings)
             .expect("stream auth should be accepted when auth is enabled");
@@ -892,7 +934,7 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(vec![]),
+                    allowed_roles: Some(HashMap::new()),
                 }),
             },
         );
@@ -902,7 +944,8 @@ mod tests {
         settings.auth.mode = AuthMode::Direct;
         settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
         settings.auth.jwt_secret = "secret".to_string();
-        settings.auth.admin_roles = vec!["admin".to_string()];
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
 
         validate_stream_auth_settings(&settings)
             .expect("empty stream allowed_roles should be accepted");
@@ -924,7 +967,10 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(vec!["admin".to_string(), " ".to_string()]),
+                    allowed_roles: Some(HashMap::from([(
+                        "testrealm".to_string(),
+                        vec!["admin".to_string(), " ".to_string()],
+                    )])),
                 }),
             },
         );
@@ -934,12 +980,13 @@ mod tests {
         settings.auth.mode = AuthMode::Direct;
         settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
         settings.auth.jwt_secret = "secret".to_string();
-        settings.auth.admin_roles = vec!["admin".to_string()];
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
 
         let err = validate_stream_auth_settings(&settings).expect_err("should fail");
         assert!(
             err.to_string()
-                .contains("auth.allowed_roles must not contain empty or whitespace-only entries")
+                .contains("must not contain empty or whitespace-only role entries")
         );
     }
 
@@ -959,7 +1006,10 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: false,
-                    allowed_roles: Some(vec!["reader".to_string()]),
+                    allowed_roles: Some(HashMap::from([(
+                        "testrealm".to_string(),
+                        vec!["reader".to_string()],
+                    )])),
                 }),
             },
         );
@@ -969,7 +1019,8 @@ mod tests {
         settings.auth.mode = AuthMode::Direct;
         settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
         settings.auth.jwt_secret = "secret".to_string();
-        settings.auth.admin_roles = vec!["admin".to_string()];
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
 
         let err = validate_stream_auth_settings(&settings).expect_err("should fail");
         assert!(
@@ -984,7 +1035,7 @@ mod tests {
             enabled: true,
             mode: AuthMode::TrustedProxy,
             jwt_secret: "secret".to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         assert!(validate_auth_settings(&auth).is_ok());
@@ -995,7 +1046,7 @@ mod tests {
         let auth = AuthSettings {
             enabled: true,
             mode: AuthMode::TrustedProxy,
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");

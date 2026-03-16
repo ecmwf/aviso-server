@@ -11,7 +11,7 @@ Authentication is optional. When enabled, Aviso supports two modes:
 2. Middleware resolves user identity:
    - **direct**: forwards the `Authorization` header to auth-o-tron `GET /authenticate` and receives a JWT back.
    - **trusted_proxy**: validates the forwarded `Authorization: Bearer <jwt>` locally using `jwt_secret`.
-3. Username and roles are extracted from JWT claims and attached to the request.
+3. Username, realm, and roles are extracted from JWT claims and attached to the request.
 4. Route handlers enforce per-stream auth rules on `notify`, `watch`, and `replay`.
 5. Admin endpoints (`/api/v1/admin/*`) always require a valid JWT with an admin role.
 
@@ -51,9 +51,12 @@ auth:
   mode: direct
   auth_o_tron_url: "http://localhost:8080"
   jwt_secret: "your-shared-secret"   # must match auth-o-tron jwt.secret
-  admin_roles: ["admin"]
+  admin_roles:
+    localrealm: ["admin"]
   timeout_ms: 5000
 ```
+
+Roles are realm-scoped: `admin_roles` maps each realm name to its authorized role list. A user must belong to a listed realm **and** hold one of that realm's roles.
 
 ### 3. Run aviso-server
 
@@ -75,7 +78,8 @@ auth:
   enabled: true
   mode: trusted_proxy
   jwt_secret: "shared-signing-secret"
-  admin_roles: ["admin"]
+  admin_roles:
+    ecmwf: ["admin"]
 ```
 
 `auth_o_tron_url` is not required in this mode.
@@ -102,7 +106,7 @@ notification_schema:
     auth:
       required: true
 
-  # Role-restricted — only listed roles
+  # Role-restricted — only listed roles from specific realms
   admin_stream:
     payload:
       required: true
@@ -110,7 +114,20 @@ notification_schema:
       base: "admin"
     auth:
       required: true
-      allowed_roles: ["admin", "operator"]
+      allowed_roles:
+        ecmwf: ["admin", "operator"]
+        desp: ["DE-PRIVILEGED"]
+
+  # Realm-wide access — any user from the ecmwf realm
+  ecmwf_stream:
+    payload:
+      required: true
+    topic:
+      base: "ecmwf"
+    auth:
+      required: true
+      allowed_roles:
+        ecmwf: []
 ```
 
 ### Auth field behavior
@@ -119,7 +136,10 @@ notification_schema:
 |-----------------|----------------------|--------|
 | `false` (or `auth` block omitted) | — | Anonymous access (no credentials needed) |
 | `true` | omitted | Any authenticated user can access |
-| `true` | `["admin"]` | Only users with listed roles can access |
+| `true` | `ecmwf: ["admin"]` | Only users from realm `ecmwf` with role `admin` |
+| `true` | `ecmwf: []` | Any user from realm `ecmwf` (no specific role required) |
+
+`allowed_roles` maps realm names to role lists. A user's `realm` claim (from the JWT) must match a key, and the user must hold at least one of that realm's roles. An empty role list means any user from that realm is allowed.
 
 When a per-stream `auth` block is present, `auth.required` must be explicitly set to either `true` or `false`.
 

@@ -422,7 +422,7 @@ mod tests {
             mode: AuthMode::Direct,
             auth_o_tron_url: "http://127.0.0.1:9".to_string(),
             jwt_secret: secret.to_string(),
-            admin_roles: vec!["admin".to_string()],
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
             timeout_ms: 5_000,
         }
     }
@@ -442,6 +442,7 @@ mod tests {
             exp: (Utc::now().timestamp() + 3_600) as usize,
             iat: Some(Utc::now().timestamp() as usize),
             username: Some(username.to_string()),
+            realm: Some("testrealm".to_string()),
             roles: roles.iter().map(|role| (*role).to_string()).collect(),
             attributes: HashMap::new(),
         };

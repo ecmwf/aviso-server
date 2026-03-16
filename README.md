@@ -91,7 +91,8 @@ auth:
   enabled: true
   auth_o_tron_url: "http://localhost:8080"
   jwt_secret: "your-shared-secret" # must match auth-o-tron jwt.secret
-  admin_roles: ["admin", "superuser"]
+  admin_roles:
+    your-realm: ["admin", "superuser"]
   timeout_ms: 5000
 ```
 
@@ -109,12 +110,13 @@ notification_schema:
     auth:
       required: true  # Any authenticated user allowed
 
-  # Restricted stream - specific roles only
+  # Restricted stream - specific roles from specific realms
   admin_stream:
     # ... other config
     auth:
       required: true
-      allowed_roles: ["admin", "operator"]
+      allowed_roles:
+        your-realm: ["admin", "operator"]
 ```
 
 ### Admin Endpoints

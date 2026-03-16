@@ -15,37 +15,53 @@ pub mod middleware;
 pub struct User {
     pub username: String,
     #[serde(default)]
+    pub realm: Option<String>,
+    #[serde(default)]
     pub roles: Vec<String>,
     #[serde(default)]
     pub attributes: HashMap<String, String>,
 }
 
 impl User {
-    /// Returns true if the user has any of the required roles.
+    /// Returns true if the user has any of the required realm-scoped roles.
     ///
-    /// An empty `required_roles` list means any user is allowed.
-    pub fn has_any_role(&self, required_roles: &[String]) -> bool {
-        if required_roles.is_empty() {
+    /// - Empty map: any authenticated user is allowed.
+    /// - User realm not in map: denied.
+    /// - Realm present with empty role list: any user in that realm is allowed.
+    /// - Realm present with roles: user must hold at least one listed role.
+    pub fn has_any_role(&self, realm_roles: &HashMap<String, Vec<String>>) -> bool {
+        if realm_roles.is_empty() {
+            return true;
+        }
+
+        let Some(realm) = &self.realm else {
+            return false;
+        };
+
+        let Some(allowed) = realm_roles.get(realm) else {
+            return false;
+        };
+
+        if allowed.is_empty() {
             return true;
         }
 
         self.roles
             .iter()
-            .any(|role| required_roles.iter().any(|required| required == role))
+            .any(|role| allowed.iter().any(|required| required == role))
     }
 
     /// Returns true if the user has any of the admin roles.
-    ///
-    /// This is a convenience wrapper around `has_any_role`.
-    pub fn is_admin(&self, admin_roles: &[String]) -> bool {
+    pub fn is_admin(&self, admin_roles: &HashMap<String, Vec<String>>) -> bool {
         self.has_any_role(admin_roles)
     }
 }
 
 /// JWT claims structure as returned by auth-o-tron.
 ///
-/// Supports both direct username claim and subject fallback.
-/// Audience validation is disabled by default.
+/// `username` is preferred; falls back to `sub` when absent.
+/// `realm` identifies the identity provider (e.g. OIDC realm) the user
+/// authenticated through — used for realm-scoped role matching.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct JwtClaims {
     #[serde(default)]
@@ -57,6 +73,8 @@ pub struct JwtClaims {
     pub iat: Option<usize>,
     #[serde(default)]
     pub username: Option<String>,
+    #[serde(default)]
+    pub realm: Option<String>,
     #[serde(default)]
     pub roles: Vec<String>,
     #[serde(default)]
@@ -81,6 +99,7 @@ impl TryFrom<JwtClaims> for User {
 
         Ok(Self {
             username,
+            realm: claims.realm,
             roles: claims.roles,
             attributes: claims.attributes,
         })
@@ -133,9 +152,22 @@ mod tests {
             exp: (Utc::now().timestamp() + 3_600) as usize,
             iat: Some(Utc::now().timestamp() as usize),
             username: username.map(ToString::to_string),
+            realm: Some("testrealm".to_string()),
             roles: vec!["reader".to_string(), "admin".to_string()],
             attributes: HashMap::from([(String::from("team"), String::from("ops"))]),
         }
+    }
+
+    fn realm_roles(pairs: &[(&str, &[&str])]) -> HashMap<String, Vec<String>> {
+        pairs
+            .iter()
+            .map(|(realm, roles)| {
+                (
+                    realm.to_string(),
+                    roles.iter().map(|r| r.to_string()).collect(),
+                )
+            })
+            .collect()
     }
 
     fn token_for(claims: &JwtClaims, secret: &str) -> String {
@@ -186,34 +218,49 @@ mod tests {
     }
 
     #[test]
-    fn has_any_role_returns_true_for_empty_required_roles() {
+    fn has_any_role_returns_true_for_empty_realm_roles_map() {
         let user = User {
             username: "reader".to_string(),
+            realm: Some("testrealm".to_string()),
             roles: vec!["reader".to_string()],
             attributes: HashMap::new(),
         };
-        assert!(user.has_any_role(&[]));
+        assert!(user.has_any_role(&HashMap::new()));
     }
 
     #[test]
-    fn has_any_role_returns_true_when_user_has_matching_role() {
+    fn has_any_role_returns_true_when_user_has_matching_role_in_realm() {
         let user = User {
             username: "reader".to_string(),
+            realm: Some("ecmwf".to_string()),
             roles: vec!["reader".to_string(), "ops".to_string()],
             attributes: HashMap::new(),
         };
-        let required = vec!["admin".to_string(), "ops".to_string()];
+        let required = realm_roles(&[("ecmwf", &["admin", "ops"])]);
         assert!(user.has_any_role(&required));
     }
 
     #[test]
-    fn has_any_role_returns_false_when_no_roles_match() {
+    fn has_any_role_returns_false_when_realm_does_not_match() {
         let user = User {
             username: "reader".to_string(),
+            realm: Some("desp".to_string()),
+            roles: vec!["admin".to_string()],
+            attributes: HashMap::new(),
+        };
+        let required = realm_roles(&[("ecmwf", &["admin"])]);
+        assert!(!user.has_any_role(&required));
+    }
+
+    #[test]
+    fn has_any_role_returns_false_when_no_roles_match_in_realm() {
+        let user = User {
+            username: "reader".to_string(),
+            realm: Some("ecmwf".to_string()),
             roles: vec!["reader".to_string()],
             attributes: HashMap::new(),
         };
-        let required = vec!["admin".to_string(), "operator".to_string()];
+        let required = realm_roles(&[("ecmwf", &["admin", "operator"])]);
         assert!(!user.has_any_role(&required));
     }
 
@@ -221,11 +268,37 @@ mod tests {
     fn has_any_role_returns_false_for_empty_user_roles() {
         let user = User {
             username: "reader".to_string(),
+            realm: Some("ecmwf".to_string()),
             roles: Vec::new(),
             attributes: HashMap::new(),
         };
-        let required = vec!["admin".to_string()];
+        let required = realm_roles(&[("ecmwf", &["admin"])]);
         assert!(!user.has_any_role(&required));
+    }
+
+    #[test]
+    fn has_any_role_returns_false_when_user_has_no_realm() {
+        let user = User {
+            username: "reader".to_string(),
+            realm: None,
+            roles: vec!["admin".to_string()],
+            attributes: HashMap::new(),
+        };
+        let required = realm_roles(&[("ecmwf", &["admin"])]);
+        assert!(!user.has_any_role(&required));
+    }
+
+    #[test]
+    fn has_any_role_returns_true_when_realm_has_empty_roles_list() {
+        // Empty roles list for a realm means any user in that realm is allowed.
+        let user = User {
+            username: "reader".to_string(),
+            realm: Some("ecmwf".to_string()),
+            roles: vec!["anything".to_string()],
+            attributes: HashMap::new(),
+        };
+        let required = realm_roles(&[("ecmwf", &[])]);
+        assert!(user.has_any_role(&required));
     }
 
     #[test]
@@ -248,6 +321,7 @@ mod tests {
             exp: (Utc::now().timestamp() - 3_600) as usize,
             iat: Some((Utc::now().timestamp() - 3_660) as usize),
             username: Some("test-user".to_string()),
+            realm: Some("testrealm".to_string()),
             roles: vec!["reader".to_string()],
             attributes: HashMap::new(),
         };

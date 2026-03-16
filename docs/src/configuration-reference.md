@@ -42,7 +42,7 @@ When enabled:
 | `mode` | `"direct"\|"trusted_proxy"` | `"direct"` | `direct`: forward credentials to auth-o-tron. `trusted_proxy`: validate forwarded JWT locally. |
 | `auth_o_tron_url` | `string` | `""` | auth-o-tron base URL. Required when `enabled=true` and `mode=direct`. |
 | `jwt_secret` | `string` | `""` | Shared HMAC secret for JWT validation. Required when `enabled=true`. Not exposed via `/api/v1/schema` endpoints and redacted when auth settings are serialized or logged. |
-| `admin_roles` | `string[]` | `[]` | Roles allowed on admin endpoints (`/api/v1/admin/*`). Must be non-empty when `enabled=true`. |
+| `admin_roles` | `map<string, string[]>` | `{}` | Realm-scoped roles for admin endpoints (`/api/v1/admin/*`). Must contain at least one realm with non-empty roles when `enabled=true`. |
 | `timeout_ms` | `u64` | `5000` | Timeout for auth-o-tron requests (milliseconds). Must be `> 0`. |
 
 ### Per-stream auth (`notification_schema.<event_type>.auth`)
@@ -50,7 +50,7 @@ When enabled:
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `required` | `bool` | — | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
-| `allowed_roles` | `string[]` | `[]` | When non-empty, only users with a listed role can access the stream. Only enforced when `required: true`. |
+| `allowed_roles` | `map<string, string[]>` | `{}` | Realm-scoped roles. Maps realm names to allowed role lists. An empty role list for a realm means any user from that realm is allowed. Only enforced when `required: true`. |
 
 See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
 

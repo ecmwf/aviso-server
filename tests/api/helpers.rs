@@ -477,7 +477,10 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             .base = "polygon_auth_admin".to_string();
         auth_admin.auth = Some(StreamAuthConfig {
             required: true,
-            allowed_roles: Some(vec!["admin".to_string()]),
+            allowed_roles: Some(HashMap::from([(
+                "localrealm".to_string(),
+                vec!["admin".to_string()],
+            )])),
         });
         schema.insert("test_polygon_auth_admin".to_string(), auth_admin);
 
@@ -613,7 +616,7 @@ pub async fn spawn_streaming_test_app_with_auth() -> TestApp {
                 enabled: true,
                 auth_o_tron_url,
                 jwt_secret: "test-jwt-secret".to_string(),
-                admin_roles: vec!["admin".to_string()],
+                admin_roles: HashMap::from([("localrealm".to_string(), vec!["admin".to_string()])]),
                 timeout_ms: 5_000,
                 ..AuthSettings::default()
             };
@@ -635,7 +638,7 @@ pub async fn spawn_streaming_test_app_with_trusted_proxy_auth() -> TestApp {
                 enabled: true,
                 mode: aviso_server::configuration::AuthMode::TrustedProxy,
                 jwt_secret: "test-jwt-secret".to_string(),
-                admin_roles: vec!["admin".to_string()],
+                admin_roles: HashMap::from([("localrealm".to_string(), vec!["admin".to_string()])]),
                 timeout_ms: 5_000,
                 ..AuthSettings::default()
             };
@@ -687,6 +690,7 @@ async fn mock_authenticate(req: HttpRequest) -> HttpResponse {
         let claims = serde_json::json!({
             "sub": username,
             "username": username,
+            "realm": "localrealm",
             "roles": roles,
             "attributes": {},
             "exp": (Utc::now().timestamp() + 3600) as usize,

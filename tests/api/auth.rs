@@ -20,6 +20,7 @@ fn auth_token_with_secret_and_exp(
         exp: (Utc::now().timestamp() + exp_offset_seconds) as usize,
         iat: Some(Utc::now().timestamp() as usize),
         username: Some(username.to_string()),
+        realm: Some("localrealm".to_string()),
         roles: roles.iter().map(|r| (*r).to_string()).collect(),
         attributes: HashMap::new(),
     };
