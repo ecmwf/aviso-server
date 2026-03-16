@@ -36,12 +36,13 @@ To use your own config:
 AUTH_O_TRON_CONFIG_FILE=/path/to/auth-config.yaml ./scripts/auth-o-tron-docker.sh start
 ```
 
-The bundled example config defines two local test users in realm `localrealm`:
+The bundled example config defines three local test users in realm `localrealm`:
 
 | User | Password | Role |
 |------|----------|------|
 | `admin-user` | `admin-pass` | `admin` |
 | `reader-user` | `reader-pass` | `reader` |
+| `producer-user` | `producer-pass` | `producer` |
 
 ### 2. Enable auth in config
 
@@ -86,19 +87,21 @@ auth:
 
 ## Per-Stream Authentication
 
+Streams support separate **read** and **write** access controls. Read access governs `/watch` and `/replay`; write access governs `/notification`.
+
 Configure authentication per stream in your notification schema:
 
 ```yaml
 notification_schema:
   # Public — no auth section means anonymous access
-  public_stream:
+  public_events:
     payload:
       required: true
     topic:
       base: "public"
 
-  # Authenticated — any valid user
-  internal_stream:
+  # Authenticated — any valid user can read, only admins can write
+  internal_events:
     payload:
       required: true
     topic:
@@ -106,40 +109,53 @@ notification_schema:
     auth:
       required: true
 
-  # Role-restricted — only listed roles from specific realms
-  admin_stream:
+  # Separate read/write roles
+  sensor_data:
     payload:
       required: true
     topic:
-      base: "admin"
+      base: "sensor"
     auth:
       required: true
-      allowed_roles:
-        ecmwf: ["admin", "operator"]
-        desp: ["DE-PRIVILEGED"]
+      read_roles:
+        internal: ["analyst", "consumer"]
+        external: ["partner"]
+      write_roles:
+        internal: ["producer"]
 
-  # Realm-wide access — any user from the ecmwf realm
-  ecmwf_stream:
+  # Realm-wide read access using wildcard, restricted write
+  shared_events:
     payload:
       required: true
     topic:
-      base: "ecmwf"
+      base: "shared"
     auth:
       required: true
-      allowed_roles:
-        ecmwf: []
+      read_roles:
+        internal: ["*"]
+        external: ["analyst"]
+      write_roles:
+        internal: ["producer", "operator"]
 ```
 
-### Auth field behavior
+### Read vs. write access defaults
 
-| `auth.required` | `auth.allowed_roles` | Result |
-|-----------------|----------------------|--------|
-| `false` (or `auth` block omitted) | — | Anonymous access (no credentials needed) |
-| `true` | omitted | Any authenticated user can access |
-| `true` | `ecmwf: ["admin"]` | Only users from realm `ecmwf` with role `admin` |
-| `true` | `ecmwf: []` | Any user from realm `ecmwf` (no specific role required) |
+| `auth.required` | `read_roles` | `write_roles` | Read (watch/replay) | Write (notify) |
+|---|---|---|---|---|
+| `false` or omitted | — | — | Anyone | Anyone |
+| `true` | omitted | omitted | Any authenticated user | Admins only |
+| `true` | set | omitted | Must match `read_roles` | Admins only |
+| `true` | omitted | set | Any authenticated user | Must match `write_roles` or be admin |
+| `true` | set | set | Must match `read_roles` | Must match `write_roles` or be admin |
 
-`allowed_roles` maps realm names to role lists. A user's `realm` claim (from the JWT) must match a key, and the user must hold at least one of that realm's roles. An empty role list means any user from that realm is allowed.
+Admins (users matching global `admin_roles`) always have both read and write access.
+
+### Role matching rules
+
+Both `read_roles` and `write_roles` map realm names to role lists. A user's `realm` claim from the JWT must match a key in the map, and the user must hold at least one of that realm's listed roles.
+
+- **Wildcard `"*"`** — use `["*"]` as the role list to grant access to all users from a realm, regardless of their specific roles.
+- **Omitted role list** — when `read_roles` is omitted, any authenticated user can read. When `write_roles` is omitted, only admins can write.
 
 When a per-stream `auth` block is present, `auth.required` must be explicitly set to either `true` or `false`.
 
@@ -162,7 +178,7 @@ auth:
 
 Or omit the `auth` section entirely. When auth is disabled, all endpoints are publicly accessible.
 
-Startup fails if global auth is disabled while any schema defines `auth.required: true` or non-empty `auth.allowed_roles`. Remove stream-level auth blocks before disabling global auth.
+Startup fails if global auth is disabled while any schema defines `auth.required: true` or non-empty `auth.read_roles`/`auth.write_roles`. Remove stream-level auth blocks before disabling global auth.
 
 ## Client Usage
 

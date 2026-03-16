@@ -167,7 +167,8 @@ pub struct EventStoragePolicy {
 #[serde(deny_unknown_fields)]
 pub struct StreamAuthConfig {
     pub required: bool,
-    pub allowed_roles: Option<HashMap<String, Vec<String>>>,
+    pub read_roles: Option<HashMap<String, Vec<String>>>,
+    pub write_roles: Option<HashMap<String, Vec<String>>>,
 }
 
 /// Client-facing schema shape for schema endpoints.
@@ -298,12 +299,30 @@ fn default_static_files_path() -> String {
     "/app/static".to_string()
 }
 
-#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+#[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct MetricsSettings {
     #[serde(default)]
     pub enabled: bool,
+    /// Bind address for the metrics HTTP server. Defaults to `127.0.0.1`
+    /// so the endpoint is not publicly exposed.
+    #[serde(default = "default_metrics_host")]
+    pub host: String,
     /// Port for the internal metrics HTTP server (serves `/metrics`).
     pub port: Option<u16>,
+}
+
+fn default_metrics_host() -> String {
+    "127.0.0.1".to_string()
+}
+
+impl Default for MetricsSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            host: default_metrics_host(),
+            port: None,
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
@@ -433,7 +452,8 @@ mod tests {
                 },
                 "auth": {
                     "required": true,
-                    "allowed_roles": {"ecmwf": ["admin", "operator"]}
+                    "read_roles": {"internal": ["consumer", "analyst"]},
+                    "write_roles": {"internal": ["producer"]}
                 }
             }"#,
         )
@@ -441,10 +461,15 @@ mod tests {
 
         let auth = schema.auth.expect("auth should be configured");
         assert!(auth.required);
-        let roles = auth.allowed_roles.expect("allowed_roles should be set");
+        let read = auth.read_roles.expect("read_roles should be set");
         assert_eq!(
-            roles.get("ecmwf").map(Vec::as_slice),
-            Some(["admin".to_string(), "operator".to_string()].as_slice())
+            read.get("internal").map(Vec::as_slice),
+            Some(["consumer".to_string(), "analyst".to_string()].as_slice())
+        );
+        let write = auth.write_roles.expect("write_roles should be set");
+        assert_eq!(
+            write.get("internal").map(Vec::as_slice),
+            Some(["producer".to_string()].as_slice())
         );
     }
 
@@ -467,7 +492,8 @@ mod tests {
 
         let auth = schema.auth.expect("auth should be configured");
         assert!(!auth.required);
-        assert_eq!(auth.allowed_roles, None);
+        assert_eq!(auth.read_roles, None);
+        assert_eq!(auth.write_roles, None);
     }
 
     #[test]
@@ -482,14 +508,14 @@ mod tests {
                 },
                 "auth": {
                     "required": true,
-                    "allowed_role": ["admin"]
+                    "allowed_roles": ["admin"]
                 }
             }"#,
         );
 
         assert!(result.is_err());
         let err = result.unwrap_err().to_string();
-        assert!(err.contains("allowed_role"));
+        assert!(err.contains("allowed_roles"));
     }
 
     #[test]
@@ -502,10 +528,11 @@ mod tests {
             storage_policy: None,
             auth: Some(StreamAuthConfig {
                 required: true,
-                allowed_roles: Some(HashMap::from([(
+                read_roles: Some(HashMap::from([(
                     "testrealm".to_string(),
-                    vec!["admin".to_string()],
+                    vec!["reader".to_string()],
                 )])),
+                write_roles: None,
             }),
         };
 

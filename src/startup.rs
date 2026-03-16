@@ -114,13 +114,15 @@ impl Application {
             crate::metrics::register_process_metrics(&metrics.registry);
 
             let metrics_port = configuration.metrics.port.expect("validated above");
-            let metrics_addr = format!("{}:{}", configuration.application.host, metrics_port);
+            let metrics_host = &configuration.metrics.host;
+            let metrics_addr = format!("{metrics_host}:{metrics_port}");
             let metrics_listener = TcpListener::bind(&metrics_addr)?;
 
             info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_name = "startup.metrics.server.binding",
+                host = %metrics_host,
                 port = metrics_port,
                 "Metrics server binding"
             );
@@ -294,7 +296,8 @@ pub fn run(
                 move |cfg| configure_api_v1(cfg, Arc::clone(&auth_settings))
             })
             .app_data(web::Data::new(notification_backend.clone()))
-            .app_data(web::Data::new(shutdown.clone()));
+            .app_data(web::Data::new(shutdown.clone()))
+            .app_data(web::Data::new(auth_settings.clone()));
 
         if let Some(ref metrics) = metrics_data {
             app = app.app_data(metrics.clone());

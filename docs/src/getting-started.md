@@ -189,15 +189,30 @@ including environment variables and token authentication.
 
 ## Run the Smoke Test
 
-A Python smoke script covers the full notify → watch → replay cycle:
+A Python smoke script covers the full notify → watch → replay cycle.
+Copy the example config and start the server:
 
 ```bash
-# Install the HTTP client dependency
-python3 -m pip install httpx
+cp configuration/config.yaml.example configuration/config.yaml
+cargo run
+```
 
-# Run against the default local server
+**With auth (default)** — start auth-o-tron before running the smoke tests:
+
+```bash
+python3 -m pip install httpx
+./scripts/auth-o-tron-docker.sh
 python3 scripts/smoke_test.py
 ```
+
+**Without auth** — set `auth.enabled: false` in your config (or remove the `auth` section), then:
+
+```bash
+AUTH_ENABLED=false python3 scripts/smoke_test.py
+```
+
+`AUTH_ENABLED` must match the server's `auth.enabled` setting.
+When `false`, auth headers are omitted and auth-specific smoke tests are skipped.
 
 Useful overrides:
 
@@ -213,8 +228,9 @@ The smoke script covers:
 
 - health endpoint
 - replay/watch baseline flows (`test_polygon`)
-- `mars` replay with dot-containing identifier values
+- `mars` replay with dot-containing identifier values, integer and enum predicates
 - `dissemination` watch + `from_date` with dot-containing identifier values
+- read/write auth separation across public, role-restricted, and admin-only streams
 
 ---
 

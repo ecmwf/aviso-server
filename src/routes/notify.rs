@@ -10,7 +10,7 @@ use crate::metrics::AppMetrics;
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::routes::streaming::enforce_stream_auth;
+use crate::routes::streaming::{StreamOperation, enforce_stream_auth};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -20,9 +20,7 @@ use tracing_actix_web::RequestId;
 
 /// Notification endpoint handler
 ///
-/// Processes notification requests with all schema fields required.
-/// Validates request format, processes notification, and saves to backend.
-/// Now supports spatial metadata extraction for polygon fields.
+/// Validates request format, processes the notification, and saves to backend.
 #[utoipa::path(
     post,
     path = "/api/v1/notification",
@@ -37,6 +35,7 @@ use tracing_actix_web::RequestId;
         (status = 503, description = "Authentication service unavailable (direct mode)")
     ),
     security(
+        (),
         ("bearer_jwt" = []),
         ("basic" = []),
     )
@@ -57,25 +56,16 @@ pub async fn notify(
     request_id: RequestId,
     metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
-    // Helper to record notification outcome when metrics are enabled.
-    let record = |event_type: &str, status: &str| {
-        if let Some(ref m) = metrics {
-            m.notifications_total
-                .with_label_values(&[event_type, status])
-                .inc();
-        }
-    };
-
     // Parse and validate request structure
     let payload = match parse_and_validate_request(&body) {
         Ok(p) => p,
         Err(e) => {
-            record("unknown", "error");
+            record_notification(&metrics, "unknown", "error");
             return request_parse_error_response(RequestKind::Notification, e);
         }
     };
     if payload.identifier.contains_key("point") {
-        record(&payload.event_type, "error");
+        record_notification(&metrics, "unknown", "error");
         return request_validation_error_response(
             RequestKind::Notification,
             anyhow::anyhow!(
@@ -90,12 +80,14 @@ pub async fn notify(
     tracing::Span::current().record("event_type", event_type);
 
     // Reject unauthorized requests before validation/topic work.
-    if let Err(response) = enforce_stream_auth(&http_request, event_type) {
-        record(event_type, "rejected");
+    if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
+        record_notification(&metrics, "unknown", "rejected");
         return response;
     }
 
-    // Process notification request with payload validation
+    // Process notification request with payload validation.
+    // After this point, event_type is confirmed to exist in notification_schema
+    // and is safe to use as a Prometheus label (bounded cardinality).
     let notification_result = match process_notification_request(
         event_type,
         request_params,
@@ -105,11 +97,11 @@ pub async fn notify(
         Ok(result) => result,
         Err(e) => match e.kind {
             NotificationErrorKind::Validation => {
-                record(event_type, "error");
+                record_notification(&metrics, "unknown", "error");
                 return request_validation_error_response(RequestKind::Notification, e.source);
             }
             NotificationErrorKind::Processing => {
-                record(event_type, "error");
+                record_notification(&metrics, "unknown", "error");
                 return processing_error_response(ProcessingKind::NotificationProcessing, e.source);
             }
         },
@@ -138,11 +130,11 @@ pub async fn notify(
     )
     .await
     {
-        record(event_type, "error");
+        record_notification(&metrics, event_type, "error");
         return processing_error_response(ProcessingKind::NotificationStorage, e);
     }
 
-    record(event_type, "success");
+    record_notification(&metrics, event_type, "success");
 
     // Build success response
     let response = NotificationResponse {
@@ -177,6 +169,14 @@ pub async fn notify(
     );
 
     HttpResponse::Ok().json(response)
+}
+
+fn record_notification(metrics: &Option<web::Data<AppMetrics>>, event_type: &str, status: &str) {
+    if let Some(m) = metrics {
+        m.notifications_total
+            .with_label_values(&[event_type, status])
+            .inc();
+    }
 }
 
 fn json_value_kind(value: &serde_json::Value) -> &'static str {

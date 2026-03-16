@@ -6,7 +6,7 @@ use crate::notification_backend::{BackendCapabilities, capabilities_for_backend_
 use anyhow::{Result, bail};
 use std::collections::HashMap;
 
-/// Validates a realm → roles map for empty/whitespace realm keys and role entries.
+/// Validates a realm → roles map: rejects empty, whitespace-only, and whitespace-padded entries.
 fn validate_realm_roles(
     field_name: &str,
     realm_roles: &HashMap<String, Vec<String>>,
@@ -15,10 +15,23 @@ fn validate_realm_roles(
         if realm.trim().is_empty() {
             bail!("{field_name} must not contain empty or whitespace-only realm keys");
         }
-        if roles.iter().any(|role| role.trim().is_empty()) {
-            bail!(
-                "{field_name} realm '{realm}' must not contain empty or whitespace-only role entries"
-            );
+        if realm != realm.trim() {
+            bail!("{field_name} realm '{realm}' must not have leading or trailing whitespace");
+        }
+        if roles.is_empty() {
+            bail!("{field_name} realm '{realm}' must have at least one role");
+        }
+        for role in roles {
+            if role.trim().is_empty() {
+                bail!(
+                    "{field_name} realm '{realm}' must not contain empty or whitespace-only role entries"
+                );
+            }
+            if role != role.trim() {
+                bail!(
+                    "{field_name} realm '{realm}' role '{role}' must not have leading or trailing whitespace"
+                );
+            }
         }
     }
     Ok(())
@@ -83,23 +96,45 @@ pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
             continue;
         };
 
-        if let Some(realm_roles) = &stream_auth.allowed_roles {
+        if let Some(read_roles) = &stream_auth.read_roles {
+            if read_roles.is_empty() {
+                bail!(
+                    "Schema '{event_type}' auth.read_roles must not be an empty map; \
+                     remove the field to allow any authenticated user to read"
+                );
+            }
             validate_realm_roles(
-                &format!("Schema '{event_type}' auth.allowed_roles"),
-                realm_roles,
+                &format!("Schema '{event_type}' auth.read_roles"),
+                read_roles,
+            )?;
+        }
+        if let Some(write_roles) = &stream_auth.write_roles {
+            if write_roles.is_empty() {
+                bail!(
+                    "Schema '{event_type}' auth.write_roles must not be an empty map; \
+                     remove the field to restrict writes to admins only"
+                );
+            }
+            validate_realm_roles(
+                &format!("Schema '{event_type}' auth.write_roles"),
+                write_roles,
             )?;
         }
 
+        let has_roles = stream_auth
+            .read_roles
+            .as_ref()
+            .is_some_and(|r| !r.is_empty())
+            || stream_auth
+                .write_roles
+                .as_ref()
+                .is_some_and(|r| !r.is_empty());
+
         if settings.auth.enabled {
-            if !stream_auth.required
-                && stream_auth
-                    .allowed_roles
-                    .as_ref()
-                    .is_some_and(|roles| !roles.is_empty())
-            {
+            if !stream_auth.required && has_roles {
                 bail!(
-                    "Schema '{event_type}' sets auth.allowed_roles while auth.required=false; \
-                     set auth.required=true or remove auth.allowed_roles"
+                    "Schema '{event_type}' sets auth roles while auth.required=false; \
+                     set auth.required=true or remove the role lists"
                 );
             }
             continue;
@@ -111,13 +146,9 @@ pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
             );
         }
 
-        if stream_auth
-            .allowed_roles
-            .as_ref()
-            .is_some_and(|roles| !roles.is_empty())
-        {
+        if has_roles {
             bail!(
-                "Schema '{event_type}' sets auth.allowed_roles but auth is globally disabled. Enable auth.enabled=true or remove schema auth config."
+                "Schema '{event_type}' sets auth roles but auth is globally disabled. Enable auth.enabled=true or remove schema auth config."
             );
         }
     }
@@ -133,6 +164,9 @@ pub fn validate_metrics_settings(settings: &Settings) -> Result<()> {
     let port = metrics
         .port
         .ok_or_else(|| anyhow::anyhow!("metrics.port is required when metrics.enabled=true"))?;
+    if port == 0 {
+        bail!("metrics.port must not be 0");
+    }
     if port == settings.application.port {
         bail!("metrics.port must differ from application.port");
     }
@@ -794,6 +828,34 @@ mod tests {
     }
 
     #[test]
+    fn rejects_enabled_auth_with_padded_admin_realm_key() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: HashMap::from([(" testrealm ".to_string(), vec!["admin".to_string()])]),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("leading or trailing whitespace"));
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_padded_admin_role() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin ".to_string()])]),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("leading or trailing whitespace"));
+    }
+
+    #[test]
     fn rejects_enabled_auth_with_zero_timeout() {
         let auth = AuthSettings {
             enabled: true,
@@ -854,7 +916,8 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: None,
+                    read_roles: None,
+                    write_roles: None,
                 }),
             },
         );
@@ -869,7 +932,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_stream_auth_allowed_roles_when_global_auth_is_disabled() {
+    fn rejects_stream_auth_roles_when_global_auth_is_disabled() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "diss".to_string(),
@@ -884,20 +947,21 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: false,
-                    allowed_roles: Some(HashMap::from([(
+                    read_roles: Some(HashMap::from([(
                         "testrealm".to_string(),
-                        vec!["admin".to_string()],
+                        vec!["reader".to_string()],
                     )])),
+                    write_roles: None,
                 }),
             },
         );
 
         let settings = basic_settings_with_schema(schema_map);
         let err = validate_stream_auth_settings(&settings)
-            .expect_err("stream auth.allowed_roles should fail when auth is disabled");
+            .expect_err("stream auth roles should fail when auth is disabled");
         assert!(
             err.to_string()
-                .contains("Schema 'diss' sets auth.allowed_roles but auth is globally disabled")
+                .contains("Schema 'diss' sets auth roles but auth is globally disabled")
         );
     }
 
@@ -917,9 +981,13 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(HashMap::from([(
+                    read_roles: Some(HashMap::from([(
                         "testrealm".to_string(),
                         vec!["reader".to_string()],
+                    )])),
+                    write_roles: Some(HashMap::from([(
+                        "testrealm".to_string(),
+                        vec!["producer".to_string()],
                     )])),
                 }),
             },
@@ -938,7 +1006,7 @@ mod tests {
     }
 
     #[test]
-    fn accepts_empty_stream_allowed_roles_when_global_auth_is_enabled() {
+    fn accepts_stream_auth_required_without_role_lists() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "events".to_string(),
@@ -953,7 +1021,8 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(HashMap::new()),
+                    read_roles: None,
+                    write_roles: None,
                 }),
             },
         );
@@ -967,11 +1036,11 @@ mod tests {
             HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
 
         validate_stream_auth_settings(&settings)
-            .expect("empty stream allowed_roles should be accepted");
+            .expect("required=true without role lists should be accepted");
     }
 
     #[test]
-    fn rejects_stream_allowed_roles_with_whitespace_entry_when_auth_enabled() {
+    fn rejects_stream_read_roles_with_whitespace_entry_when_auth_enabled() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "events".to_string(),
@@ -986,10 +1055,11 @@ mod tests {
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
                     required: true,
-                    allowed_roles: Some(HashMap::from([(
+                    read_roles: Some(HashMap::from([(
                         "testrealm".to_string(),
-                        vec!["admin".to_string(), " ".to_string()],
+                        vec!["reader".to_string(), " ".to_string()],
                     )])),
+                    write_roles: None,
                 }),
             },
         );
@@ -1010,7 +1080,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_allowed_roles_when_required_is_false_and_auth_enabled() {
+    fn rejects_stream_empty_read_roles_map() {
         let mut schema_map = HashMap::new();
         schema_map.insert(
             "events".to_string(),
@@ -1024,11 +1094,9 @@ mod tests {
                 identifier: HashMap::new(),
                 storage_policy: None,
                 auth: Some(crate::configuration::StreamAuthConfig {
-                    required: false,
-                    allowed_roles: Some(HashMap::from([(
-                        "testrealm".to_string(),
-                        vec!["reader".to_string()],
-                    )])),
+                    required: true,
+                    read_roles: Some(HashMap::new()),
+                    write_roles: None,
                 }),
             },
         );
@@ -1044,7 +1112,155 @@ mod tests {
         let err = validate_stream_auth_settings(&settings).expect_err("should fail");
         assert!(
             err.to_string()
-                .contains("auth.allowed_roles while auth.required=false")
+                .contains("auth.read_roles must not be an empty map")
+        );
+    }
+
+    #[test]
+    fn rejects_stream_empty_write_roles_map() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    read_roles: None,
+                    write_roles: Some(HashMap::new()),
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.write_roles must not be an empty map")
+        );
+    }
+
+    #[test]
+    fn rejects_stream_read_roles_with_empty_role_list_for_realm() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    read_roles: Some(HashMap::from([("testrealm".to_string(), vec![])])),
+                    write_roles: None,
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(err.to_string().contains("must have at least one role"));
+    }
+
+    #[test]
+    fn rejects_stream_read_roles_with_padded_realm_key() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    read_roles: Some(HashMap::from([(
+                        " testrealm".to_string(),
+                        vec!["reader".to_string()],
+                    )])),
+                    write_roles: None,
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(err.to_string().contains("leading or trailing whitespace"));
+    }
+
+    #[test]
+    fn rejects_roles_when_required_is_false_and_auth_enabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: false,
+                    read_roles: Some(HashMap::from([(
+                        "testrealm".to_string(),
+                        vec!["reader".to_string()],
+                    )])),
+                    write_roles: None,
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles =
+            HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]);
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth roles while auth.required=false")
         );
     }
 
@@ -1109,6 +1325,7 @@ mod tests {
             MetricsSettings {
                 enabled: true,
                 port: None,
+                ..Default::default()
             },
         );
         let err = validate_metrics_settings(&settings).expect_err("should fail");
@@ -1119,12 +1336,27 @@ mod tests {
     }
 
     #[test]
+    fn rejects_metrics_port_zero() {
+        let settings = settings_with_metrics(
+            8000,
+            MetricsSettings {
+                enabled: true,
+                port: Some(0),
+                ..Default::default()
+            },
+        );
+        let err = validate_metrics_settings(&settings).expect_err("should fail");
+        assert!(err.to_string().contains("metrics.port must not be 0"));
+    }
+
+    #[test]
     fn rejects_metrics_port_equal_to_application_port() {
         let settings = settings_with_metrics(
             8000,
             MetricsSettings {
                 enabled: true,
                 port: Some(8000),
+                ..Default::default()
             },
         );
         let err = validate_metrics_settings(&settings).expect_err("should fail");
@@ -1141,6 +1373,7 @@ mod tests {
             MetricsSettings {
                 enabled: true,
                 port: Some(9090),
+                ..Default::default()
             },
         );
         validate_metrics_settings(&settings).expect("distinct port should pass");

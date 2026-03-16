@@ -1,4 +1,4 @@
-use crate::auth::middleware::get_user;
+use crate::auth::middleware::get_username;
 use crate::error::{
     RequestKind, request_parse_error_response, request_validation_error_response,
     sse_error_response,
@@ -7,7 +7,7 @@ use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_val
 use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::routes::streaming::{enforce_stream_auth, record_start_at_span_fields};
+use crate::routes::streaming::{StreamOperation, enforce_stream_auth, record_start_at_span_fields};
 use crate::sse::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -32,6 +32,7 @@ use tracing_actix_web::RequestId;
         (status = 503, description = "Authentication service unavailable (direct mode)")
     ),
     security(
+        (),
         ("bearer_jwt" = []),
         ("basic" = []),
     )
@@ -61,7 +62,11 @@ pub async fn replay(
     };
 
     // Enforce schema-level auth before replay setup to fail fast.
-    if let Err(response) = enforce_stream_auth(&http_request, &notification_request.event_type) {
+    if let Err(response) = enforce_stream_auth(
+        &http_request,
+        &notification_request.event_type,
+        StreamOperation::Read,
+    ) {
         return response;
     }
 
@@ -86,7 +91,7 @@ pub async fn replay(
 
     // See watch.rs for why the guard is created before stream setup.
     let sse_guard = metrics.as_ref().map(|m| {
-        let username = get_user(&http_request).map(|u| u.username);
+        let username = get_username(&http_request);
         m.track_sse_connection("replay", &context.event_type, username.as_deref())
     });
 
