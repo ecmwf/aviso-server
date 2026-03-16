@@ -31,7 +31,14 @@ use tracing_actix_web::RequestId;
     responses(
         (status = 200, description = "SSE stream established successfully", content_type = "text/event-stream"),
         (status = 400, description = "Invalid request parameters"),
-        (status = 500, description = "Failed to establish stream")
+        (status = 401, description = "Missing or invalid credentials (when stream requires auth)"),
+        (status = 403, description = "Valid credentials but insufficient roles for this stream"),
+        (status = 500, description = "Failed to establish stream"),
+        (status = 503, description = "Authentication service unavailable (direct mode)")
+    ),
+    security(
+        ("bearer_jwt" = []),
+        ("basic" = []),
     )
 )]
 #[tracing::instrument(

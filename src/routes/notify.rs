@@ -30,7 +30,14 @@ use tracing_actix_web::RequestId;
     responses(
         (status = 200, description = "Notification processed and stored successfully", body = crate::types::NotificationResponse),
         (status = 400, description = "Invalid request data or validation failure"),
-        (status = 500, description = "Internal server error during processing")
+        (status = 401, description = "Missing or invalid credentials (when stream requires auth)"),
+        (status = 403, description = "Valid credentials but insufficient roles for this stream"),
+        (status = 500, description = "Internal server error during processing"),
+        (status = 503, description = "Authentication service unavailable (direct mode)")
+    ),
+    security(
+        ("bearer_jwt" = []),
+        ("basic" = []),
     )
 )]
 #[tracing::instrument(

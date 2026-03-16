@@ -82,7 +82,14 @@ fn resolve_stream_key_alias(stream_or_event_type: &str) -> String {
     request_body = WipeStreamRequest,
     responses(
         (status = 200, description = "Stream wiped successfully", body = WipeResponse),
-        (status = 500, description = "Failed to wipe stream", body = WipeResponse)
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Valid credentials but missing admin role"),
+        (status = 500, description = "Failed to wipe stream", body = WipeResponse),
+        (status = 503, description = "Authentication service unavailable (direct mode)")
+    ),
+    security(
+        ("bearer_jwt" = []),
+        ("basic" = []),
     )
 )]
 pub async fn wipe_stream(
@@ -135,7 +142,14 @@ pub async fn wipe_stream(
     tag = "admin",
     responses(
         (status = 200, description = "All data wiped successfully", body = WipeResponse),
-        (status = 500, description = "Failed to wipe all data", body = WipeResponse)
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Valid credentials but missing admin role"),
+        (status = 500, description = "Failed to wipe all data", body = WipeResponse),
+        (status = 503, description = "Authentication service unavailable (direct mode)")
+    ),
+    security(
+        ("bearer_jwt" = []),
+        ("basic" = []),
     )
 )]
 
@@ -189,8 +203,15 @@ pub async fn wipe_all(
     responses(
         (status = 200, description = "Notification deleted", body = DeleteNotificationResponse),
         (status = 400, description = "Invalid notification ID format", body = DeleteNotificationResponse),
+        (status = 401, description = "Missing or invalid credentials"),
+        (status = 403, description = "Valid credentials but missing admin role"),
         (status = 404, description = "Notification not found", body = DeleteNotificationResponse),
-        (status = 500, description = "Delete operation failed", body = DeleteNotificationResponse)
+        (status = 500, description = "Delete operation failed", body = DeleteNotificationResponse),
+        (status = 503, description = "Authentication service unavailable (direct mode)")
+    ),
+    security(
+        ("bearer_jwt" = []),
+        ("basic" = []),
     )
 )]
 pub async fn delete_notification(
