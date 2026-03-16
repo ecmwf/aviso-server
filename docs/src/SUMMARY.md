@@ -8,6 +8,7 @@
 - [Key Concepts](./concepts.md)
 - [Installation](./installation.md)
 - [Getting Started](./getting-started.md)
+- [Defining Notification Schemas](./schema-guide.md)
 
 ---
 

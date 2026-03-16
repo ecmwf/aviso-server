@@ -45,6 +45,13 @@ pub fn validate_auth_settings(auth: &AuthSettings) -> Result<()> {
         return Ok(());
     }
 
+    if auth.auth_o_tron_url != auth.auth_o_tron_url.trim() {
+        bail!("auth.auth_o_tron_url must not have leading or trailing whitespace");
+    }
+    if auth.jwt_secret != auth.jwt_secret.trim() {
+        bail!("auth.jwt_secret must not have leading or trailing whitespace");
+    }
+
     let auth_o_tron_url = auth.auth_o_tron_url.trim();
     let jwt_secret = auth.jwt_secret.trim();
 
@@ -856,6 +863,40 @@ mod tests {
     }
 
     #[test]
+    fn rejects_enabled_auth_with_padded_auth_o_tron_url() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: " http://auth-o-tron:8080 ".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.auth_o_tron_url must not have leading or trailing whitespace")
+        );
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_padded_jwt_secret() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: " secret ".to_string(),
+            admin_roles: HashMap::from([("testrealm".to_string(), vec!["admin".to_string()])]),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.jwt_secret must not have leading or trailing whitespace")
+        );
+    }
+
+    #[test]
     fn rejects_enabled_auth_with_zero_timeout() {
         let auth = AuthSettings {
             enabled: true,
@@ -883,7 +924,10 @@ mod tests {
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
-        assert!(err.to_string().contains("auth.mode=direct requires both"));
+        assert!(
+            err.to_string()
+                .contains("auth.auth_o_tron_url must not have leading or trailing whitespace")
+        );
     }
 
     #[test]
@@ -897,7 +941,10 @@ mod tests {
             ..AuthSettings::default()
         };
         let err = validate_auth_settings(&auth).expect_err("should fail");
-        assert!(err.to_string().contains("auth.mode=direct requires both"));
+        assert!(
+            err.to_string()
+                .contains("auth.jwt_secret must not have leading or trailing whitespace")
+        );
     }
 
     #[test]
