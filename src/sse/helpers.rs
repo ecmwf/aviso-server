@@ -279,18 +279,32 @@ where
     )
 }
 
-/// Create a standardized SSE HttpResponse with proper headers
-pub fn create_sse_response<S>(stream: S) -> HttpResponse
+/// Create a standardized SSE HttpResponse with proper headers.
+///
+/// When a `SseConnectionGuard` is provided, it is held alive for the
+/// lifetime of the streaming body so active-connection gauges stay accurate.
+pub fn create_sse_response<S>(
+    stream: S,
+    guard: Option<crate::metrics::SseConnectionGuard>,
+) -> HttpResponse
 where
     S: tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>> + 'static,
 {
-    HttpResponse::Ok()
+    let mut builder = HttpResponse::Ok();
+    builder
         .content_type("text/event-stream")
         .insert_header(("Cache-Control", "no-cache"))
         .insert_header(("Connection", "keep-alive"))
         .insert_header(("Access-Control-Allow-Origin", "*"))
-        .insert_header(("X-Accel-Buffering", "no"))
-        .streaming(stream)
+        .insert_header(("X-Accel-Buffering", "no"));
+
+    match guard {
+        Some(g) => {
+            let pinned = Box::pin(stream);
+            builder.streaming(crate::metrics::GuardedSseStream::new(pinned, g))
+        }
+        None => builder.streaming(stream),
+    }
 }
 
 #[cfg(test)]

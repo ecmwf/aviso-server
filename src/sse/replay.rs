@@ -172,6 +172,7 @@ pub async fn create_historical_then_live_stream(
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
+    sse_guard: Option<crate::metrics::SseConnectionGuard>,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let app_settings = Settings::get_global_application_settings();
@@ -261,7 +262,7 @@ pub async fn create_historical_then_live_stream(
         "Created combined historical-then-live SSE stream"
     );
 
-    Ok(create_sse_response(byte_stream))
+    Ok(create_sse_response(byte_stream, sse_guard))
 }
 
 /// Create a replay-only stream (historical messages then close)
@@ -274,6 +275,7 @@ pub async fn create_replay_only_stream(
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
+    sse_guard: Option<crate::metrics::SseConnectionGuard>,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
 
@@ -332,5 +334,5 @@ pub async fn create_replay_only_stream(
     );
 
     // Use existing helper for response creation
-    Ok(create_sse_response(byte_stream))
+    Ok(create_sse_response(byte_stream, sse_guard))
 }

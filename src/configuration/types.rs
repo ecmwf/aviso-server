@@ -298,6 +298,14 @@ fn default_static_files_path() -> String {
     "/app/static".to_string()
 }
 
+#[derive(Deserialize, Serialize, Clone, Debug, Default)]
+pub struct MetricsSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Port for the internal metrics HTTP server (serves `/metrics`).
+    pub port: Option<u16>,
+}
+
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct Settings {
     /// HTTP/server process settings.
@@ -311,6 +319,8 @@ pub struct Settings {
     pub watch_endpoint: WatchEndpointSettings,
     #[serde(default)]
     pub auth: AuthSettings,
+    #[serde(default)]
+    pub metrics: MetricsSettings,
 }
 
 #[cfg(test)]

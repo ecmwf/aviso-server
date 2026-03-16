@@ -1,8 +1,10 @@
+use crate::auth::middleware::get_user;
 use crate::error::{
     RequestKind, request_parse_error_response, request_validation_error_response,
     sse_error_response,
 };
 use crate::handlers::{StreamingRequestProcessor, ValidationConfig, parse_and_validate_request};
+use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::streaming::{enforce_stream_auth, record_start_at_span_fields};
@@ -35,7 +37,7 @@ use tracing_actix_web::RequestId;
     )
 )]
 #[tracing::instrument(
-    skip(notification_backend, shutdown),
+    skip(notification_backend, shutdown, metrics),
     fields(
         event_type = tracing::field::Empty,
         request_id = %request_id,
@@ -50,6 +52,7 @@ pub async fn replay(
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     shutdown: web::Data<CancellationToken>,
     request_id: RequestId,
+    metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
     // Parse and validate request structure
     let notification_request = match parse_and_validate_request(&body) {
@@ -81,6 +84,12 @@ pub async fn replay(
     let filtering_params = Arc::new(context.canonicalized_params.clone());
     let filtering_constraints = Arc::new(context.identifier_constraints.clone());
 
+    // See watch.rs for why the guard is created before stream setup.
+    let sse_guard = metrics.as_ref().map(|m| {
+        let username = get_user(&http_request).map(|u| u.username);
+        m.track_sse_connection("replay", &context.event_type, username.as_deref())
+    });
+
     match create_replay_only_stream(
         context.topic.clone(),
         notification_backend.get_ref().clone(),
@@ -88,6 +97,7 @@ pub async fn replay(
         shutdown.clone(),
         filtering_params,
         filtering_constraints,
+        sse_guard,
     )
     .await
     {

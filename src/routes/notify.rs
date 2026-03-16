@@ -6,6 +6,7 @@ use crate::handlers::{
     NotificationErrorKind, parse_and_validate_request, process_notification_request,
     save_to_backend,
 };
+use crate::metrics::AppMetrics;
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
@@ -41,7 +42,7 @@ use tracing_actix_web::RequestId;
     )
 )]
 #[tracing::instrument(
-    skip(body, notification_backend),
+    skip(body, notification_backend, metrics),
     fields(
         event_type = tracing::field::Empty,
         topic = tracing::field::Empty,
@@ -54,13 +55,27 @@ pub async fn notify(
     body: web::Bytes,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     request_id: RequestId,
+    metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
+    // Helper to record notification outcome when metrics are enabled.
+    let record = |event_type: &str, status: &str| {
+        if let Some(ref m) = metrics {
+            m.notifications_total
+                .with_label_values(&[event_type, status])
+                .inc();
+        }
+    };
+
     // Parse and validate request structure
     let payload = match parse_and_validate_request(&body) {
         Ok(p) => p,
-        Err(e) => return request_parse_error_response(RequestKind::Notification, e),
+        Err(e) => {
+            record("unknown", "error");
+            return request_parse_error_response(RequestKind::Notification, e);
+        }
     };
     if payload.identifier.contains_key("point") {
+        record(&payload.event_type, "error");
         return request_validation_error_response(
             RequestKind::Notification,
             anyhow::anyhow!(
@@ -76,6 +91,7 @@ pub async fn notify(
 
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type) {
+        record(event_type, "rejected");
         return response;
     }
 
@@ -89,9 +105,11 @@ pub async fn notify(
         Ok(result) => result,
         Err(e) => match e.kind {
             NotificationErrorKind::Validation => {
+                record(event_type, "error");
                 return request_validation_error_response(RequestKind::Notification, e.source);
             }
             NotificationErrorKind::Processing => {
+                record(event_type, "error");
                 return processing_error_response(ProcessingKind::NotificationProcessing, e.source);
             }
         },
@@ -112,7 +130,7 @@ pub async fn notify(
         .map(serde_json::Value::to_string)
         .unwrap_or_else(|| "null".to_string());
 
-    // Save to backend storage (handles spatial metadata automatically)
+    // Save to backend storage (handles spatial metadata automatically).
     if let Err(e) = save_to_backend(
         &notification_result,
         payload_string,
@@ -120,8 +138,11 @@ pub async fn notify(
     )
     .await
     {
+        record(event_type, "error");
         return processing_error_response(ProcessingKind::NotificationStorage, e);
     }
+
+    record(event_type, "success");
 
     // Build success response
     let response = NotificationResponse {

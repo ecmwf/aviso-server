@@ -44,6 +44,7 @@ tokio-stream = "0.1"
 tokio-util = "0.7"
 geo = "0.32"
 geo-types = "0.7"
+prometheus = { version = "0.13", features = ["process"] }
 
 [[bench]]
 name = "constraint_matcher_benchmark"

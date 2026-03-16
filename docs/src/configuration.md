@@ -22,6 +22,8 @@ Configuration is loaded in this order (later sources override earlier ones):
 3. `$HOME/.aviso_server/config.yaml`
 4. Environment variables (highest precedence)
 
+If `AVISOSERVER_CONFIG_FILE` is set, only that single file is loaded (steps 1–3 are skipped). Environment variables still override values from the file.
+
 ### Environment variable format
 
 Prefix: `AVISOSERVER_`
@@ -47,6 +49,7 @@ The top-level sections are:
 | `auth` | Authentication mode, secrets, admin roles |
 | `notification_backend` | Backend selection and backend-specific settings |
 | `notification_schema` | Per-event-type validation, topic ordering, storage policy |
+| `metrics` | Optional Prometheus metrics server |
 | `watch_endpoint` | SSE heartbeat, connection limits, replay batch settings |
 
 `notification_backend.kind` selects the storage implementation:

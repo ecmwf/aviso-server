@@ -125,6 +125,20 @@ pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
     Ok(())
 }
 
+pub fn validate_metrics_settings(settings: &Settings) -> Result<()> {
+    let metrics = &settings.metrics;
+    if !metrics.enabled {
+        return Ok(());
+    }
+    let port = metrics
+        .port
+        .ok_or_else(|| anyhow::anyhow!("metrics.port is required when metrics.enabled=true"))?;
+    if port == settings.application.port {
+        bail!("metrics.port must differ from application.port");
+    }
+    Ok(())
+}
+
 pub fn validate_schema_storage_policy_support(settings: &Settings) -> Result<()> {
     let kind = settings.notification_backend.kind.as_str();
     let capabilities = capabilities_for_backend_kind(kind)
@@ -230,12 +244,12 @@ fn validate_policy_fields(
 #[cfg(test)]
 mod tests {
     use super::{
-        validate_auth_settings, validate_schema_storage_policy_support,
+        validate_auth_settings, validate_metrics_settings, validate_schema_storage_policy_support,
         validate_stream_auth_settings,
     };
     use crate::configuration::{
         ApplicationSettings, AuthMode, AuthSettings, EventSchema, EventStoragePolicy,
-        NotificationBackendSettings, Settings, TopicConfig, WatchEndpointSettings,
+        MetricsSettings, NotificationBackendSettings, Settings, TopicConfig, WatchEndpointSettings,
     };
     use std::collections::HashMap;
 
@@ -276,6 +290,7 @@ mod tests {
             notification_schema: Some(schema),
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
+            metrics: MetricsSettings::default(),
         }
     }
 
@@ -296,6 +311,7 @@ mod tests {
             notification_schema: Some(schema),
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
+            metrics: MetricsSettings::default(),
         }
     }
 
@@ -535,6 +551,7 @@ mod tests {
             notification_schema: Some(schema_map),
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
+            metrics: MetricsSettings::default(),
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -599,6 +616,7 @@ mod tests {
             notification_schema: Some(schema_map),
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
+            metrics: MetricsSettings::default(),
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -657,6 +675,7 @@ mod tests {
             notification_schema: Some(schema_map),
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
+            metrics: MetricsSettings::default(),
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -1054,5 +1073,76 @@ mod tests {
             err.to_string()
                 .contains("auth.mode=trusted_proxy requires auth.jwt_secret")
         );
+    }
+
+    fn settings_with_metrics(app_port: u16, metrics: MetricsSettings) -> Settings {
+        Settings {
+            application: ApplicationSettings {
+                host: "127.0.0.1".to_string(),
+                port: app_port,
+                base_url: "http://localhost".to_string(),
+                static_files_path: "/tmp".to_string(),
+            },
+            notification_backend: NotificationBackendSettings {
+                kind: "in_memory".to_string(),
+                in_memory: None,
+                jetstream: None,
+            },
+            logging: None,
+            notification_schema: None,
+            watch_endpoint: WatchEndpointSettings::default(),
+            auth: AuthSettings::default(),
+            metrics,
+        }
+    }
+
+    #[test]
+    fn accepts_disabled_metrics() {
+        let settings = settings_with_metrics(8000, MetricsSettings::default());
+        validate_metrics_settings(&settings).expect("disabled metrics should pass");
+    }
+
+    #[test]
+    fn rejects_enabled_metrics_without_port() {
+        let settings = settings_with_metrics(
+            8000,
+            MetricsSettings {
+                enabled: true,
+                port: None,
+            },
+        );
+        let err = validate_metrics_settings(&settings).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("metrics.port is required when metrics.enabled=true")
+        );
+    }
+
+    #[test]
+    fn rejects_metrics_port_equal_to_application_port() {
+        let settings = settings_with_metrics(
+            8000,
+            MetricsSettings {
+                enabled: true,
+                port: Some(8000),
+            },
+        );
+        let err = validate_metrics_settings(&settings).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("metrics.port must differ from application.port")
+        );
+    }
+
+    #[test]
+    fn accepts_enabled_metrics_with_distinct_port() {
+        let settings = settings_with_metrics(
+            8000,
+            MetricsSettings {
+                enabled: true,
+                port: Some(9090),
+            },
+        );
+        validate_metrics_settings(&settings).expect("distinct port should pass");
     }
 }

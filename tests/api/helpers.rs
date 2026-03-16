@@ -9,6 +9,7 @@ use aviso_server::{
     configuration::InMemorySettings,
     configuration::JetStreamSettings,
     configuration::LoggingSettings,
+    configuration::MetricsSettings,
     configuration::NotificationBackendSettings,
     configuration::PayloadConfig,
     configuration::Settings,
@@ -537,6 +538,7 @@ fn base_test_settings() -> Settings {
         notification_schema: None,
         watch_endpoint: WatchEndpointSettings::default(),
         auth: AuthSettings::default(),
+        metrics: MetricsSettings::default(),
     }
 }
 

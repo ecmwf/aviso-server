@@ -54,6 +54,27 @@ When enabled:
 
 See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
 
+## `metrics`
+
+Optional Prometheus metrics endpoint. When enabled, a separate HTTP server serves `/metrics` on an internal port for scraping by Prometheus/ServiceMonitor. This keeps metrics isolated from the public API.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Enable the metrics endpoint. |
+| `port` | `u16` | none | Required when `enabled=true`. Must differ from `application.port`. |
+
+Exposed metrics:
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `aviso_notifications_total` | counter | `event_type`, `status` | Total notification requests. |
+| `aviso_sse_connections_active` | gauge | `endpoint`, `event_type` | Currently active SSE connections. |
+| `aviso_sse_connections_total` | counter | `endpoint`, `event_type` | Total SSE connections opened. |
+| `aviso_sse_unique_users_active` | gauge | `endpoint` | Distinct users with active SSE connections. |
+| `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. |
+
+Process-level metrics (CPU, memory, open FDs) are automatically collected on Linux.
+
 ## `notification_backend`
 
 | Field | Type | Default | Notes |
@@ -195,4 +216,6 @@ AVISOSERVER_NOTIFICATION_BACKEND__JETSTREAM__TOKEN=secret
 AVISOSERVER_WATCH_ENDPOINT__REPLAY_BATCH_SIZE=200
 AVISOSERVER_AUTH__ENABLED=true
 AVISOSERVER_AUTH__JWT_SECRET=secret
+AVISOSERVER_METRICS__ENABLED=true
+AVISOSERVER_METRICS__PORT=9090
 ```

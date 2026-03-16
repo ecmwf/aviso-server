@@ -3,7 +3,7 @@ use std::hint::black_box;
 use std::sync::Once;
 
 use aviso_server::configuration::{
-    ApplicationSettings, AuthSettings, EventSchema, IdentifierFieldConfig,
+    ApplicationSettings, AuthSettings, EventSchema, IdentifierFieldConfig, MetricsSettings,
     NotificationBackendSettings, PayloadConfig, Settings, TopicConfig, WatchEndpointSettings,
 };
 use aviso_server::notification::IdentifierConstraint;
@@ -194,6 +194,7 @@ fn init_benchmark_schema() {
             notification_schema: Some(notification_schema),
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
+            metrics: MetricsSettings::default(),
         };
 
         settings.init_global_config();

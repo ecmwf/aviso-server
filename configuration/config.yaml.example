@@ -66,6 +66,12 @@ auth:
   # trusted_proxy mode validates forwarded Bearer JWT using jwt_secret.
   # No extra trusted_proxy block is needed.
 
+metrics:
+  # Enable Prometheus metrics on a separate internal port.
+  enabled: false
+  # Required when enabled=true; must differ from application.port.
+  # port: 9090
+
 logging:
   # OTel-aligned JSON logs.
   level: info
