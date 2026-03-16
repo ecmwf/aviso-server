@@ -51,10 +51,13 @@ For SSE setup failures, response also includes:
 | `INVALID_NOTIFICATION_REQUEST` | `400` | Notification request failed business validation. |
 | `INVALID_WATCH_REQUEST` | `400` | Watch request failed validation (replay/spatial/schema rules). |
 | `INVALID_REPLAY_REQUEST` | `400` | Replay request failed validation (start cursor/spatial/schema rules). |
+| `UNAUTHORIZED` | `401` | Missing or invalid credentials (no token, bad format, expired, bad signature). |
+| `FORBIDDEN` | `403` | Valid credentials but user lacks the required role. |
 | `NOTIFICATION_PROCESSING_FAILED` | `500` | Notification processing pipeline failed before storage. |
 | `NOTIFICATION_STORAGE_FAILED` | `500` | Backend write operation failed. |
 | `SSE_STREAM_INITIALIZATION_FAILED` | `500` | Replay/watch SSE stream could not be created. |
 | `INTERNAL_ERROR` | `500` | Fallback internal error code (reserved). |
+| `SERVICE_UNAVAILABLE` | `503` | Auth service (auth-o-tron) unreachable or returned an unexpected error. |
 
 ## Examples
 
@@ -66,6 +69,17 @@ Invalid replay request:
   "error": "Invalid Replay Request",
   "message": "Cannot specify both from_id and from_date...",
   "details": "Cannot specify both from_id and from_date..."
+}
+```
+
+Auth error (missing credentials on a protected stream).
+Auth errors use three fields (`code`, `error`, `message`); `details` is not included:
+
+```json
+{
+  "code": "UNAUTHORIZED",
+  "error": "unauthorized",
+  "message": "Authentication is required for this stream"
 }
 ```
 

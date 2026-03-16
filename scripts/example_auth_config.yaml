@@ -1,0 +1,39 @@
+version: 1.0.0
+
+logging:
+  level: "info"
+  format: "console"
+
+auth:
+  timeout_in_ms: 3000
+
+providers:
+  - name: "plain-provider"
+    type: "plain"
+    realm: "localrealm"
+    users:
+      - username: "admin-user"
+        password: "admin-pass"
+      - username: "reader-user"
+        password: "reader-pass"
+
+augmenters:
+  - name: "plain-role-augmenter"
+    type: "plain"
+    realm: "localrealm"
+    roles:
+      admin: ["admin-user"]
+      reader: ["reader-user"]
+
+store:
+  enabled: false
+
+services: []
+
+jwt:
+  exp: 3600
+  iss: "authotron-local"
+  secret: "your-shared-secret"
+  aud: "authotron-local"
+
+bind_address: 0.0.0.0:8080

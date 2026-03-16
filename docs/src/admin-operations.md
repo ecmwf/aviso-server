@@ -2,6 +2,8 @@
 
 Admin endpoints are destructive. Restrict access in production.
 
+When [authentication](./authentication.md) is enabled, all admin endpoints require a valid credential and one of the configured `admin_roles`. Add `-H "Authorization: Bearer <token>"` or `-u user:pass` (direct mode) to the curl examples below.
+
 ## Delete One Notification
 
 `DELETE /api/v1/admin/notification/{notification_id}`

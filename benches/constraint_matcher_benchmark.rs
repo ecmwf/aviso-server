@@ -3,8 +3,8 @@ use std::hint::black_box;
 use std::sync::Once;
 
 use aviso_server::configuration::{
-    ApplicationSettings, EventSchema, IdentifierFieldConfig, NotificationBackendSettings,
-    PayloadConfig, Settings, TopicConfig, WatchEndpointSettings,
+    ApplicationSettings, AuthSettings, EventSchema, IdentifierFieldConfig,
+    NotificationBackendSettings, PayloadConfig, Settings, TopicConfig, WatchEndpointSettings,
 };
 use aviso_server::notification::IdentifierConstraint;
 use aviso_server::notification::wildcard_matcher::matches_notification_filters;
@@ -128,6 +128,7 @@ fn init_benchmark_schema() {
                 endpoint: None,
                 identifier: mars_identifier,
                 storage_policy: None,
+                auth: None,
             },
         );
 
@@ -173,6 +174,7 @@ fn init_benchmark_schema() {
                 endpoint: None,
                 identifier: extreme_identifier,
                 storage_policy: None,
+                auth: None,
             },
         );
 
@@ -191,6 +193,7 @@ fn init_benchmark_schema() {
             logging: None,
             notification_schema: Some(notification_schema),
             watch_endpoint: WatchEndpointSettings::default(),
+            auth: AuthSettings::default(),
         };
 
         settings.init_global_config();

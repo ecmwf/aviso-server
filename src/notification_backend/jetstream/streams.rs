@@ -576,6 +576,7 @@ mod tests {
                     allow_duplicates: None,
                     compression: Some(true),
                 }),
+                auth: None,
             },
         );
         schema

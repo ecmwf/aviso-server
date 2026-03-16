@@ -9,9 +9,10 @@ use crate::handlers::{
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
+use crate::routes::streaming::enforce_stream_auth;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
-use actix_web::{HttpResponse, web};
+use actix_web::{HttpRequest, HttpResponse, web};
 use std::sync::Arc;
 use tracing::info;
 use tracing_actix_web::RequestId;
@@ -42,6 +43,7 @@ use tracing_actix_web::RequestId;
     )
 )]
 pub async fn notify(
+    http_request: HttpRequest,
     body: web::Bytes,
     notification_backend: web::Data<Arc<dyn NotificationBackend>>,
     request_id: RequestId,
@@ -64,6 +66,11 @@ pub async fn notify(
     let request_params = &payload.identifier;
 
     tracing::Span::current().record("event_type", event_type);
+
+    // Reject unauthorized requests before validation/topic work.
+    if let Err(response) = enforce_stream_auth(&http_request, event_type) {
+        return response;
+    }
 
     // Process notification request with payload validation
     let notification_result = match process_notification_request(

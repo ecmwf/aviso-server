@@ -1,7 +1,111 @@
-use super::{EventStoragePolicy, Settings, parse_retention_time_spec, parse_size_spec};
+use super::{
+    AuthMode, AuthSettings, EventStoragePolicy, Settings, parse_retention_time_spec,
+    parse_size_spec,
+};
 use crate::notification_backend::{BackendCapabilities, capabilities_for_backend_kind};
 use anyhow::{Result, bail};
 use std::collections::HashMap;
+
+/// Validates auth configuration
+///
+/// Enforces mode-specific required fields when auth is enabled.
+pub fn validate_auth_settings(auth: &AuthSettings) -> Result<()> {
+    if !auth.enabled {
+        return Ok(());
+    }
+
+    let auth_o_tron_url = auth.auth_o_tron_url.trim();
+    let jwt_secret = auth.jwt_secret.trim();
+
+    if auth.timeout_ms == 0 {
+        bail!("auth.timeout_ms must be greater than zero");
+    }
+
+    if auth.admin_roles.is_empty() {
+        bail!("auth.enabled=true requires auth.admin_roles to contain at least one role");
+    }
+    if auth.admin_roles.iter().any(|role| role.trim().is_empty()) {
+        bail!("auth.admin_roles must not contain empty or whitespace-only entries");
+    }
+
+    match auth.mode {
+        AuthMode::Direct => {
+            let has_auth_o_tron = !auth_o_tron_url.is_empty();
+            let has_jwt_secret = !jwt_secret.is_empty();
+
+            if !has_auth_o_tron || !has_jwt_secret {
+                bail!(
+                    "auth.mode=direct requires both auth.auth_o_tron_url and auth.jwt_secret to be configured"
+                );
+            }
+        }
+        AuthMode::TrustedProxy => {
+            if jwt_secret.is_empty() {
+                bail!("auth.mode=trusted_proxy requires auth.jwt_secret to be configured");
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// Validates stream-level auth blocks against global auth mode.
+///
+/// Stream auth rules are enforceable only when `auth.enabled=true`.
+pub fn validate_stream_auth_settings(settings: &Settings) -> Result<()> {
+    let Some(schema_map) = settings.notification_schema.as_ref() else {
+        return Ok(());
+    };
+
+    for (event_type, schema) in schema_map {
+        let Some(stream_auth) = schema.auth.as_ref() else {
+            continue;
+        };
+
+        if stream_auth
+            .allowed_roles
+            .as_ref()
+            .is_some_and(|roles| roles.iter().any(|role| role.trim().is_empty()))
+        {
+            bail!(
+                "Schema '{event_type}' auth.allowed_roles must not contain empty or whitespace-only entries"
+            );
+        }
+
+        if settings.auth.enabled {
+            if !stream_auth.required
+                && stream_auth
+                    .allowed_roles
+                    .as_ref()
+                    .is_some_and(|roles| !roles.is_empty())
+            {
+                bail!(
+                    "Schema '{event_type}' sets auth.allowed_roles while auth.required=false; \
+                     set auth.required=true or remove auth.allowed_roles"
+                );
+            }
+            continue;
+        }
+
+        if stream_auth.required {
+            bail!(
+                "Schema '{event_type}' sets auth.required=true but auth is globally disabled. Enable auth.enabled=true or remove schema auth config."
+            );
+        }
+
+        if stream_auth
+            .allowed_roles
+            .as_ref()
+            .is_some_and(|roles| !roles.is_empty())
+        {
+            bail!(
+                "Schema '{event_type}' sets auth.allowed_roles but auth is globally disabled. Enable auth.enabled=true or remove schema auth config."
+            );
+        }
+    }
+
+    Ok(())
+}
 
 pub fn validate_schema_storage_policy_support(settings: &Settings) -> Result<()> {
     let kind = settings.notification_backend.kind.as_str();
@@ -107,10 +211,13 @@ fn validate_policy_fields(
 
 #[cfg(test)]
 mod tests {
-    use super::validate_schema_storage_policy_support;
+    use super::{
+        validate_auth_settings, validate_schema_storage_policy_support,
+        validate_stream_auth_settings,
+    };
     use crate::configuration::{
-        ApplicationSettings, EventSchema, EventStoragePolicy, NotificationBackendSettings,
-        Settings, TopicConfig, WatchEndpointSettings,
+        ApplicationSettings, AuthMode, AuthSettings, EventSchema, EventStoragePolicy,
+        NotificationBackendSettings, Settings, TopicConfig, WatchEndpointSettings,
     };
     use std::collections::HashMap;
 
@@ -131,6 +238,7 @@ mod tests {
                 endpoint: None,
                 identifier: HashMap::new(),
                 storage_policy: Some(policy),
+                auth: None,
             },
         );
 
@@ -149,6 +257,27 @@ mod tests {
             logging: None,
             notification_schema: Some(schema),
             watch_endpoint: WatchEndpointSettings::default(),
+            auth: AuthSettings::default(),
+        }
+    }
+
+    fn basic_settings_with_schema(schema: HashMap<String, EventSchema>) -> Settings {
+        Settings {
+            application: ApplicationSettings {
+                host: "127.0.0.1".to_string(),
+                port: 8000,
+                base_url: "http://localhost".to_string(),
+                static_files_path: "/tmp".to_string(),
+            },
+            notification_backend: NotificationBackendSettings {
+                kind: "in_memory".to_string(),
+                in_memory: None,
+                jetstream: None,
+            },
+            logging: None,
+            notification_schema: Some(schema),
+            watch_endpoint: WatchEndpointSettings::default(),
+            auth: AuthSettings::default(),
         }
     }
 
@@ -351,6 +480,7 @@ mod tests {
                     max_messages: Some(10),
                     ..EventStoragePolicy::default()
                 }),
+                auth: None,
             },
         );
         schema_map.insert(
@@ -367,6 +497,7 @@ mod tests {
                     max_messages: Some(20),
                     ..EventStoragePolicy::default()
                 }),
+                auth: None,
             },
         );
 
@@ -385,6 +516,7 @@ mod tests {
             logging: None,
             notification_schema: Some(schema_map),
             watch_endpoint: WatchEndpointSettings::default(),
+            auth: AuthSettings::default(),
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -412,6 +544,7 @@ mod tests {
                     max_messages: Some(10),
                     ..EventStoragePolicy::default()
                 }),
+                auth: None,
             },
         );
         schema_map.insert(
@@ -428,6 +561,7 @@ mod tests {
                     max_messages: Some(20),
                     ..EventStoragePolicy::default()
                 }),
+                auth: None,
             },
         );
 
@@ -446,6 +580,7 @@ mod tests {
             logging: None,
             notification_schema: Some(schema_map),
             watch_endpoint: WatchEndpointSettings::default(),
+            auth: AuthSettings::default(),
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -470,6 +605,7 @@ mod tests {
                 endpoint: None,
                 identifier: HashMap::new(),
                 storage_policy: None,
+                auth: None,
             },
         );
         schema_map.insert(
@@ -483,6 +619,7 @@ mod tests {
                 endpoint: None,
                 identifier: HashMap::new(),
                 storage_policy: None,
+                auth: None,
             },
         );
 
@@ -501,6 +638,7 @@ mod tests {
             logging: None,
             notification_schema: Some(schema_map),
             watch_endpoint: WatchEndpointSettings::default(),
+            auth: AuthSettings::default(),
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -509,5 +647,361 @@ mod tests {
         assert!(message.contains("both define topic base 'shared'"));
         assert!(message.contains("'schema_a'"));
         assert!(message.contains("'schema_b'"));
+    }
+
+    #[test]
+    fn accepts_disabled_auth_without_credentials() {
+        let auth = AuthSettings::default();
+        assert!(validate_auth_settings(&auth).is_ok());
+    }
+
+    #[test]
+    fn accepts_enabled_auth_with_auth_o_tron_url_and_jwt_secret() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        assert!(validate_auth_settings(&auth).is_ok());
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_only_jwt_secret() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            jwt_secret: "secret".to_string(),
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("auth.mode=direct requires both"));
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_only_auth_o_tron_url() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("auth.mode=direct requires both"));
+    }
+
+    #[test]
+    fn rejects_enabled_auth_without_credentials() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("auth.mode=direct requires both"));
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_empty_admin_roles() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.enabled=true requires auth.admin_roles")
+        );
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_whitespace_admin_role() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: vec!["admin".to_string(), "   ".to_string()],
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.admin_roles must not contain empty or whitespace-only entries")
+        );
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_zero_timeout() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: vec!["admin".to_string()],
+            timeout_ms: 0,
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.timeout_ms must be greater than zero")
+        );
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_whitespace_auth_o_tron_url() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "   ".to_string(),
+            jwt_secret: "secret".to_string(),
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("auth.mode=direct requires both"));
+    }
+
+    #[test]
+    fn rejects_enabled_auth_with_whitespace_jwt_secret() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::Direct,
+            auth_o_tron_url: "http://auth-o-tron:8080".to_string(),
+            jwt_secret: "   ".to_string(),
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(err.to_string().contains("auth.mode=direct requires both"));
+    }
+
+    #[test]
+    fn rejects_stream_auth_required_when_global_auth_is_disabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "mars".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "mars".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    allowed_roles: None,
+                }),
+            },
+        );
+
+        let settings = basic_settings_with_schema(schema_map);
+        let err = validate_stream_auth_settings(&settings)
+            .expect_err("stream auth.required=true should fail when auth is disabled");
+        assert!(
+            err.to_string()
+                .contains("Schema 'mars' sets auth.required=true but auth is globally disabled")
+        );
+    }
+
+    #[test]
+    fn rejects_stream_auth_allowed_roles_when_global_auth_is_disabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "diss".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "diss".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: false,
+                    allowed_roles: Some(vec!["admin".to_string()]),
+                }),
+            },
+        );
+
+        let settings = basic_settings_with_schema(schema_map);
+        let err = validate_stream_auth_settings(&settings)
+            .expect_err("stream auth.allowed_roles should fail when auth is disabled");
+        assert!(
+            err.to_string()
+                .contains("Schema 'diss' sets auth.allowed_roles but auth is globally disabled")
+        );
+    }
+
+    #[test]
+    fn accepts_stream_auth_when_global_auth_is_enabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    allowed_roles: Some(vec!["reader".to_string()]),
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles = vec!["admin".to_string()];
+
+        validate_stream_auth_settings(&settings)
+            .expect("stream auth should be accepted when auth is enabled");
+    }
+
+    #[test]
+    fn accepts_empty_stream_allowed_roles_when_global_auth_is_enabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    allowed_roles: Some(vec![]),
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles = vec!["admin".to_string()];
+
+        validate_stream_auth_settings(&settings)
+            .expect("empty stream allowed_roles should be accepted");
+    }
+
+    #[test]
+    fn rejects_stream_allowed_roles_with_whitespace_entry_when_auth_enabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: true,
+                    allowed_roles: Some(vec!["admin".to_string(), " ".to_string()]),
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles = vec!["admin".to_string()];
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.allowed_roles must not contain empty or whitespace-only entries")
+        );
+    }
+
+    #[test]
+    fn rejects_allowed_roles_when_required_is_false_and_auth_enabled() {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            "events".to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: "events".to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: false,
+                    allowed_roles: Some(vec!["reader".to_string()]),
+                }),
+            },
+        );
+
+        let mut settings = basic_settings_with_schema(schema_map);
+        settings.auth.enabled = true;
+        settings.auth.mode = AuthMode::Direct;
+        settings.auth.auth_o_tron_url = "http://auth-o-tron:8080".to_string();
+        settings.auth.jwt_secret = "secret".to_string();
+        settings.auth.admin_roles = vec!["admin".to_string()];
+
+        let err = validate_stream_auth_settings(&settings).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.allowed_roles while auth.required=false")
+        );
+    }
+
+    #[test]
+    fn accepts_enabled_trusted_proxy_auth_with_required_fields() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::TrustedProxy,
+            jwt_secret: "secret".to_string(),
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        assert!(validate_auth_settings(&auth).is_ok());
+    }
+
+    #[test]
+    fn rejects_enabled_trusted_proxy_auth_without_jwt_secret() {
+        let auth = AuthSettings {
+            enabled: true,
+            mode: AuthMode::TrustedProxy,
+            admin_roles: vec!["admin".to_string()],
+            ..AuthSettings::default()
+        };
+        let err = validate_auth_settings(&auth).expect_err("should fail");
+        assert!(
+            err.to_string()
+                .contains("auth.mode=trusted_proxy requires auth.jwt_secret")
+        );
     }
 }

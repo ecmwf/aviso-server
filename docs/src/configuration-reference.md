@@ -19,23 +19,40 @@ See [Topic Encoding](./topic-encoding.md) for rules and examples.
 | `base_url` | `string` | `http://localhost` | Used in generated CloudEvent source links. |
 | `static_files_path` | `string` | `/app/static` | Static asset root for homepage assets. |
 
-## `watch_endpoint`
-
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `sse_heartbeat_interval_sec` | `u64` | `30` | SSE heartbeat period. |
-| `connection_max_duration_sec` | `u64` | `3600` | Maximum live watch duration. |
-| `replay_batch_size` | `usize` | `100` | Historical fetch batch size. |
-| `max_historical_notifications` | `usize` | `10000` | Replay cap for historical delivery. |
-| `replay_batch_delay_ms` | `u64` | `100` | Delay between historical replay batches. |
-| `concurrent_notification_processing` | `usize` | `15` | Live stream CloudEvent conversion concurrency. |
-
 ## `logging`
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `level` | `string` | implementation default | Example: `info`, `debug`, `warn`, `error`. |
 | `format` | `string` | implementation default | Kept for compatibility; output is OTel-aligned JSON. |
+
+## `auth`
+
+Authentication is optional. When disabled (default), all API endpoints are publicly accessible only if schemas do not define stream auth rules. Startup fails if global auth is disabled while a schema sets `auth.required=true` or non-empty `auth.allowed_roles`.
+
+When enabled:
+- Admin endpoints always require a valid JWT and an admin role.
+- Stream endpoints (`notify`, `watch`, `replay`) enforce authentication only when the target schema has `auth.required: true`.
+- Schema endpoints (`/api/v1/schema`) are always public.
+- In `trusted_proxy` mode, Aviso validates `Authorization: Bearer <jwt>` locally with `jwt_secret`.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Set to `true` to enable authentication. |
+| `mode` | `"direct"\|"trusted_proxy"` | `"direct"` | `direct`: forward credentials to auth-o-tron. `trusted_proxy`: validate forwarded JWT locally. |
+| `auth_o_tron_url` | `string` | `""` | auth-o-tron base URL. Required when `enabled=true` and `mode=direct`. |
+| `jwt_secret` | `string` | `""` | Shared HMAC secret for JWT validation. Required when `enabled=true`. Not exposed via `/api/v1/schema` endpoints and redacted when auth settings are serialized or logged. |
+| `admin_roles` | `string[]` | `[]` | Roles allowed on admin endpoints (`/api/v1/admin/*`). Must be non-empty when `enabled=true`. |
+| `timeout_ms` | `u64` | `5000` | Timeout for auth-o-tron requests (milliseconds). Must be `> 0`. |
+
+### Per-stream auth (`notification_schema.<event_type>.auth`)
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `required` | `bool` | — | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
+| `allowed_roles` | `string[]` | `[]` | When non-empty, only users with a listed role can access the stream. Only enforced when `required: true`. |
+
+See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
 
 ## `notification_backend`
 
@@ -146,6 +163,17 @@ notification_schema:
       compression: true
 ```
 
+## `watch_endpoint`
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `sse_heartbeat_interval_sec` | `u64` | `30` | SSE heartbeat period. |
+| `connection_max_duration_sec` | `u64` | `3600` | Maximum live watch duration. |
+| `replay_batch_size` | `usize` | `100` | Historical fetch batch size. |
+| `max_historical_notifications` | `usize` | `10000` | Replay cap for historical delivery. |
+| `replay_batch_delay_ms` | `u64` | `100` | Delay between historical replay batches. |
+| `concurrent_notification_processing` | `usize` | `15` | Live stream CloudEvent conversion concurrency. |
+
 ## Environment override examples
 
 ```bash
@@ -155,4 +183,6 @@ AVISOSERVER_NOTIFICATION_BACKEND__KIND=jetstream
 AVISOSERVER_NOTIFICATION_BACKEND__JETSTREAM__NATS_URL=nats://localhost:4222
 AVISOSERVER_NOTIFICATION_BACKEND__JETSTREAM__TOKEN=secret
 AVISOSERVER_WATCH_ENDPOINT__REPLAY_BATCH_SIZE=200
+AVISOSERVER_AUTH__ENABLED=true
+AVISOSERVER_AUTH__JWT_SECRET=secret
 ```

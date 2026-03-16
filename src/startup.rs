@@ -6,6 +6,8 @@ use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
 use tracing_actix_web::TracingLogger;
 
+use crate::auth::middleware::AuthMiddleware;
+use crate::configuration::AuthSettings;
 use crate::openapi::ApiDoc;
 use crate::routes::admin::{delete_notification, wipe_all, wipe_stream};
 use crate::routes::home::homepage;
@@ -13,7 +15,10 @@ use crate::routes::replay::replay;
 use crate::routes::schema::{get_event_schema, get_notification_schema};
 use crate::routes::watch::watch;
 use crate::{
-    configuration::{Settings, validate_schema_storage_policy_support},
+    configuration::{
+        Settings, validate_auth_settings, validate_schema_storage_policy_support,
+        validate_stream_auth_settings,
+    },
     notification_backend::{NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify},
     telemetry::{SERVICE_NAME, SERVICE_VERSION},
@@ -47,6 +52,28 @@ impl Application {
             return Err(std::io::Error::other(e));
         }
 
+        if let Err(e) = validate_auth_settings(&configuration.auth) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.auth.validation.failed",
+                error = %e,
+                "Auth configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
+        if let Err(e) = validate_stream_auth_settings(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.auth.stream_validation.failed",
+                error = %e,
+                "Stream auth configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
         let address = format!(
             "{}:{}",
             configuration.application.host, configuration.application.port
@@ -54,7 +81,7 @@ impl Application {
         let listener = TcpListener::bind(&address)?;
         let port = listener.local_addr()?.port();
 
-        // notification notification_backend
+        // Initialize the configured notification backend before binding routes.
         let notification_backend = match build_backend(&configuration.notification_backend).await {
             Ok(backend) => backend,
             Err(e) => {
@@ -69,7 +96,12 @@ impl Application {
             }
         };
 
-        let server = run(listener, notification_backend.clone(), shutdown.clone())?;
+        let server = run(
+            listener,
+            notification_backend.clone(),
+            shutdown.clone(),
+            Arc::new(configuration.auth.clone()),
+        )?;
 
         // stop Actix when the cancellation token is triggered
         let handle = server.handle();
@@ -171,9 +203,10 @@ fn configure_ops_routes(cfg: &mut web::ServiceConfig) {
 }
 
 /// Configure API v1 routes
-fn configure_api_v1(cfg: &mut web::ServiceConfig) {
+fn configure_api_v1(cfg: &mut web::ServiceConfig, auth_settings: Arc<AuthSettings>) {
     cfg.service(
         web::scope("/api/v1")
+            .wrap(AuthMiddleware::with_arc_settings(auth_settings))
             .route("/notification", web::post().to(notify))
             .route("/watch", web::post().to(watch))
             .route("/replay", web::post().to(replay))
@@ -196,6 +229,7 @@ pub fn run(
     listener: TcpListener,
     notification_backend: Arc<dyn NotificationBackend>,
     shutdown: CancellationToken,
+    auth_settings: Arc<AuthSettings>,
 ) -> Result<Server, std::io::Error> {
     let server = HttpServer::new(move || {
         App::new()
@@ -205,7 +239,10 @@ pub fn run(
                     .url("/api-docs/openapi.json", ApiDoc::openapi()),
             )
             .configure(configure_ops_routes)
-            .configure(configure_api_v1)
+            .configure({
+                let auth_settings = Arc::clone(&auth_settings);
+                move |cfg| configure_api_v1(cfg, Arc::clone(&auth_settings))
+            })
             .app_data(web::Data::new(notification_backend.clone()))
             .app_data(web::Data::new(shutdown.clone()))
     })
