@@ -13,7 +13,7 @@ use serde_json::json;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::task::{Context, Poll};
-use tracing::warn;
+use tracing::{debug, warn};
 
 const WWW_AUTHENTICATE_BEARER: &str = "Bearer";
 const WWW_AUTHENTICATE_BASIC: &str = "Basic";
@@ -48,7 +48,7 @@ impl AuthMiddleware {
                         service_version = SERVICE_VERSION,
                         event_name = "auth.middleware.client.initialization.failed",
                         outcome = "error",
-                        error = %error,
+                        error = %sanitize_auth_error(&error),
                         "Failed to initialize auth-o-tron client; authenticated requests will fail closed"
                     );
                     None
@@ -142,7 +142,7 @@ where
                 match resolve_user(&req, &settings, auth_client.as_deref(), is_admin_path).await {
                     Ok(user) => user,
                     Err(failure) => {
-                        log_failure(req.path(), &failure);
+                        log_failure(req.path(), &failure, None);
                         return Ok(req
                             .into_response(failure.response(settings.mode).map_into_right_body()));
                     }
@@ -152,11 +152,17 @@ where
                 if is_admin_path && !user.is_admin(&settings.admin_roles) {
                     let failure =
                         AuthFailure::Forbidden("User does not have required administrative role");
-                    log_failure(req.path(), &failure);
+                    log_failure(req.path(), &failure, Some(&user.username));
                     return Ok(
                         req.into_response(failure.response(settings.mode).map_into_right_body())
                     );
                 }
+                debug!(
+                    event_name = "auth.middleware.user.resolved",
+                    username = %user.username,
+                    path = req.path(),
+                    "User authenticated"
+                );
                 req.extensions_mut().insert(user);
             }
 
@@ -257,7 +263,7 @@ fn append_www_authenticate_headers(
     }
 }
 
-fn log_failure(path: &str, failure: &AuthFailure) {
+fn log_failure(path: &str, failure: &AuthFailure, username: Option<&str>) {
     warn!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
@@ -265,6 +271,7 @@ fn log_failure(path: &str, failure: &AuthFailure) {
         outcome = "error",
         status_code = failure.status_code().as_u16(),
         reason = failure.reason(),
+        username = username.unwrap_or("-"),
         path = path,
         "Request denied by auth middleware"
     );
@@ -295,7 +302,7 @@ async fn authenticate_user(
                 service_version = SERVICE_VERSION,
                 event_name = "auth.middleware.remote.validation.failed",
                 outcome = "error",
-                error = %error,
+                error = %sanitize_auth_error(&error),
                 "auth-o-tron validation failed; authentication service unavailable"
             );
             Err(AuthFailure::ServiceUnavailable(
@@ -388,6 +395,12 @@ fn user_from_remote_token(token: &str, settings: &AuthSettings) -> Result<User, 
         .map_err(|_| AuthFailure::Unauthorized("Invalid or expired token"))?;
 
     User::try_from(claims).map_err(map_user_extraction_error)
+}
+
+/// Strips URL credentials from auth client errors before logging.
+fn sanitize_auth_error(error: &AuthClientError) -> String {
+    let raw = error.to_string();
+    crate::telemetry::redact_url_userinfo(&raw).unwrap_or(raw)
 }
 
 fn map_user_extraction_error(error: UserExtractionError) -> AuthFailure {
