@@ -63,6 +63,9 @@ static STREAMING_AUTH_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_TRUSTED_PROXY_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static TEST_GLOBAL_CONFIG: OnceLock<()> = OnceLock::new();
 
+#[cfg(feature = "ecmwf")]
+static MOCK_ECPDS_URL: LazyLock<String> = LazyLock::new(|| start_sync_mock_ecpds_server());
+
 struct RunningServer {
     address: String,
     _shutdown_token: CancellationToken,
@@ -476,6 +479,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             required: true,
             read_roles: None,
             write_roles: None,
+            plugins: None,
         });
         schema.insert("test_polygon_auth_any".to_string(), auth_any);
 
@@ -493,6 +497,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
                 vec!["admin".to_string()],
             )])),
             write_roles: None,
+            plugins: None,
         });
         schema.insert("test_polygon_auth_admin".to_string(), auth_admin);
 
@@ -506,6 +511,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             required: false,
             read_roles: None,
             write_roles: None,
+            plugins: None,
         });
         schema.insert("test_polygon_auth_optional".to_string(), auth_optional);
 
@@ -523,6 +529,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
                 "localrealm".to_string(),
                 vec!["producer".to_string()],
             )])),
+            plugins: None,
         });
         schema.insert("test_polygon_auth_write".to_string(), auth_write);
     }
@@ -572,6 +579,74 @@ fn base_test_settings() -> Settings {
     }
 }
 
+#[cfg(feature = "ecmwf")]
+fn start_sync_mock_ecpds_server() -> String {
+    use std::io::{BufRead, BufReader, Write};
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let write_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line.trim().is_empty() => break,
+                    Err(_) => break,
+                    _ => {}
+                }
+            }
+
+            let (status, body) = if request_line.contains("id=ecpds-unavailable") {
+                ("500 Internal Server Error", r#"{"error":"mock unavailable"}"#)
+            } else if request_line.contains("id=ecpds-user") {
+                ("200 OK", r#"{"destinationList":[{"name":"CIP","active":true},{"name":"FOO","active":true}],"success":"yes"}"#)
+            } else {
+                ("200 OK", r#"{"destinationList":[],"success":"yes"}"#)
+            };
+
+            let response = format!(
+                "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                status,
+                body.len(),
+                body
+            );
+            let mut writer = write_stream;
+            let _ = writer.write_all(response.as_bytes());
+        }
+    });
+
+    format!("http://{}", addr)
+}
+
+#[cfg(feature = "ecmwf")]
+fn ensure_ecpds_test_schemas(schema: &mut HashMap<String, EventSchema>) {
+    let mut diss_ecpds = build_dissemination_schema();
+    diss_ecpds
+        .topic
+        .as_mut()
+        .expect("dissemination schema must have topic")
+        .base = "diss_ecpds".to_string();
+    diss_ecpds.auth = Some(StreamAuthConfig {
+        required: true,
+        read_roles: None,
+        write_roles: None,
+        plugins: Some(vec!["ecpds".to_string()]),
+    });
+    schema.insert("dissemination_ecpds".to_string(), diss_ecpds);
+}
+
 fn ensure_test_global_config_initialized() {
     TEST_GLOBAL_CONFIG.get_or_init(|| {
         let mut configuration = base_test_settings();
@@ -579,8 +654,21 @@ fn ensure_test_global_config_initialized() {
         if let Some(schema) = configuration.notification_schema.as_mut() {
             apply_jetstream_test_polygon_js_policy(schema);
         }
-        // This initialization is process-global (OnceLock-backed in production code),
-        // so tests must install a deterministic superset schema exactly once.
+        #[cfg(feature = "ecmwf")]
+        {
+            LazyLock::force(&MOCK_ECPDS_URL);
+            configuration.ecpds = Some(aviso_ecmwf::config::EcpdsConfig {
+                username: "masteruser".to_string(),
+                password: "masterpass".to_string(),
+                target_field: "name".to_string(),
+                match_key: "destination".to_string(),
+                cache_ttl_seconds: 300,
+                servers: vec![MOCK_ECPDS_URL.clone()],
+            });
+            if let Some(schema) = configuration.notification_schema.as_mut() {
+                ensure_ecpds_test_schemas(schema);
+            }
+        }
         Settings::init_global_config(&configuration);
     });
 }

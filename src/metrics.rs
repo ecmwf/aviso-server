@@ -234,8 +234,16 @@ async fn metrics_handler(registry: web::Data<Registry>) -> HttpResponse {
 
 /// Collect default process metrics (CPU, memory, open FDs) when available.
 pub fn register_process_metrics(registry: &Registry) {
-    let pc = prometheus::process_collector::ProcessCollector::new(std::process::id() as i32, "");
-    let _ = registry.register(Box::new(pc));
+    #[cfg(target_os = "linux")]
+    {
+        let pc =
+            prometheus::process_collector::ProcessCollector::new(std::process::id() as i32, "");
+        let _ = registry.register(Box::new(pc));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = registry;
+    }
 }
 
 #[cfg(test)]
@@ -418,11 +426,13 @@ mod tests {
     fn register_process_metrics_does_not_panic() {
         let registry = Registry::new();
         register_process_metrics(&registry);
-        // Verify at least one process metric family is present.
-        let families = registry.gather();
-        assert!(
-            !families.is_empty(),
-            "process metrics should register at least one family"
-        );
+        #[cfg(target_os = "linux")]
+        {
+            let families = registry.gather();
+            assert!(
+                !families.is_empty(),
+                "process metrics should register at least one family"
+            );
+        }
     }
 }
