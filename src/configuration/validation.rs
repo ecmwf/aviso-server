@@ -290,6 +290,74 @@ fn validate_policy_fields(
     Ok(())
 }
 
+#[cfg(feature = "ecmwf")]
+pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
+    let ecpds_streams: Vec<&str> = settings
+        .notification_schema
+        .as_ref()
+        .map(|schema| {
+            schema
+                .iter()
+                .filter(|(_, event_schema)| {
+                    event_schema
+                        .auth
+                        .as_ref()
+                        .and_then(|a| a.plugins.as_ref())
+                        .map(|plugins| plugins.iter().any(|p| p == "ecpds"))
+                        .unwrap_or(false)
+                })
+                .map(|(name, _)| name.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if ecpds_streams.is_empty() {
+        return Ok(());
+    }
+
+    let ecpds_config = settings.ecpds.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Streams {:?} reference the 'ecpds' plugin but no 'ecpds' configuration section was found",
+            ecpds_streams
+        )
+    })?;
+
+    if ecpds_config.servers.is_empty() {
+        bail!("ecpds.servers must contain at least one server URL");
+    }
+    if ecpds_config.username.is_empty() {
+        bail!("ecpds.username must not be empty");
+    }
+    if ecpds_config.password.is_empty() {
+        bail!("ecpds.password must not be empty");
+    }
+    if ecpds_config.match_key.is_empty() {
+        bail!("ecpds.match_key must not be empty");
+    }
+
+    if let Some(schema) = &settings.notification_schema {
+        for stream_name in &ecpds_streams {
+            if let Some(event_schema) = schema.get(*stream_name) {
+                let key_order = event_schema
+                    .topic
+                    .as_ref()
+                    .map(|t| t.key_order.as_slice())
+                    .unwrap_or_default();
+                if !key_order.contains(&ecpds_config.match_key) {
+                    bail!(
+                        "ecpds.match_key '{}' not found in key_order {:?} for stream '{}'",
+                        ecpds_config.match_key,
+                        key_order,
+                        stream_name
+                    );
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

@@ -1,0 +1,10 @@
+=== cargo check --features ecmwf ===
+error: could not compile `aviso-server` (lib) due to 1 previous error
+(no errors besides pre-existing process_collector)
+
+=== cargo check (no features) ===
+error: could not compile `aviso-server` (lib) due to 1 previous error
+(no errors besides pre-existing process_collector)
+
+=== cd aviso-ecmwf && cargo check ===
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.52s

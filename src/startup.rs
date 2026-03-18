@@ -23,6 +23,8 @@ use crate::routes::home::homepage;
 use crate::routes::replay::replay;
 use crate::routes::schema::{get_event_schema, get_notification_schema};
 use crate::routes::watch::watch;
+#[cfg(feature = "ecmwf")]
+use crate::configuration::validate_ecpds_settings;
 use crate::{
     configuration::{
         Settings, validate_auth_settings, validate_schema_storage_policy_support,
@@ -91,6 +93,18 @@ impl Application {
                 event_name = "startup.metrics.validation.failed",
                 error = %e,
                 "Metrics configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
+        #[cfg(feature = "ecmwf")]
+        if let Err(e) = validate_ecpds_settings(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.ecpds.validation.failed",
+                error = %e,
+                "ECPDS configuration validation failed"
             );
             return Err(std::io::Error::other(e));
         }
