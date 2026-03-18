@@ -52,8 +52,24 @@ When enabled:
 | `required` | `bool` | — | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
 | `read_roles` | `map<string, string[]>` | — | Realm-scoped roles for read access (watch/replay). When omitted, any authenticated user can read. Use `["*"]` as the role list to grant realm-wide access. |
 | `write_roles` | `map<string, string[]>` | — | Realm-scoped roles for write access (notify). When omitted, only users matching global `admin_roles` can write. Use `["*"]` as the role list to grant realm-wide access. |
+| `plugins` | `string[]` | — | Optional list of authorization plugins to run after role-based checks. Currently supported: `"ecpds"` (requires `--features ecmwf` build). |
 
 See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
+
+## `ecpds`
+
+Optional ECPDS destination authorization. Only available when built with `--features ecmwf`. When configured, streams can reference the `"ecpds"` plugin in their `auth.plugins` list to enforce destination-level access control on `watch` and `replay` requests.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `username` | `string` | none | Service account username for ECPDS API authentication. |
+| `password` | `string` | none | Service account password. Redacted in debug output. |
+| `servers` | `string[]` | none | List of ECPDS server base URLs. All servers are queried in parallel; results are merged and deduplicated. |
+| `match_key` | `string` | none | Identifier field to match against the user's destination list (e.g. `"destination"`). |
+| `target_field` | `string` | `"name"` | JSON field to extract from each ECPDS destination record. |
+| `cache_ttl_seconds` | `u64` | `300` | How long (in seconds) to cache a user's destination list before re-fetching. |
+
+See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization) for setup and runtime behavior.
 
 ## `metrics`
 

@@ -159,6 +159,71 @@ Both `read_roles` and `write_roles` map realm names to role lists. A user's `rea
 
 When a per-stream `auth` block is present, `auth.required` must be explicitly set to either `true` or `false`.
 
+## ECPDS Destination Authorization
+
+When built with `--features ecmwf`, Aviso supports an optional authorization plugin that checks whether a user has access to a specific ECPDS destination before allowing `watch` or `replay` requests.
+
+### Enabling the plugin
+
+1. Build Aviso with the `ecmwf` feature:
+
+```bash
+cargo build --release --features ecmwf
+```
+
+2. Add a top-level `ecpds` section to your config with ECPDS service credentials:
+
+```yaml
+ecpds:
+  username: "ecpds-service-account"
+  password: "service-password"
+  servers:
+    - "https://ecpds-primary.ecmwf.int"
+    - "https://ecpds-secondary.ecmwf.int"
+  match_key: "destination"
+  target_field: "name"
+  cache_ttl_seconds: 300
+```
+
+3. Enable the plugin on a stream by adding `plugins: ["ecpds"]` to its `auth` block:
+
+```yaml
+notification_schema:
+  dissemination:
+    payload:
+      required: true
+    topic:
+      base: "diss"
+      key_order: ["destination", "target", "class", "expver", "domain", "date", "time", "stream", "step"]
+    auth:
+      required: true
+      read_roles:
+        ecmwf: ["*"]
+      plugins: ["ecpds"]
+```
+
+### How it works at runtime
+
+- On `watch` or `replay`, after standard role-based auth passes, the ECPDS plugin extracts the `match_key` value (e.g. `destination`) from the request identifier.
+- It queries all configured ECPDS servers in parallel for the user's authorized destination list, caching the result for `cache_ttl_seconds`.
+- If the requested destination is in the user's list, the request proceeds. Otherwise, a `403 Forbidden` is returned.
+- Admins (users matching global `admin_roles`) bypass the ECPDS check entirely.
+
+### Error responses
+
+| Code | HTTP Status | When |
+|------|-------------|------|
+| `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. |
+| `SERVICE_UNAVAILABLE` | `503` | All configured ECPDS servers are unreachable or returned errors. |
+
+### Caching
+
+Destination lists are cached per-user for `cache_ttl_seconds` (default: 300). During this window, subsequent requests for the same user skip the ECPDS query. Cache entries expire silently; the next request triggers a fresh fetch.
+
+The `notify` endpoint is not checked by the ECPDS plugin. Destination authorization only applies to read operations (`watch`, `replay`).
+
+For the full `ecpds` field reference, see the [`ecpds` section in Configuration Reference](./configuration-reference.md#ecpds).
+
 ## Admin Endpoints
 
 Admin endpoints always require authentication and one of the configured `admin_roles`, regardless of per-stream settings:
