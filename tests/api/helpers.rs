@@ -568,6 +568,7 @@ fn base_test_settings() -> Settings {
         watch_endpoint: WatchEndpointSettings::default(),
         auth: AuthSettings::default(),
         metrics: MetricsSettings::default(),
+        ecpds: None,
     }
 }
 

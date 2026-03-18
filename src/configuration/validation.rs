@@ -340,6 +340,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         }
     }
 
@@ -361,6 +362,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         }
     }
 
@@ -601,6 +603,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -666,6 +669,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -725,6 +729,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -973,6 +978,7 @@ mod tests {
                     required: true,
                     read_roles: None,
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1007,6 +1013,7 @@ mod tests {
                         vec!["reader".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1044,6 +1051,7 @@ mod tests {
                         "testrealm".to_string(),
                         vec!["producer".to_string()],
                     )])),
+                    plugins: None,
                 }),
             },
         );
@@ -1078,6 +1086,7 @@ mod tests {
                     required: true,
                     read_roles: None,
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1115,6 +1124,7 @@ mod tests {
                         vec!["reader".to_string(), " ".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1152,6 +1162,7 @@ mod tests {
                     required: true,
                     read_roles: Some(HashMap::new()),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1189,6 +1200,7 @@ mod tests {
                     required: true,
                     read_roles: None,
                     write_roles: Some(HashMap::new()),
+                    plugins: None,
                 }),
             },
         );
@@ -1226,6 +1238,7 @@ mod tests {
                     required: true,
                     read_roles: Some(HashMap::from([("testrealm".to_string(), vec![])])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1263,6 +1276,7 @@ mod tests {
                         vec!["reader".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1300,6 +1314,7 @@ mod tests {
                         vec!["reader".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1364,6 +1379,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics,
+            ecpds: None,
         }
     }
 

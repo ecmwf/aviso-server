@@ -54,6 +54,11 @@ tokio-util = "0.7"
 geo = "0.32"
 geo-types = "0.7"
 prometheus = { version = "0.13", features = ["process"] }
+aviso-ecmwf = { path = "aviso-ecmwf", optional = true }
+
+[features]
+default = []
+ecmwf = ["dep:aviso-ecmwf"]
 
 [[bench]]
 name = "constraint_matcher_benchmark"

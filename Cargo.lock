@@ -374,6 +374,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c08606f8c3cbf4ce6ec8e28fb0014a2c086708fe954eaa885384a6165172e7e8"
 
 [[package]]
+name = "aviso-ecmwf"
+version = "0.1.0"
+dependencies = [
+ "futures",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "aviso-server"
 version = "0.4.1"
 dependencies = [
@@ -382,6 +394,7 @@ dependencies = [
  "anyhow",
  "async-nats",
  "async-trait",
+ "aviso-ecmwf",
  "aviso-validators",
  "chrono",
  "cloudevents-sdk",

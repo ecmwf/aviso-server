@@ -177,6 +177,8 @@ pub struct StreamAuthConfig {
     pub required: bool,
     pub read_roles: Option<HashMap<String, Vec<String>>>,
     pub write_roles: Option<HashMap<String, Vec<String>>>,
+    #[serde(default)]
+    pub plugins: Option<Vec<String>>,
 }
 
 /// Client-facing schema shape for schema endpoints.
@@ -348,6 +350,13 @@ pub struct Settings {
     pub auth: AuthSettings,
     #[serde(default)]
     pub metrics: MetricsSettings,
+    // When ecmwf feature is enabled, deserialize EcpdsConfig
+    #[cfg(feature = "ecmwf")]
+    pub ecpds: Option<aviso_ecmwf::config::EcpdsConfig>,
+    // When disabled, silently absorb any 'ecpds' YAML key as raw JSON (no error)
+    #[cfg(not(feature = "ecmwf"))]
+    #[serde(default, rename = "ecpds")]
+    pub ecpds: Option<serde_json::Value>,
 }
 
 #[cfg(test)]
@@ -541,6 +550,7 @@ mod tests {
                     vec!["reader".to_string()],
                 )])),
                 write_roles: None,
+                plugins: None,
             }),
         };
 
@@ -615,5 +625,24 @@ mod tests {
             Some(["admin".to_string()].as_slice())
         );
         assert_eq!(settings.auth.timeout_ms, 1000);
+    }
+
+    #[test]
+    fn test_stream_auth_config_plugins_field() {
+        let config: StreamAuthConfig =
+            serde_json::from_str(r#"{"required": true, "plugins": ["ecpds"]}"#)
+                .expect("should deserialize StreamAuthConfig with plugins");
+
+        assert!(config.required);
+        assert_eq!(config.plugins, Some(vec!["ecpds".to_string()]));
+    }
+
+    #[test]
+    fn test_stream_auth_config_no_plugins() {
+        let config: StreamAuthConfig = serde_json::from_str(r#"{"required": true}"#)
+            .expect("should deserialize StreamAuthConfig without plugins");
+
+        assert!(config.required);
+        assert_eq!(config.plugins, None);
     }
 }

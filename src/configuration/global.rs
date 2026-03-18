@@ -16,6 +16,9 @@ static GLOBAL_LOGGING_SETTINGS: OnceLock<Option<LoggingSettings>> = OnceLock::ne
 static GLOBAL_APPLICATION_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::new();
 static GLOBAL_WATCH_SETTINGS: OnceLock<WatchEndpointSettings> = OnceLock::new();
 
+#[cfg(feature = "ecmwf")]
+static GLOBAL_ECPDS_CHECKER: OnceLock<Option<aviso_ecmwf::checker::EcpdsChecker>> = OnceLock::new();
+
 impl Settings {
     /// Stores read-mostly config in global immutable slots.
     ///
@@ -26,6 +29,15 @@ impl Settings {
         let _ = GLOBAL_LOGGING_SETTINGS.set(self.logging.clone());
         let _ = GLOBAL_APPLICATION_SETTINGS.set(self.application.clone());
         let _ = GLOBAL_WATCH_SETTINGS.set(self.watch_endpoint.clone());
+
+        #[cfg(feature = "ecmwf")]
+        {
+            let checker = self
+                .ecpds
+                .as_ref()
+                .map(aviso_ecmwf::checker::EcpdsChecker::new);
+            let _ = GLOBAL_ECPDS_CHECKER.set(checker);
+        }
 
         tracing::info!(
             service_name = SERVICE_NAME,
@@ -70,5 +82,12 @@ impl Settings {
             && GLOBAL_LOGGING_SETTINGS.get().is_some()
             && GLOBAL_APPLICATION_SETTINGS.get().is_some()
             && GLOBAL_WATCH_SETTINGS.get().is_some()
+    }
+
+    #[cfg(feature = "ecmwf")]
+    pub fn get_global_ecpds_checker() -> &'static Option<aviso_ecmwf::checker::EcpdsChecker> {
+        GLOBAL_ECPDS_CHECKER.get().expect(
+            "Global ECPDS checker not initialized. Call Settings::init_global_config() first.",
+        )
     }
 }
