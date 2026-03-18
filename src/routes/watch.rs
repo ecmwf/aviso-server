@@ -99,6 +99,17 @@ pub async fn watch(
     tracing::Span::current().record("event_type", &context.event_type);
     record_start_at_span_fields(context.start_at);
 
+    #[cfg(feature = "ecmwf")]
+    if let Err(response) = crate::routes::streaming::enforce_ecpds_auth(
+        &http_request,
+        &context.event_type,
+        &context.canonicalized_params,
+    )
+    .await
+    {
+        return response;
+    }
+
     // Use canonicalized filtering parameters produced by request processing.
     let filtering_params = Arc::new(context.canonicalized_params.clone());
     let filtering_constraints = Arc::new(context.identifier_constraints.clone());

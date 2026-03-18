@@ -115,3 +115,101 @@ fn forbidden_response(message: &str) -> HttpResponse {
         "message": message
     }))
 }
+
+#[cfg(feature = "ecmwf")]
+fn ecpds_service_unavailable_response() -> HttpResponse {
+    HttpResponse::ServiceUnavailable().json(serde_json::json!({
+        "code": "SERVICE_UNAVAILABLE",
+        "error": "service_unavailable",
+        "message": "ECPDS service is unaccessible"
+    }))
+}
+
+/// Enforce ECPDS destination-based authorization for read operations.
+///
+/// Called AFTER process_request() so canonicalized_params are available.
+/// Only runs if the stream schema has `plugins: ["ecpds"]` in its auth config.
+/// Admins bypass this check.
+#[cfg(feature = "ecmwf")]
+pub async fn enforce_ecpds_auth(
+    req: &HttpRequest,
+    event_type: &str,
+    canonicalized_params: &std::collections::HashMap<String, String>,
+) -> Result<(), HttpResponse> {
+    let has_ecpds_plugin = Settings::get_global_notification_schema()
+        .as_ref()
+        .and_then(|schema_map| schema_map.get(event_type))
+        .and_then(|schema| schema.auth.as_ref())
+        .and_then(|auth| auth.plugins.as_ref())
+        .map(|plugins| plugins.iter().any(|p| p == "ecpds"))
+        .unwrap_or(false);
+
+    if !has_ecpds_plugin {
+        return Ok(());
+    }
+
+    let Some(user) = get_user(req) else {
+        return Ok(());
+    };
+
+    let Some(auth_settings) = req.app_data::<web::Data<Arc<AuthSettings>>>() else {
+        tracing::error!("AuthSettings not found in app_data — server misconfiguration");
+        return Err(HttpResponse::InternalServerError().json(serde_json::json!({
+            "code": "INTERNAL_ERROR",
+            "error": "internal_error",
+            "message": "Server configuration error"
+        })));
+    };
+
+    if user.is_admin(&auth_settings.admin_roles) {
+        tracing::debug!("Admin user '{}' bypassing ECPDS check", user.username);
+        return Ok(());
+    }
+
+    let Some(checker) = Settings::get_global_ecpds_checker().as_ref() else {
+        tracing::error!(
+            "ECPDS plugin referenced in stream '{}' but no checker configured",
+            event_type
+        );
+        return Err(HttpResponse::InternalServerError().json(serde_json::json!({
+            "code": "INTERNAL_ERROR",
+            "error": "internal_error",
+            "message": "Server configuration error"
+        })));
+    };
+
+    tracing::info!(
+        username = %user.username,
+        event_type = %event_type,
+        "Checking ECPDS destination access"
+    );
+
+    match checker.check_access(&user.username, canonicalized_params).await {
+        Ok(()) => Ok(()),
+        Err(aviso_ecmwf::EcpdsError::AccessDenied(msg)) => {
+            tracing::warn!(
+                username = %user.username,
+                event_type = %event_type,
+                "ECPDS access denied: {}",
+                msg
+            );
+            Err(forbidden_response(&msg))
+        }
+        Err(aviso_ecmwf::EcpdsError::ServiceUnavailable) => {
+            tracing::warn!(
+                username = %user.username,
+                event_type = %event_type,
+                "ECPDS service unavailable"
+            );
+            Err(ecpds_service_unavailable_response())
+        }
+        Err(e) => {
+            tracing::error!("Unexpected ECPDS error: {}", e);
+            Err(HttpResponse::InternalServerError().json(serde_json::json!({
+                "code": "INTERNAL_ERROR",
+                "error": "internal_error",
+                "message": "ECPDS check failed unexpectedly"
+            })))
+        }
+    }
+}

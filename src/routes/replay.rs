@@ -90,6 +90,17 @@ pub async fn replay(
     tracing::Span::current().record("event_type", &context.event_type);
     record_start_at_span_fields(context.start_at);
 
+    #[cfg(feature = "ecmwf")]
+    if let Err(response) = crate::routes::streaming::enforce_ecpds_auth(
+        &http_request,
+        &context.event_type,
+        &context.canonicalized_params,
+    )
+    .await
+    {
+        return response;
+    }
+
     let display_topic = decode_subject_for_display(&context.topic);
     let setup_started_at = Instant::now();
 
