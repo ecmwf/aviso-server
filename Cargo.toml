@@ -1,9 +1,18 @@
 [package]
 name = "aviso-server"
-version = "0.4.0"
+version = "0.4.1"
 edition = "2024"
 authors = ["Samet Demir <samet.demir@ecmwf.int>",
            "James Hawkes <james.hawkes@ecmwf.int>"]
+description = "Notification service for data-driven workflows with live and replay APIs."
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/ecmwf/aviso-server"
+homepage = "https://github.com/ecmwf/aviso-server"
+documentation = "https://sites.ecmwf.int/docs/aviso-server/main/"
+exclude = [
+  "aviso-validators/**",
+]
 
 [lib]
 path = "src/lib.rs"
@@ -13,7 +22,7 @@ path = "src/main.rs"
 name = "aviso_server"
 
 [dependencies]
-aviso-validators = { path = "aviso-validators", features = ["openapi"] }
+aviso-validators = { version = "0.4.1", path = "aviso-validators", features = ["openapi"] }
 actix-web = "4.12"
 actix-files = "0.6"
 utoipa = { version = "5.4", features = ["actix_extras", "chrono", "uuid"] }
