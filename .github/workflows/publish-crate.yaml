@@ -14,34 +14,93 @@ on:
 
 jobs:
   verify-tag:
-    if: ${{ github.event_name == 'push' }}
+    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' }}
     runs-on: ubuntu-latest
     outputs:
       should_publish: ${{ steps.check.outputs.should_publish }}
     steps:
       - uses: actions/checkout@v4
-      - name: Verify tag matches Cargo.toml version
+      - name: Verify tag matches crate versions
         id: check
         run: |
           set -euo pipefail
-          cargo_version=$(grep '^version\s*=' Cargo.toml | head -1 | cut -d'"' -f2)
-          if [ -z "${cargo_version}" ]; then
-            echo "::error::Could not extract version from Cargo.toml"
+          server_version=$(grep '^version\s*=' Cargo.toml | head -1 | cut -d'"' -f2)
+          validators_version=$(grep '^version\s*=' aviso-validators/Cargo.toml | head -1 | cut -d'"' -f2)
+
+          if [ -z "${server_version}" ] || [ -z "${validators_version}" ]; then
+            echo "::error::Could not extract crate versions from Cargo manifests"
             exit 1
           fi
-          if [ "${{ github.ref_name }}" = "${cargo_version}" ]; then
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" != "true" ]; then
+            echo "::error::Manual non-dry-run publishing is disabled. Create and push a matching release tag to publish."
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
+            exit 1
+          fi
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            echo "should_publish=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ github.ref_name }}" = "${server_version}" ] && [ "${{ github.ref_name }}" = "${validators_version}" ]; then
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Tag ${{ github.ref_name }} does not match Cargo.toml version ${cargo_version}, skipping."
+            echo "Tag ${{ github.ref_name }} does not match crate versions (server=${server_version}, validators=${validators_version}), skipping."
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
           fi
 
-  publish:
+  publish-validators:
     needs: verify-tag
-    if: ${{ always() && (needs.verify-tag.outputs.should_publish == 'true' || github.event_name == 'workflow_dispatch') }}
-    uses: ecmwf/reusable-workflows/.github/workflows/publish-rust-crate.yml@d48e754288c678873883a58bfbf26876d394094d
-    with:
-      dry-run: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run || false }}
-      run-checks: false
-    secrets:
-      cargo_registry_token: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    if: ${{ needs.verify-tag.outputs.should_publish == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish aviso-validators
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            cargo publish -p aviso-validators --dry-run
+          else
+            cargo publish -p aviso-validators
+          fi
+
+  publish-server:
+    needs: publish-validators
+    if: ${{ needs.publish-validators.result == 'success' && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish aviso-server
+        run: |
+          set -euo pipefail
+          for attempt in 1 2 3 4 5 6 7 8 9 10; do
+            if cargo publish -p aviso-server 2>publish-server.err; then
+              exit 0
+            fi
+
+            if grep -Eq 'no matching package named `aviso-validators` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-validators` as a dependency' publish-server.err; then
+              echo "Dependency/index not ready yet (attempt ${attempt}/10); retrying in 30s..."
+              sleep 30
+              continue
+            fi
+
+            cat publish-server.err >&2
+            exit 1
+          done
+
+          cat publish-server.err >&2
+          echo "Timed out waiting for aviso-validators to become available on crates.io." >&2
+          exit 1

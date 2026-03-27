@@ -2,6 +2,12 @@
 name = "aviso-validators"
 version = "0.4.1"
 edition = "2024"
+description = "Validation primitives used by aviso-server for identifier and payload checks."
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/ecmwf/aviso-server"
+homepage = "https://github.com/ecmwf/aviso-server"
+documentation = "https://docs.rs/aviso-validators"
 
 [dependencies]
 anyhow = "1.0.100"
