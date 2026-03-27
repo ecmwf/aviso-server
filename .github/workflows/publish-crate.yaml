@@ -65,10 +65,21 @@ jobs:
       - name: Publish aviso-validators
         run: |
           set -euo pipefail
+          ERR_FILE="${RUNNER_TEMP}/publish-validators.err"
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
             cargo publish --manifest-path aviso-validators/Cargo.toml --dry-run
           else
-            cargo publish --manifest-path aviso-validators/Cargo.toml
+            if cargo publish --manifest-path aviso-validators/Cargo.toml 2>"${ERR_FILE}"; then
+              exit 0
+            fi
+
+            if grep -q 'already exists on crates.io index' "${ERR_FILE}"; then
+              echo "aviso-validators is already published for this version; continuing."
+              exit 0
+            fi
+
+            cat "${ERR_FILE}" >&2
+            exit 1
           fi
 
   publish-server:
