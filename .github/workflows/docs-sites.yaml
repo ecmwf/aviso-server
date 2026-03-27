@@ -113,7 +113,7 @@ jobs:
     with:
       artifact-id: ${{ needs.build-docs.outputs.artifact-id }}
       space: docs
-      name: avisoserver
+      name: aviso-server
       path: pull-requests
       link-tag: PREVIEW-PUBLISH-AVISO-DOCS
       link-text: "Docs Preview"
@@ -126,7 +126,7 @@ jobs:
     uses: ecmwf/reusable-workflows/.github/workflows/pr-preview-unpublish.yml@5a1d1cb1442aa632f7823e4088d639b980627afc
     with:
       space: docs
-      name: avisoserver
+      name: aviso-server
       path: pull-requests
     secrets:
       sites-token: ${{ secrets.ECMWF_SITES_DOCS_AVISOSERVER_TOKEN }}
@@ -196,7 +196,7 @@ jobs:
     with:
       artifact-id: ${{ needs.build-docs.outputs.artifact-id }}
       space: docs
-      name: avisoserver
+      name: aviso-server
       path: ""
       # Use sanitized id from compute-publish-id.
       id: ${{ needs.compute-publish-id.outputs.publish-id }}
