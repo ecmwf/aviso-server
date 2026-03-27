@@ -66,9 +66,9 @@ jobs:
         run: |
           set -euo pipefail
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
-            cargo publish -p aviso-validators --dry-run
+            cargo publish --manifest-path aviso-validators/Cargo.toml --dry-run
           else
-            cargo publish -p aviso-validators
+            cargo publish --manifest-path aviso-validators/Cargo.toml
           fi
 
   publish-server:
@@ -87,7 +87,7 @@ jobs:
         run: |
           set -euo pipefail
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if cargo publish -p aviso-server 2>publish-server.err; then
+            if cargo publish --manifest-path Cargo.toml 2>publish-server.err; then
               exit 0
             fi
 
