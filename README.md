@@ -7,6 +7,12 @@
 </div>
 
 <p align="center">
+  <a href="https://crates.io/crates/aviso-server">
+    <img src="https://img.shields.io/crates/v/aviso-server.svg" alt="Crates.io Badge">
+  </a>
+  <a href="https://sites.ecmwf.int/docs/aviso-server/main/">
+    <img src="https://img.shields.io/badge/docs-online-blue" alt="Docs Badge">
+  </a>
   <a href="https://github.com/ecmwf/codex/raw/refs/heads/main/ESEE">
     <img src="https://github.com/ecmwf/codex/raw/refs/heads/main/ESEE/foundation_badge.svg" alt="Foundation Badge">
   </a>
