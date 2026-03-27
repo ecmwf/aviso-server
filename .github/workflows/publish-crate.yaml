@@ -86,26 +86,28 @@ jobs:
       - name: Publish aviso-server
         run: |
           set -euo pipefail
+          ERR_FILE="${RUNNER_TEMP}/publish-server.err"
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
             cargo publish --manifest-path Cargo.toml --dry-run
             exit 0
           fi
 
           for attempt in 1 2 3 4 5 6 7 8 9 10; do
-            if cargo publish --manifest-path Cargo.toml 2>publish-server.err; then
+            if cargo publish --manifest-path Cargo.toml 2>"${ERR_FILE}"; then
               exit 0
             fi
 
-            if grep -Eq 'no matching package named `aviso-validators` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-validators` as a dependency' publish-server.err; then
+            if grep -Eq 'no matching package named `aviso-validators` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-validators` as a dependency' "${ERR_FILE}"; then
               echo "Dependency/index not ready yet (attempt ${attempt}/10); retrying in 30s..."
               sleep 30
               continue
             fi
 
-            cat publish-server.err >&2
+            cat "${ERR_FILE}" >&2
             exit 1
           done
 
-          cat publish-server.err >&2
+          cat "${ERR_FILE}" >&2
           echo "Timed out waiting for aviso-validators to become available on crates.io." >&2
           exit 1
