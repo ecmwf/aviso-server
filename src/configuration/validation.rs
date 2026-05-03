@@ -420,32 +420,77 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
     if ecpds_config.servers.is_empty() {
         bail!("ecpds.servers must contain at least one server URL");
     }
+    for (i, server) in ecpds_config.servers.iter().enumerate() {
+        if server.trim().is_empty() {
+            bail!("ecpds.servers[{i}] must not be empty or whitespace");
+        }
+        let parsed = reqwest::Url::parse(server).map_err(|e| {
+            anyhow::anyhow!("ecpds.servers[{i}] '{server}' is not a valid URL: {e}")
+        })?;
+        match parsed.scheme() {
+            "http" | "https" => {}
+            other => bail!(
+                "ecpds.servers[{i}] '{server}' has unsupported scheme '{other}'; \
+                 only 'http' and 'https' are accepted"
+            ),
+        }
+    }
     if ecpds_config.username.is_empty() {
         bail!("ecpds.username must not be empty");
     }
     if ecpds_config.password.is_empty() {
         bail!("ecpds.password must not be empty");
     }
+    if ecpds_config.target_field.is_empty() {
+        bail!("ecpds.target_field must not be empty");
+    }
     if ecpds_config.match_key.is_empty() {
         bail!("ecpds.match_key must not be empty");
+    }
+    if ecpds_config.match_key.chars().any(|c| {
+        c.is_whitespace() || c == '/' || c == '\0'
+    }) {
+        bail!(
+            "ecpds.match_key '{}' must be a single bare identifier name; \
+             whitespace, '/' and NUL are not allowed",
+            ecpds_config.match_key
+        );
+    }
+    if ecpds_config.cache_ttl_seconds == 0 {
+        bail!("ecpds.cache_ttl_seconds must be greater than zero");
     }
 
     if let Some(schema) = &settings.notification_schema {
         for stream_name in &ecpds_streams {
-            if let Some(event_schema) = schema.get(*stream_name) {
-                let key_order = event_schema
-                    .topic
-                    .as_ref()
-                    .map(|t| t.key_order.as_slice())
-                    .unwrap_or_default();
-                if !key_order.contains(&ecpds_config.match_key) {
-                    bail!(
-                        "ecpds.match_key '{}' not found in key_order {:?} for stream '{}'",
-                        ecpds_config.match_key,
-                        key_order,
-                        stream_name
-                    );
-                }
+            let Some(event_schema) = schema.get(*stream_name) else {
+                continue;
+            };
+            let key_order = event_schema
+                .topic
+                .as_ref()
+                .map(|t| t.key_order.as_slice())
+                .unwrap_or_default();
+            if !key_order.contains(&ecpds_config.match_key) {
+                bail!(
+                    "ecpds.match_key '{}' not found in key_order {:?} for stream '{}'",
+                    ecpds_config.match_key,
+                    key_order,
+                    stream_name
+                );
+            }
+            match event_schema.identifier.get(&ecpds_config.match_key) {
+                None => bail!(
+                    "ecpds.match_key '{}' has no identifier rule defined in schema '{}'",
+                    ecpds_config.match_key,
+                    stream_name
+                ),
+                Some(field) if !field.is_required() => bail!(
+                    "ecpds.match_key '{}' must be required: true in schema '{}' \
+                     so the value is guaranteed to be present before the plugin runs",
+                    ecpds_config.match_key,
+                    stream_name
+                ),
+                Some(_) => {}
             }
         }
     }
@@ -1715,5 +1760,183 @@ mod tests {
             },
         );
         validate_metrics_settings(&settings).expect("distinct port should pass");
+    }
+
+    #[cfg(feature = "ecpds")]
+    mod ecpds {
+        use super::super::validate_ecpds_settings;
+        use super::basic_settings_with_schema;
+        use crate::configuration::{
+            EventSchema, IdentifierFieldConfig, Settings, StreamAuthConfig, TopicConfig,
+        };
+        use aviso_validators::ValidationRules;
+        use std::collections::HashMap;
+
+        fn ecpds_protected_schema(match_key: &str, match_required: bool) -> HashMap<String, EventSchema> {
+            let mut identifier = HashMap::new();
+            identifier.insert(
+                match_key.to_string(),
+                IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
+                    required: match_required,
+                    max_length: None,
+                }),
+            );
+            let mut schema = HashMap::new();
+            schema.insert(
+                "diss".to_string(),
+                EventSchema {
+                    payload: None,
+                    topic: Some(TopicConfig {
+                        base: "diss".to_string(),
+                        key_order: vec![match_key.to_string()],
+                    }),
+                    endpoint: None,
+                    identifier,
+                    storage_policy: None,
+                    auth: Some(StreamAuthConfig {
+                        required: true,
+                        read_roles: None,
+                        write_roles: None,
+                        plugins: Some(vec!["ecpds".to_string()]),
+                    }),
+                },
+            );
+            schema
+        }
+
+        fn settings_with_ecpds(
+            ecpds: aviso_ecpds::config::EcpdsConfig,
+            match_key: &str,
+            match_required: bool,
+        ) -> Settings {
+            let mut s = basic_settings_with_schema(ecpds_protected_schema(match_key, match_required));
+            s.ecpds = Some(ecpds);
+            s
+        }
+
+        fn good_ecpds_config() -> aviso_ecpds::config::EcpdsConfig {
+            aviso_ecpds::config::EcpdsConfig {
+                username: "u".to_string(),
+                password: "p".to_string(),
+                target_field: "name".to_string(),
+                match_key: "destination".to_string(),
+                cache_ttl_seconds: 300,
+                servers: vec!["http://localhost".to_string()],
+            }
+        }
+
+        #[test]
+        fn accepts_well_formed_settings() {
+            let settings = settings_with_ecpds(good_ecpds_config(), "destination", true);
+            validate_ecpds_settings(&settings).expect("should accept");
+        }
+
+        #[test]
+        fn rejects_when_plugin_referenced_but_no_ecpds_section() {
+            let mut s =
+                basic_settings_with_schema(ecpds_protected_schema("destination", true));
+            s.ecpds = None;
+            let err = validate_ecpds_settings(&s).expect_err("must fail");
+            assert!(
+                err.to_string().contains("no 'ecpds' configuration section"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_invalid_server_url() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["not a url".to_string()];
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(err.to_string().contains("not a valid URL"), "got: {err}");
+        }
+
+        #[test]
+        fn rejects_unsupported_scheme() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["ftp://example.com".to_string()];
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(err.to_string().contains("unsupported scheme 'ftp'"), "got: {err}");
+        }
+
+        #[test]
+        fn accepts_https_and_http_schemes() {
+            for url in ["http://a.example", "https://b.example"] {
+                let mut cfg = good_ecpds_config();
+                cfg.servers = vec![url.to_string()];
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .unwrap_or_else(|e| panic!("should accept {url}: {e}"));
+            }
+        }
+
+        #[test]
+        fn rejects_zero_cache_ttl() {
+            let mut cfg = good_ecpds_config();
+            cfg.cache_ttl_seconds = 0;
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("cache_ttl_seconds must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_empty_target_field() {
+            let mut cfg = good_ecpds_config();
+            cfg.target_field = String::new();
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string().contains("target_field must not be empty"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_match_key_with_whitespace() {
+            let mut cfg = good_ecpds_config();
+            cfg.match_key = "dest ination".to_string();
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("must be a single bare identifier name"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_match_key_not_in_key_order() {
+            let cfg = good_ecpds_config();
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "other_key", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string().contains("not found in key_order"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_match_key_not_required_in_schema() {
+            let cfg = good_ecpds_config();
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", false))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("must be required: true in schema"),
+                "got: {err}"
+            );
+        }
     }
 }
