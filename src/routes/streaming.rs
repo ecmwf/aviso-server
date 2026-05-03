@@ -126,15 +126,24 @@ fn ecpds_service_unavailable_response() -> HttpResponse {
 
 /// Enforce ECPDS destination-based authorization for read operations.
 ///
-/// Called AFTER process_request() so canonicalized_params are available.
-/// Only runs if the stream schema has `plugins: ["ecpds"]` in its auth config.
-/// Admins bypass this check.
+/// Called AFTER `process_request()` so canonicalized_params are available.
+/// Only runs if the stream schema has `plugins: ["ecpds"]` in its auth
+/// config. Admins bypass this check.
+///
+/// All decisions emit structured tracing events under the
+/// `auth.ecpds.check.*` namespace and increment the corresponding
+/// outcome label on `aviso_ecpds_access_decisions_total`. Cache hits
+/// and misses additionally increment `aviso_ecpds_cache_hits_total` /
+/// `aviso_ecpds_cache_misses_total`.
 #[cfg(feature = "ecpds")]
 pub async fn enforce_ecpds_auth(
     req: &HttpRequest,
     event_type: &str,
     canonicalized_params: &std::collections::HashMap<String, String>,
 ) -> Result<(), HttpResponse> {
+    use crate::metrics::AppMetrics;
+    use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
+
     let has_ecpds_plugin = Settings::get_global_notification_schema()
         .as_ref()
         .and_then(|schema_map| schema_map.get(event_type))
@@ -151,8 +160,26 @@ pub async fn enforce_ecpds_auth(
         return Ok(());
     };
 
+    let metrics = req.app_data::<web::Data<AppMetrics>>().cloned();
+    let record_decision = |outcome: &str| {
+        if let Some(m) = metrics.as_ref() {
+            m.ecpds
+                .access_decisions_total
+                .with_label_values(&[outcome])
+                .inc();
+        }
+    };
+
     let Some(auth_settings) = req.app_data::<web::Data<Arc<AuthSettings>>>() else {
-        tracing::error!("AuthSettings not found in app_data — server misconfiguration");
+        tracing::error!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_name = "auth.ecpds.check.error",
+            event_type = %event_type,
+            error_kind = "missing_auth_settings",
+            "AuthSettings not found in app_data — server misconfiguration"
+        );
+        record_decision("error");
         return Err(HttpResponse::InternalServerError().json(serde_json::json!({
             "code": "INTERNAL_ERROR",
             "error": "internal_error",
@@ -161,15 +188,28 @@ pub async fn enforce_ecpds_auth(
     };
 
     if user.is_admin(&auth_settings.admin_roles) {
-        tracing::debug!("Admin user '{}' bypassing ECPDS check", user.username);
+        tracing::debug!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_name = "auth.ecpds.admin.bypass",
+            event_type = %event_type,
+            username = %user.username,
+            "Admin user bypassing ECPDS check"
+        );
+        record_decision("admin_bypass");
         return Ok(());
     }
 
     let Some(checker) = Settings::get_global_ecpds_checker().as_ref() else {
         tracing::error!(
-            "ECPDS plugin referenced in stream '{}' but no checker configured",
-            event_type
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_name = "auth.ecpds.check.error",
+            event_type = %event_type,
+            error_kind = "missing_checker",
+            "ECPDS plugin referenced but no checker configured"
         );
+        record_decision("error");
         return Err(HttpResponse::InternalServerError().json(serde_json::json!({
             "code": "INTERNAL_ERROR",
             "error": "internal_error",
@@ -177,41 +217,88 @@ pub async fn enforce_ecpds_auth(
         })));
     };
 
-    tracing::info!(
-        username = %user.username,
+    tracing::debug!(
+        service_name = SERVICE_NAME,
+        service_version = SERVICE_VERSION,
+        event_name = "auth.ecpds.check.started",
         event_type = %event_type,
-        "Checking ECPDS destination access"
+        username = %user.username,
+        "Starting ECPDS destination access check"
     );
 
-    match checker.check_access(&user.username, canonicalized_params).await {
+    let result = checker
+        .check_access(&user.username, canonicalized_params)
+        .await;
+
+    if let Some(m) = metrics.as_ref() {
+        m.ecpds.cache_size.set(checker.cache_entry_count() as i64);
+    }
+
+    match result {
         Ok(cache_outcome) => {
-            tracing::debug!(
-                username = %user.username,
+            if let Some(m) = metrics.as_ref() {
+                match cache_outcome {
+                    aviso_ecpds::cache::CacheOutcome::Hit => m.ecpds.cache_hits_total.inc(),
+                    aviso_ecpds::cache::CacheOutcome::Miss => m.ecpds.cache_misses_total.inc(),
+                }
+            }
+            tracing::info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "auth.ecpds.check.allowed",
                 event_type = %event_type,
+                username = %user.username,
                 cache_outcome = ?cache_outcome,
                 "ECPDS access allowed"
             );
+            record_decision("allow");
             Ok(())
         }
         Err(aviso_ecpds::EcpdsError::AccessDenied(msg)) => {
+            let reason = if msg.contains("Required field") {
+                "match_key_missing"
+            } else {
+                "destination_not_in_user_list"
+            };
             tracing::warn!(
-                username = %user.username,
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "auth.ecpds.check.denied",
                 event_type = %event_type,
-                "ECPDS access denied: {}",
-                msg
+                username = %user.username,
+                reason,
+                "ECPDS access denied"
             );
+            record_decision(if reason == "match_key_missing" {
+                "deny_match_key_missing"
+            } else {
+                "deny_destination"
+            });
             Err(forbidden_response(&msg))
         }
         Err(aviso_ecpds::EcpdsError::ServiceUnavailable) => {
             tracing::warn!(
-                username = %user.username,
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "auth.ecpds.check.unavailable",
                 event_type = %event_type,
+                username = %user.username,
                 "ECPDS service unavailable"
             );
+            record_decision("unavailable");
             Err(ecpds_service_unavailable_response())
         }
         Err(e) => {
-            tracing::error!("Unexpected ECPDS error: {}", e);
+            tracing::error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "auth.ecpds.check.error",
+                event_type = %event_type,
+                username = %user.username,
+                error = %e,
+                "Unexpected ECPDS error"
+            );
+            record_decision("error");
             Err(HttpResponse::InternalServerError().json(serde_json::json!({
                 "code": "INTERNAL_ERROR",
                 "error": "internal_error",
