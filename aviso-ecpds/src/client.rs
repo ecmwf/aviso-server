@@ -25,11 +25,10 @@ pub enum EcpdsError {
 
     /// An ECPDS server returned a body that could not be parsed against
     /// our expected schema. Logged with the offending server index.
-    #[error("Invalid response from ECPDS server {server_index}: {source}")]
+    #[error("Invalid response from ECPDS server {server_index}: {message}")]
     InvalidResponse {
         server_index: usize,
-        #[source]
-        source: serde_json::Error,
+        message: String,
     },
 
     /// One of the configured server URLs failed to parse at construction
@@ -47,6 +46,15 @@ pub enum EcpdsError {
     /// configuration error at startup.
     #[error("HTTP client construction failed: {0}")]
     HttpClientBuild(#[source] reqwest::Error),
+
+    /// In-flight HTTP request to an ECPDS server failed (network
+    /// error, timeout, non-success status). Captured per-server so
+    /// the merge layer can decide policy outcome.
+    #[error("HTTP request to ECPDS server {server_index} failed: {message}")]
+    Http {
+        server_index: usize,
+        message: String,
+    },
 }
 
 #[derive(Deserialize)]
@@ -110,12 +118,17 @@ impl EcpdsClient {
     /// [`EcpdsError::ServiceUnavailable`] when the policy's success
     /// criterion is not met.
     pub async fn fetch_user_destinations(&self, username: &str) -> Result<Vec<String>, EcpdsError> {
+        if self.servers.is_empty() {
+            return Err(EcpdsError::ServiceUnavailable);
+        }
+
         let futures = self
             .servers
             .iter()
-            .map(|server| self.fetch_from_server(server, username));
+            .enumerate()
+            .map(|(i, server)| self.fetch_from_server(i, server, username));
 
-        let results = join_all(futures).await;
+        let results: Vec<Result<Vec<String>, EcpdsError>> = join_all(futures).await;
 
         for (i, result) in results.iter().enumerate() {
             match result {
@@ -143,8 +156,11 @@ impl EcpdsClient {
 
     fn merge_strict(
         &self,
-        results: Vec<Result<Vec<String>, String>>,
+        results: Vec<Result<Vec<String>, EcpdsError>>,
     ) -> Result<Vec<String>, EcpdsError> {
+        if results.is_empty() {
+            return Err(EcpdsError::ServiceUnavailable);
+        }
         let mut canonical: Option<HashSet<String>> = None;
         for (i, result) in results.into_iter().enumerate() {
             let dests = result.map_err(|_| EcpdsError::ServiceUnavailable)?;
@@ -163,14 +179,15 @@ impl EcpdsClient {
                 }
             }
         }
-        let mut destinations: Vec<String> = canonical.unwrap_or_default().into_iter().collect();
+        let mut destinations: Vec<String> =
+            canonical.expect("non-empty results invariant").into_iter().collect();
         destinations.sort();
         Ok(destinations)
     }
 
     fn merge_any_success(
         &self,
-        results: Vec<Result<Vec<String>, String>>,
+        results: Vec<Result<Vec<String>, EcpdsError>>,
     ) -> Result<Vec<String>, EcpdsError> {
         let mut server_sets: Vec<HashSet<String>> = Vec::new();
         for result in results {
@@ -185,13 +202,17 @@ impl EcpdsClient {
         let union: HashSet<String> = server_sets.iter().flat_map(|s| s.iter().cloned()).collect();
         let all_agree = server_sets.iter().all(|s| s == &union);
         if !all_agree && server_sets.len() > 1 {
-            let max_div: usize = server_sets
-                .iter()
-                .map(|s| union.symmetric_difference(s).count())
-                .max()
-                .unwrap_or(0);
+            let mut max_pair_div: usize = 0;
+            for i in 0..server_sets.len() {
+                for j in (i + 1)..server_sets.len() {
+                    let d = server_sets[i].symmetric_difference(&server_sets[j]).count();
+                    if d > max_pair_div {
+                        max_pair_div = d;
+                    }
+                }
+            }
             warn!(
-                divergence_count = max_div,
+                pairwise_divergence_count = max_pair_div,
                 reachable_servers = server_sets.len(),
                 "auth.ecpds.fetch.divergence"
             );
@@ -221,26 +242,40 @@ impl EcpdsClient {
 
     async fn fetch_from_server(
         &self,
+        server_index: usize,
         server: &reqwest::Url,
         username: &str,
-    ) -> Result<Vec<String>, String> {
-        let url = Self::build_request_url(server, username)?;
+    ) -> Result<Vec<String>, EcpdsError> {
+        let url = Self::build_request_url(server, username).map_err(|message| {
+            EcpdsError::Http {
+                server_index,
+                message,
+            }
+        })?;
         let response = self
             .http
             .get(url)
             .basic_auth(&self.username, Some(&self.password))
             .send()
             .await
-            .map_err(|e| e.to_string())?;
+            .map_err(|e| EcpdsError::Http {
+                server_index,
+                message: e.to_string(),
+            })?;
 
-        if !response.status().is_success() {
-            return Err(format!("HTTP {}", response.status()));
+        let status = response.status();
+        if !status.is_success() {
+            return Err(EcpdsError::Http {
+                server_index,
+                message: format!("HTTP {status}"),
+            });
         }
 
-        let ecpds_resp: EcpdsResponse = response
-            .json()
-            .await
-            .map_err(|e| format!("JSON parse error: {e}"))?;
+        let ecpds_resp: EcpdsResponse =
+            response.json().await.map_err(|e| EcpdsError::InvalidResponse {
+                server_index,
+                message: e.to_string(),
+            })?;
 
         let total = ecpds_resp.destination_list.len();
         let destinations: Vec<String> = ecpds_resp

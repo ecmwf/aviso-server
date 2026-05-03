@@ -162,14 +162,6 @@ pub fn validate_stream_plugin_settings(settings: &Settings) -> Result<()> {
             );
         }
 
-        if !stream_auth.required {
-            bail!(
-                "Schema '{event_type}' auth.plugins is set but auth.required is false. \
-                 Plugins only run after stream-level auth passes; \
-                 set auth.required=true or remove the plugins list."
-            );
-        }
-
         for plugin in plugins {
             if !KNOWN_PLUGINS.contains(&plugin.as_str()) {
                 bail!(
@@ -187,6 +179,14 @@ pub fn validate_stream_plugin_settings(settings: &Settings) -> Result<()> {
                      remove the plugin from this stream's auth config."
                 );
             }
+        }
+
+        if !stream_auth.required {
+            bail!(
+                "Schema '{event_type}' auth.plugins is set but auth.required is false. \
+                 Plugins only run after stream-level auth passes; \
+                 set auth.required=true or remove the plugins list."
+            );
         }
     }
 
@@ -433,6 +433,15 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
                 "ecpds.servers[{i}] '{server}' has unsupported scheme '{other}'; \
                  only 'http' and 'https' are accepted"
             ),
+        }
+        if parsed.query().is_some() {
+            bail!(
+                "ecpds.servers[{i}] '{server}' must not contain a query string; \
+                 the plugin appends '?id=<username>' itself"
+            );
+        }
+        if parsed.fragment().is_some() {
+            bail!("ecpds.servers[{i}] '{server}' must not contain a URL fragment");
         }
     }
     if ecpds_config.username.is_empty() {
@@ -1374,6 +1383,7 @@ mod tests {
         assert!(msg.contains("Known plugins"), "got: {msg}");
     }
 
+    #[cfg(feature = "ecpds")]
     #[test]
     fn rejects_ecpds_plugin_when_auth_required_is_false() {
         let settings = basic_settings_with_schema(schema_with_plugins(
@@ -1382,10 +1392,25 @@ mod tests {
             false,
         ));
         let err = validate_stream_plugin_settings(&settings).expect_err(
-            "ecpds plugin paired with auth.required=false must be rejected on any feature config",
+            "ecpds plugin paired with auth.required=false must be rejected when feature is on",
         );
         assert!(
             err.to_string().contains("auth.required is false"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_plugin_error_takes_precedence_over_required_false() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["typo".to_string()]),
+            false,
+        ));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("unknown-plugin error must surface ahead of required-false");
+        assert!(
+            err.to_string().contains("unknown plugin 'typo'"),
             "got: {err}"
         );
     }
@@ -1874,6 +1899,32 @@ mod tests {
                 validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
                     .expect_err("must fail");
             assert!(err.to_string().contains("unsupported scheme 'ftp'"), "got: {err}");
+        }
+
+        #[test]
+        fn rejects_server_url_with_query_string() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["http://example.com/?already=set".to_string()];
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string().contains("must not contain a query string"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_server_url_with_fragment() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["http://example.com/#frag".to_string()];
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string().contains("must not contain a URL fragment"),
+                "got: {err}"
+            );
         }
 
         #[test]

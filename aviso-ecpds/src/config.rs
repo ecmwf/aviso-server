@@ -139,6 +139,9 @@ mod tests {
         assert_eq!(config.cache_ttl_seconds, 300);
         assert_eq!(config.target_field, "name");
         assert_eq!(config.max_entries, 10_000);
+        assert_eq!(config.request_timeout_seconds, 30);
+        assert_eq!(config.connect_timeout_seconds, 5);
+        assert_eq!(config.partial_outage_policy, PartialOutagePolicy::Strict);
     }
 
     #[test]

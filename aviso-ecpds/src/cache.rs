@@ -110,19 +110,35 @@ impl DestinationCache {
 
 /// Reconstruct an [`EcpdsError`] from a shared reference. Used when
 /// moka's single-flight fans out the same error to multiple waiters
-/// and only the last waiter receives the unique `Arc`. Variants whose
-/// source type is not `Clone` (e.g. wrapped `reqwest::Error`) collapse
-/// to an `AccessDenied`-shaped fallback that preserves the `Display`
-/// text so the route layer's error mapping still produces a sensible
-/// HTTP response.
+/// and only the last waiter receives the unique `Arc`.
+///
+/// Variants whose source type is not `Clone` (wrapped
+/// `reqwest::Error`, `url::ParseError`) collapse to
+/// [`EcpdsError::ServiceUnavailable`] — the route layer maps that to
+/// HTTP 503, which is the right semantics when an upstream call
+/// failed. Collapsing to `AccessDenied` would incorrectly surface as
+/// HTTP 403 to waiters, suggesting the user lacks permission when
+/// the real cause was a service-side error.
 fn clone_ecpds_error(err: &EcpdsError) -> EcpdsError {
     match err {
         EcpdsError::ServiceUnavailable => EcpdsError::ServiceUnavailable,
         EcpdsError::AccessDenied(msg) => EcpdsError::AccessDenied(msg.clone()),
-        EcpdsError::HttpClientBuild(_)
-        | EcpdsError::InvalidServerUrl { .. }
-        | EcpdsError::InvalidResponse { .. } => {
-            EcpdsError::AccessDenied(format!("upstream error: {err}"))
+        EcpdsError::Http {
+            server_index,
+            message,
+        } => EcpdsError::Http {
+            server_index: *server_index,
+            message: message.clone(),
+        },
+        EcpdsError::InvalidResponse {
+            server_index,
+            message,
+        } => EcpdsError::InvalidResponse {
+            server_index: *server_index,
+            message: message.clone(),
+        },
+        EcpdsError::HttpClientBuild(_) | EcpdsError::InvalidServerUrl { .. } => {
+            EcpdsError::ServiceUnavailable
         }
     }
 }
@@ -276,6 +292,41 @@ mod tests {
             calls.load(Ordering::SeqCst),
             2,
             "second call must reach upstream because the error was not cached"
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_error_fan_out_yields_503_to_all_waiters() {
+        let cache = Arc::new(DestinationCache::new(300, 1000));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let cache = cache.clone();
+            let calls = calls.clone();
+            handles.push(tokio::spawn(async move {
+                cache
+                    .try_get_or_fetch("doomed-racer", move || {
+                        let calls = calls.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            Err(EcpdsError::ServiceUnavailable)
+                        }
+                    })
+                    .await
+            }));
+        }
+        for handle in handles {
+            let result = handle.await.unwrap();
+            assert!(
+                matches!(result, Err(EcpdsError::ServiceUnavailable)),
+                "all waiters must observe ServiceUnavailable, never AccessDenied"
+            );
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "fetch must run exactly once even when it fails"
         );
     }
 
