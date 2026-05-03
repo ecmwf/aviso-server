@@ -76,7 +76,8 @@ impl EcpdsClient {
     /// re-parse them.
     pub fn new(config: &EcpdsConfig) -> Result<Self, EcpdsError> {
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(config.request_timeout_seconds))
+            .connect_timeout(std::time::Duration::from_secs(config.connect_timeout_seconds))
             .build()
             .map_err(EcpdsError::HttpClientBuild)?;
 
@@ -280,6 +281,8 @@ mod tests {
             match_key: "destination".to_string(),
             cache_ttl_seconds: 300,
             max_entries: 1000,
+            request_timeout_seconds: 30,
+            connect_timeout_seconds: 5,
             partial_outage_policy: PartialOutagePolicy::Strict,
             servers,
         }

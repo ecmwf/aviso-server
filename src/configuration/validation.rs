@@ -459,6 +459,15 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
     if ecpds_config.cache_ttl_seconds == 0 {
         bail!("ecpds.cache_ttl_seconds must be greater than zero");
     }
+    if ecpds_config.max_entries == 0 {
+        bail!("ecpds.max_entries must be greater than zero");
+    }
+    if ecpds_config.request_timeout_seconds == 0 {
+        bail!("ecpds.request_timeout_seconds must be greater than zero");
+    }
+    if ecpds_config.connect_timeout_seconds == 0 {
+        bail!("ecpds.connect_timeout_seconds must be greater than zero");
+    }
 
     if let Some(schema) = &settings.notification_schema {
         for stream_name in &ecpds_streams {
@@ -1822,6 +1831,8 @@ mod tests {
                 match_key: "destination".to_string(),
                 cache_ttl_seconds: 300,
             max_entries: 10_000,
+            request_timeout_seconds: 30,
+            connect_timeout_seconds: 5,
             partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
                 servers: vec!["http://localhost".to_string()],
             }
@@ -1885,6 +1896,48 @@ mod tests {
             assert!(
                 err.to_string()
                     .contains("cache_ttl_seconds must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_zero_max_entries() {
+            let mut cfg = good_ecpds_config();
+            cfg.max_entries = 0;
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("max_entries must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_zero_request_timeout() {
+            let mut cfg = good_ecpds_config();
+            cfg.request_timeout_seconds = 0;
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("request_timeout_seconds must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_zero_connect_timeout() {
+            let mut cfg = good_ecpds_config();
+            cfg.connect_timeout_seconds = 0;
+            let err =
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("connect_timeout_seconds must be greater than zero"),
                 "got: {err}"
             );
         }

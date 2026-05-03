@@ -13,6 +13,14 @@ fn default_max_entries() -> u64 {
     10_000
 }
 
+fn default_request_timeout() -> u64 {
+    30
+}
+
+fn default_connect_timeout() -> u64 {
+    5
+}
+
 /// How to merge per-server destination lists when more than one ECPDS
 /// server is configured.
 ///
@@ -68,6 +76,10 @@ pub struct EcpdsConfig {
     pub cache_ttl_seconds: u64,
     #[serde(default = "default_max_entries")]
     pub max_entries: u64,
+    #[serde(default = "default_request_timeout")]
+    pub request_timeout_seconds: u64,
+    #[serde(default = "default_connect_timeout")]
+    pub connect_timeout_seconds: u64,
     #[serde(default = "default_partial_outage_policy")]
     pub partial_outage_policy: PartialOutagePolicy,
     pub servers: Vec<String>,
@@ -82,6 +94,8 @@ impl fmt::Debug for EcpdsConfig {
             .field("match_key", &self.match_key)
             .field("cache_ttl_seconds", &self.cache_ttl_seconds)
             .field("max_entries", &self.max_entries)
+            .field("request_timeout_seconds", &self.request_timeout_seconds)
+            .field("connect_timeout_seconds", &self.connect_timeout_seconds)
             .field("partial_outage_policy", &self.partial_outage_policy)
             .field("servers", &self.servers)
             .finish()
@@ -101,6 +115,8 @@ mod tests {
             match_key: "destination".to_string(),
             cache_ttl_seconds: 300,
             max_entries: 10_000,
+            request_timeout_seconds: 30,
+            connect_timeout_seconds: 5,
             partial_outage_policy: PartialOutagePolicy::Strict,
             servers: vec!["http://server1.example.com".to_string()],
         };
