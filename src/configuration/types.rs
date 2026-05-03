@@ -351,10 +351,10 @@ pub struct Settings {
     #[serde(default)]
     pub metrics: MetricsSettings,
     // When ecmwf feature is enabled, deserialize EcpdsConfig
-    #[cfg(feature = "ecmwf")]
-    pub ecpds: Option<aviso_ecmwf::config::EcpdsConfig>,
+    #[cfg(feature = "ecpds")]
+    pub ecpds: Option<aviso_ecpds::config::EcpdsConfig>,
     // When disabled, silently absorb any 'ecpds' YAML key as raw JSON (no error)
-    #[cfg(not(feature = "ecmwf"))]
+    #[cfg(not(feature = "ecpds"))]
     #[serde(default, rename = "ecpds")]
     pub ecpds: Option<serde_json::Value>,
 }

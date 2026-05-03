@@ -107,7 +107,7 @@ const KNOWN_PLUGINS: &[&str] = &["ecpds"];
 /// if the plugin is always available regardless of feature configuration.
 fn plugin_required_feature(name: &str) -> Option<&'static str> {
     match name {
-        "ecpds" => Some("ecmwf"),
+        "ecpds" => Some("ecpds"),
         _ => None,
     }
 }
@@ -115,7 +115,7 @@ fn plugin_required_feature(name: &str) -> Option<&'static str> {
 /// Compile-time table of Cargo features this binary knows about, paired
 /// with whether each is currently enabled. Add a new row when a new
 /// feature-gated plugin is introduced.
-const COMPILED_FEATURES: &[(&str, bool)] = &[("ecmwf", cfg!(feature = "ecmwf"))];
+const COMPILED_FEATURES: &[(&str, bool)] = &[("ecpds", cfg!(feature = "ecpds"))];
 
 /// Returns whether a given Cargo feature flag is currently compiled into
 /// this binary. Used by [`validate_stream_plugin_settings`] to fail-close
@@ -385,7 +385,7 @@ fn validate_policy_fields(
     Ok(())
 }
 
-#[cfg(feature = "ecmwf")]
+#[cfg(feature = "ecpds")]
 pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
     let ecpds_streams: Vec<&str> = settings
         .notification_schema
@@ -1336,31 +1336,31 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "ecmwf"))]
+    #[cfg(not(feature = "ecpds"))]
     #[test]
-    fn rejects_ecpds_plugin_when_ecmwf_feature_is_off() {
+    fn rejects_ecpds_plugin_when_ecpds_feature_is_off() {
         let settings = basic_settings_with_schema(schema_with_plugins(
             "diss",
             Some(vec!["ecpds".to_string()]),
             true,
         ));
         let err = validate_stream_plugin_settings(&settings)
-            .expect_err("ecpds plugin must be rejected when ecmwf feature is off");
+            .expect_err("ecpds plugin must be rejected when ecpds feature is off");
         let msg = err.to_string();
-        assert!(msg.contains("requires the 'ecmwf' Cargo feature"), "got: {msg}");
-        assert!(msg.contains("--features ecmwf"), "got: {msg}");
+        assert!(msg.contains("requires the 'ecpds' Cargo feature"), "got: {msg}");
+        assert!(msg.contains("--features ecpds"), "got: {msg}");
     }
 
-    #[cfg(feature = "ecmwf")]
+    #[cfg(feature = "ecpds")]
     #[test]
-    fn accepts_ecpds_plugin_when_ecmwf_feature_is_on() {
+    fn accepts_ecpds_plugin_when_ecpds_feature_is_on() {
         let settings = basic_settings_with_schema(schema_with_plugins(
             "diss",
             Some(vec!["ecpds".to_string()]),
             true,
         ));
         validate_stream_plugin_settings(&settings)
-            .expect("ecpds plugin with required=true must be accepted when ecmwf feature is on");
+            .expect("ecpds plugin with required=true must be accepted when ecpds feature is on");
     }
 
     #[test]

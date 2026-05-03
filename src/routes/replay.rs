@@ -90,7 +90,7 @@ pub async fn replay(
     tracing::Span::current().record("event_type", &context.event_type);
     record_start_at_span_fields(context.start_at);
 
-    #[cfg(feature = "ecmwf")]
+    #[cfg(feature = "ecpds")]
     if let Err(response) = crate::routes::streaming::enforce_ecpds_auth(
         &http_request,
         &context.event_type,

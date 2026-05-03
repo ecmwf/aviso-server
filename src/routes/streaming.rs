@@ -115,7 +115,7 @@ fn forbidden_response(message: &str) -> HttpResponse {
     }))
 }
 
-#[cfg(feature = "ecmwf")]
+#[cfg(feature = "ecpds")]
 fn ecpds_service_unavailable_response() -> HttpResponse {
     HttpResponse::ServiceUnavailable().json(serde_json::json!({
         "code": "SERVICE_UNAVAILABLE",
@@ -129,7 +129,7 @@ fn ecpds_service_unavailable_response() -> HttpResponse {
 /// Called AFTER process_request() so canonicalized_params are available.
 /// Only runs if the stream schema has `plugins: ["ecpds"]` in its auth config.
 /// Admins bypass this check.
-#[cfg(feature = "ecmwf")]
+#[cfg(feature = "ecpds")]
 pub async fn enforce_ecpds_auth(
     req: &HttpRequest,
     event_type: &str,
@@ -185,7 +185,7 @@ pub async fn enforce_ecpds_auth(
 
     match checker.check_access(&user.username, canonicalized_params).await {
         Ok(()) => Ok(()),
-        Err(aviso_ecmwf::EcpdsError::AccessDenied(msg)) => {
+        Err(aviso_ecpds::EcpdsError::AccessDenied(msg)) => {
             tracing::warn!(
                 username = %user.username,
                 event_type = %event_type,
@@ -194,7 +194,7 @@ pub async fn enforce_ecpds_auth(
             );
             Err(forbidden_response(&msg))
         }
-        Err(aviso_ecmwf::EcpdsError::ServiceUnavailable) => {
+        Err(aviso_ecpds::EcpdsError::ServiceUnavailable) => {
             tracing::warn!(
                 username = %user.username,
                 event_type = %event_type,

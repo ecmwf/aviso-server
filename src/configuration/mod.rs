@@ -26,5 +26,5 @@ pub use validation::{
     validate_auth_settings, validate_metrics_settings, validate_schema_storage_policy_support,
     validate_stream_auth_settings, validate_stream_plugin_settings,
 };
-#[cfg(feature = "ecmwf")]
+#[cfg(feature = "ecpds")]
 pub use validation::validate_ecpds_settings;

@@ -63,7 +63,7 @@ static STREAMING_AUTH_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_TRUSTED_PROXY_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static TEST_GLOBAL_CONFIG: OnceLock<()> = OnceLock::new();
 
-#[cfg(feature = "ecmwf")]
+#[cfg(feature = "ecpds")]
 static MOCK_ECPDS_URL: LazyLock<String> = LazyLock::new(start_sync_mock_ecpds_server);
 
 struct RunningServer {
@@ -579,7 +579,7 @@ fn base_test_settings() -> Settings {
     }
 }
 
-#[cfg(feature = "ecmwf")]
+#[cfg(feature = "ecpds")]
 fn start_sync_mock_ecpds_server() -> String {
     use std::io::{BufRead, BufReader, Write};
 
@@ -630,7 +630,7 @@ fn start_sync_mock_ecpds_server() -> String {
     format!("http://{}", addr)
 }
 
-#[cfg(feature = "ecmwf")]
+#[cfg(feature = "ecpds")]
 fn ensure_ecpds_test_schemas(schema: &mut HashMap<String, EventSchema>) {
     let mut diss_ecpds = build_dissemination_schema();
     diss_ecpds
@@ -654,10 +654,10 @@ fn ensure_test_global_config_initialized() {
         if let Some(schema) = configuration.notification_schema.as_mut() {
             apply_jetstream_test_polygon_js_policy(schema);
         }
-        #[cfg(feature = "ecmwf")]
+        #[cfg(feature = "ecpds")]
         {
             LazyLock::force(&MOCK_ECPDS_URL);
-            configuration.ecpds = Some(aviso_ecmwf::config::EcpdsConfig {
+            configuration.ecpds = Some(aviso_ecpds::config::EcpdsConfig {
                 username: "masteruser".to_string(),
                 password: "masterpass".to_string(),
                 target_field: "name".to_string(),
