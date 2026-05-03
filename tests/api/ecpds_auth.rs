@@ -1,9 +1,10 @@
-use crate::helpers::spawn_streaming_test_app_with_auth;
+use crate::helpers::{mock_ecpds, spawn_streaming_test_app_with_auth};
 use aviso_server::auth::JwtClaims;
 use chrono::Utc;
 use jsonwebtoken::{EncodingKey, Header, encode};
 use serde_json::json;
 use std::collections::HashMap;
+
 
 fn ecpds_token(username: &str, roles: &[&str]) -> String {
     let claims = JwtClaims {
@@ -212,5 +213,128 @@ async fn watch_ecpds_returns_503_when_all_servers_fail() {
     assert_eq!(
         response.status(),
         reqwest::StatusCode::SERVICE_UNAVAILABLE
+    );
+}
+
+#[tokio::test]
+async fn watch_ecpds_caches_per_user_exactly_one_upstream_call() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    let username = "ecpds-user-cache-test";
+    let token = ecpds_token(username, &["reader"]);
+    let mock = mock_ecpds();
+    let before = mock.count_for(username);
+
+    for _ in 0..3 {
+        let response = client
+            .post(format!("{}/api/v1/watch", app.address))
+            .header("Content-Type", "application/json")
+            .header("Authorization", format!("Bearer {token}"))
+            .json(&diss_ecpds_watch_body("CIP"))
+            .send()
+            .await
+            .expect("watch request should complete");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+    }
+
+    let after = mock.count_for(username);
+    assert_eq!(
+        after - before,
+        1,
+        "cache must coalesce 3 sequential requests for {username} into a single upstream fetch"
+    );
+}
+
+#[tokio::test]
+async fn watch_ecpds_concurrent_requests_coalesce() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let username = "ecpds-user-stampede-test";
+    let token = ecpds_token(username, &["reader"]);
+    let mock = mock_ecpds();
+    let before = mock.count_for(username);
+
+    let mut handles = Vec::new();
+    for _ in 0..10 {
+        let address = app.address.clone();
+        let token = token.clone();
+        handles.push(tokio::spawn(async move {
+            reqwest::Client::new()
+                .post(format!("{}/api/v1/watch", address))
+                .header("Content-Type", "application/json")
+                .header("Authorization", format!("Bearer {token}"))
+                .json(&diss_ecpds_watch_body("CIP"))
+                .send()
+                .await
+        }));
+    }
+
+    for handle in handles {
+        let response = handle
+            .await
+            .expect("task must join")
+            .expect("watch request should complete");
+        assert_eq!(response.status(), reqwest::StatusCode::OK);
+    }
+
+    let after = mock.count_for(username);
+    assert_eq!(
+        after - before,
+        1,
+        "single-flight must coalesce 10 concurrent requests for {username} into a single upstream fetch"
+    );
+}
+
+#[tokio::test]
+async fn watch_ecpds_username_with_special_chars_handled() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    let token = ecpds_token("ecpds-user-special-chars", &["reader"]);
+
+    let response = client
+        .post(format!("{}/api/v1/watch", app.address))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&diss_ecpds_watch_body("CIP"))
+        .send()
+        .await
+        .expect("watch request should complete");
+
+    assert_eq!(response.status(), reqwest::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn notify_on_ecpds_protected_stream_does_not_invoke_ecpds() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    let username = "admin-user-notify-bypass";
+    let token = ecpds_token(username, &["admin"]);
+    let mock = mock_ecpds();
+    let before = mock.count_for(username);
+
+    let response = client
+        .post(format!("{}/api/v1/notification", app.address))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "event_type": "dissemination_ecpds",
+            "identifier": {
+                "destination": "any-value-not-checked",
+                "class": "od"
+            },
+            "payload": "irrelevant"
+        }))
+        .send()
+        .await
+        .expect("notify request should complete");
+
+    assert!(
+        response.status().is_success() || response.status().is_client_error(),
+        "notify on ECPDS-protected stream must not 503; got {}",
+        response.status()
+    );
+    let after = mock.count_for(username);
+    assert_eq!(
+        after, before,
+        "notify must NOT invoke the ECPDS plugin under any policy"
     );
 }

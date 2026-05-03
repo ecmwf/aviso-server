@@ -64,7 +64,34 @@ static STREAMING_TRUSTED_PROXY_SERVER: OnceCell<RunningServer> = OnceCell::const
 static TEST_GLOBAL_CONFIG: OnceLock<()> = OnceLock::new();
 
 #[cfg(feature = "ecpds")]
-static MOCK_ECPDS_URL: LazyLock<String> = LazyLock::new(start_sync_mock_ecpds_server);
+static MOCK_ECPDS: LazyLock<MockEcpds> = LazyLock::new(start_sync_mock_ecpds_server);
+
+#[cfg(feature = "ecpds")]
+pub struct MockEcpds {
+    pub url: String,
+    pub per_user_count: std::sync::Arc<std::sync::Mutex<HashMap<String, usize>>>,
+}
+
+#[cfg(feature = "ecpds")]
+impl MockEcpds {
+    /// Snapshot of the request count for a specific username (matched
+    /// by exact `id=` query parameter substring). Used by tests that
+    /// run in parallel — global request_count is racy across tests.
+    pub fn count_for(&self, username: &str) -> usize {
+        self.per_user_count
+            .lock()
+            .expect("mock counter lock")
+            .get(username)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+#[cfg(feature = "ecpds")]
+pub fn mock_ecpds() -> &'static MockEcpds {
+    LazyLock::force(&MOCK_ECPDS);
+    &MOCK_ECPDS
+}
 
 struct RunningServer {
     address: String,
@@ -580,11 +607,15 @@ fn base_test_settings() -> Settings {
 }
 
 #[cfg(feature = "ecpds")]
-fn start_sync_mock_ecpds_server() -> String {
+fn start_sync_mock_ecpds_server() -> MockEcpds {
     use std::io::{BufRead, BufReader, Write};
+    use std::sync::Arc;
+    use std::sync::Mutex;
 
     let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let addr = listener.local_addr().unwrap();
+    let per_user: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let per_user_thread = per_user.clone();
 
     std::thread::spawn(move || {
         for stream in listener.incoming().flatten() {
@@ -608,10 +639,31 @@ fn start_sync_mock_ecpds_server() -> String {
                 }
             }
 
+            // Per-username counter is the source of truth used by
+            // tests that assert exact upstream-call counts.
+            // Indexed by decoded `id=...` so URL-encoded usernames
+            // (with `+`, `%20`, etc.) collapse to the same key.
+            if let Some(query_start) = request_line.find("?id=") {
+                let after_id = &request_line[query_start + 4..];
+                let id_end = after_id
+                    .find([' ', '&', '\r', '\n'])
+                    .unwrap_or(after_id.len());
+                let raw_id = &after_id[..id_end];
+                let decoded_id = url_decode(raw_id);
+                let mut map = per_user_thread.lock().expect("counter lock");
+                *map.entry(decoded_id).or_insert(0) += 1;
+            }
+
             let (status, body) = if request_line.contains("id=ecpds-unavailable") {
                 ("500 Internal Server Error", r#"{"error":"mock unavailable"}"#)
-            } else if request_line.contains("id=ecpds-user") {
-                ("200 OK", r#"{"destinationList":[{"name":"CIP","active":true},{"name":"FOO","active":true}],"success":"yes"}"#)
+            } else if request_line.contains("id=ecpds-user")
+                || request_line.contains("id=u%2Bs+er%26name")
+                || request_line.contains("id=u%2Bs%20er%26name")
+            {
+                (
+                    "200 OK",
+                    r#"{"destinationList":[{"name":"CIP","active":true},{"name":"FOO","active":true}],"success":"yes"}"#,
+                )
             } else {
                 ("200 OK", r#"{"destinationList":[],"success":"yes"}"#)
             };
@@ -627,7 +679,37 @@ fn start_sync_mock_ecpds_server() -> String {
         }
     });
 
-    format!("http://{}", addr)
+    MockEcpds {
+        url: format!("http://{}", addr),
+        per_user_count: per_user,
+    }
+}
+
+#[cfg(feature = "ecpds")]
+fn url_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'+' {
+            out.push(' ');
+            i += 1;
+        } else if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8 as char);
+                i += 3;
+            } else {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
 }
 
 #[cfg(feature = "ecpds")]
@@ -656,7 +738,7 @@ fn ensure_test_global_config_initialized() {
         }
         #[cfg(feature = "ecpds")]
         {
-            LazyLock::force(&MOCK_ECPDS_URL);
+            LazyLock::force(&MOCK_ECPDS);
             configuration.ecpds = Some(aviso_ecpds::config::EcpdsConfig {
                 username: "masteruser".to_string(),
                 password: "masterpass".to_string(),
@@ -667,7 +749,7 @@ fn ensure_test_global_config_initialized() {
             request_timeout_seconds: 30,
             connect_timeout_seconds: 5,
             partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
-                servers: vec![MOCK_ECPDS_URL.clone()],
+                servers: vec![MOCK_ECPDS.url.clone()],
             });
             if let Some(schema) = configuration.notification_schema.as_mut() {
                 ensure_ecpds_test_schemas(schema);
