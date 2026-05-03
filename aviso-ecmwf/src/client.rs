@@ -57,10 +57,10 @@ impl EcpdsClient {
     /// Query all configured ECPDS servers in parallel for a user's destinations,
     /// merge and deduplicate the results.
     pub async fn fetch_user_destinations(&self, username: &str) -> Result<Vec<String>, EcpdsError> {
-        let futures = self.servers.iter().map(|server| {
-            let url = format!("{}/ecpds/v1/destination/list?id={}", server, username);
-            self.fetch_from_server(url)
-        });
+        let futures = self
+            .servers
+            .iter()
+            .map(|server| self.fetch_from_server(server, username));
 
         let results = join_all(futures).await;
 
@@ -93,10 +93,32 @@ impl EcpdsClient {
         Ok(all_destinations)
     }
 
-    async fn fetch_from_server(&self, url: String) -> Result<Vec<String>, String> {
+    /// Build a request URL by safely appending the destination-list path to
+    /// `server` and adding the username as a percent-encoded query parameter.
+    ///
+    /// Accepts servers with or without a path component (e.g. a reverse-proxy
+    /// prefix like `https://proxy.example/ecpds-api/`). Trailing slashes are
+    /// normalised so paths join cleanly.
+    fn build_request_url(server: &str, username: &str) -> Result<reqwest::Url, String> {
+        let mut url = reqwest::Url::parse(server)
+            .map_err(|e| format!("invalid server URL '{server}': {e}"))?;
+        url.path_segments_mut()
+            .map_err(|()| format!("server URL '{server}' cannot be a base"))?
+            .pop_if_empty()
+            .extend(["ecpds", "v1", "destination", "list"]);
+        url.query_pairs_mut().append_pair("id", username);
+        Ok(url)
+    }
+
+    async fn fetch_from_server(
+        &self,
+        server: &str,
+        username: &str,
+    ) -> Result<Vec<String>, String> {
+        let url = Self::build_request_url(server, username)?;
         let response = self
             .http
-            .get(&url)
+            .get(url)
             .basic_auth(&self.username, Some(&self.password))
             .send()
             .await
@@ -240,5 +262,94 @@ mod tests {
         let result = client.fetch_user_destinations("testuser").await.unwrap();
         assert!(result.contains(&"DEST1".to_string()));
         assert!(!result.contains(&"CIP".to_string()));
+    }
+
+    #[test]
+    fn build_request_url_percent_encodes_special_chars() {
+        let url = EcpdsClient::build_request_url(
+            "http://example.com",
+            "user+name with spaces&extra=injected",
+        )
+        .expect("URL must build");
+        let s = url.as_str();
+        assert!(s.starts_with("http://example.com/ecpds/v1/destination/list?id="));
+        assert!(s.contains("user%2Bname"), "got {s}");
+        assert!(s.contains("with+spaces") || s.contains("with%20spaces"), "got {s}");
+        assert!(s.contains("%26extra%3Dinjected"), "got {s}");
+        assert!(!s.contains("&extra=injected"), "got {s}");
+    }
+
+    #[test]
+    fn build_request_url_handles_reverse_proxy_prefix_with_trailing_slash() {
+        let url =
+            EcpdsClient::build_request_url("https://proxy.example/ecpds-api/", "alice").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://proxy.example/ecpds-api/ecpds/v1/destination/list?id=alice"
+        );
+    }
+
+    #[test]
+    fn build_request_url_handles_reverse_proxy_prefix_without_trailing_slash() {
+        let url =
+            EcpdsClient::build_request_url("https://proxy.example/ecpds-api", "alice").unwrap();
+        assert_eq!(
+            url.as_str(),
+            "https://proxy.example/ecpds-api/ecpds/v1/destination/list?id=alice"
+        );
+    }
+
+    #[test]
+    fn build_request_url_rejects_invalid_server() {
+        assert!(EcpdsClient::build_request_url("not a url", "alice").is_err());
+    }
+
+    #[tokio::test]
+    async fn fetch_url_encodes_username_with_special_chars() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::UrlEncoded(
+                "id".into(),
+                "u+s er&name".into(),
+            ))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"destinationList":[{"name":"OK"}],"success":"yes"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config);
+        let result = client
+            .fetch_user_destinations("u+s er&name")
+            .await
+            .expect("should succeed");
+
+        mock.assert_async().await;
+        assert!(result.contains(&"OK".to_string()));
+    }
+
+    #[tokio::test]
+    async fn fetch_works_with_reverse_proxy_prefix_server() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/some-prefix/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::UrlEncoded("id".into(), "alice".into()))
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"destinationList":[{"name":"OK"}],"success":"yes"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![format!("{}/some-prefix/", server.url())]);
+        let client = EcpdsClient::new(&config);
+        let result = client
+            .fetch_user_destinations("alice")
+            .await
+            .expect("should succeed");
+
+        mock.assert_async().await;
+        assert!(result.contains(&"OK".to_string()));
     }
 }
