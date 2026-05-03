@@ -28,7 +28,7 @@ use crate::configuration::validate_ecpds_settings;
 use crate::{
     configuration::{
         Settings, validate_auth_settings, validate_schema_storage_policy_support,
-        validate_stream_auth_settings,
+        validate_stream_auth_settings, validate_stream_plugin_settings,
     },
     notification_backend::{NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify},
@@ -71,6 +71,17 @@ impl Application {
                 event_name = "startup.auth.validation.failed",
                 error = %e,
                 "Auth configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
+        if let Err(e) = validate_stream_plugin_settings(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.auth.plugin_validation.failed",
+                error = %e,
+                "Stream plugin configuration validation failed"
             );
             return Err(std::io::Error::other(e));
         }

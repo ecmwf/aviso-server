@@ -98,6 +98,101 @@ pub fn validate_auth_settings(auth: &AuthSettings) -> Result<()> {
     Ok(())
 }
 
+/// Plugin names this codebase recognizes for the per-stream
+/// `auth.plugins` list. Add new plugins here AND to
+/// [`plugin_required_feature`] if they are feature-gated.
+const KNOWN_PLUGINS: &[&str] = &["ecpds"];
+
+/// Returns the Cargo feature flag required by a known plugin, or `None`
+/// if the plugin is always available regardless of feature configuration.
+fn plugin_required_feature(name: &str) -> Option<&'static str> {
+    match name {
+        "ecpds" => Some("ecmwf"),
+        _ => None,
+    }
+}
+
+/// Compile-time table of Cargo features this binary knows about, paired
+/// with whether each is currently enabled. Add a new row when a new
+/// feature-gated plugin is introduced.
+const COMPILED_FEATURES: &[(&str, bool)] = &[("ecmwf", cfg!(feature = "ecmwf"))];
+
+/// Returns whether a given Cargo feature flag is currently compiled into
+/// this binary. Used by [`validate_stream_plugin_settings`] to fail-close
+/// when a stream references a plugin whose feature is off.
+fn feature_enabled(name: &str) -> bool {
+    COMPILED_FEATURES
+        .iter()
+        .find(|(n, _)| *n == name)
+        .map(|(_, on)| *on)
+        .unwrap_or(false)
+}
+
+/// Validates per-stream `auth.plugins` lists fail-closed.
+///
+/// Rejects:
+/// - empty plugin lists (operators should omit the field instead),
+/// - unknown plugin names (typos),
+/// - plugins whose required Cargo feature is not compiled in
+///   (otherwise the plugin's check would silently not run),
+/// - plugins on a stream where `auth.required` is `false`
+///   (plugins only run after stream-level auth passes, so this would
+///   never execute the plugin).
+///
+/// This function is **always compiled** (regardless of feature flags)
+/// so that misconfigured deployments fail at startup instead of silently
+/// running without the expected authorization plugin.
+pub fn validate_stream_plugin_settings(settings: &Settings) -> Result<()> {
+    let Some(schema_map) = settings.notification_schema.as_ref() else {
+        return Ok(());
+    };
+
+    for (event_type, schema) in schema_map {
+        let Some(stream_auth) = schema.auth.as_ref() else {
+            continue;
+        };
+        let Some(plugins) = stream_auth.plugins.as_ref() else {
+            continue;
+        };
+
+        if plugins.is_empty() {
+            bail!(
+                "Schema '{event_type}' auth.plugins must not be empty; \
+                 omit the field instead of setting plugins: []"
+            );
+        }
+
+        if !stream_auth.required {
+            bail!(
+                "Schema '{event_type}' auth.plugins is set but auth.required is false. \
+                 Plugins only run after stream-level auth passes; \
+                 set auth.required=true or remove the plugins list."
+            );
+        }
+
+        for plugin in plugins {
+            if !KNOWN_PLUGINS.contains(&plugin.as_str()) {
+                bail!(
+                    "Schema '{event_type}' auth.plugins references unknown plugin '{plugin}'. \
+                     Known plugins: {KNOWN_PLUGINS:?}"
+                );
+            }
+            if let Some(required_feature) = plugin_required_feature(plugin)
+                && !feature_enabled(required_feature)
+            {
+                bail!(
+                    "Schema '{event_type}' auth.plugins references plugin '{plugin}', \
+                     which requires the '{required_feature}' Cargo feature. \
+                     Rebuild aviso-server with `--features {required_feature}` or \
+                     remove the plugin from this stream's auth config."
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 /// Validates stream-level auth blocks against global auth mode.
 ///
 /// Stream auth rules are enforceable only when `auth.enabled=true`.
@@ -362,7 +457,7 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
 mod tests {
     use super::{
         validate_auth_settings, validate_metrics_settings, validate_schema_storage_policy_support,
-        validate_stream_auth_settings,
+        validate_stream_auth_settings, validate_stream_plugin_settings,
     };
     use crate::configuration::{
         ApplicationSettings, AuthMode, AuthSettings, EventSchema, EventStoragePolicy,
@@ -1169,6 +1264,110 @@ mod tests {
 
         validate_stream_auth_settings(&settings)
             .expect("required=true without role lists should be accepted");
+    }
+
+    fn schema_with_plugins(
+        event_type: &str,
+        plugins: Option<Vec<String>>,
+        auth_required: bool,
+    ) -> HashMap<String, EventSchema> {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            event_type.to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: event_type.to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: auth_required,
+                    read_roles: None,
+                    write_roles: None,
+                    plugins,
+                }),
+            },
+        );
+        schema_map
+    }
+
+    #[test]
+    fn rejects_empty_plugins_list() {
+        let settings = basic_settings_with_schema(schema_with_plugins("diss", Some(vec![]), true));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("empty plugins list must be rejected");
+        assert!(
+            err.to_string()
+                .contains("auth.plugins must not be empty"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_plugin_name() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["typo".to_string()]),
+            true,
+        ));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("unknown plugin name must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("unknown plugin 'typo'"), "got: {msg}");
+        assert!(msg.contains("Known plugins"), "got: {msg}");
+    }
+
+    #[test]
+    fn rejects_ecpds_plugin_when_auth_required_is_false() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["ecpds".to_string()]),
+            false,
+        ));
+        let err = validate_stream_plugin_settings(&settings).expect_err(
+            "ecpds plugin paired with auth.required=false must be rejected on any feature config",
+        );
+        assert!(
+            err.to_string().contains("auth.required is false"),
+            "got: {err}"
+        );
+    }
+
+    #[cfg(not(feature = "ecmwf"))]
+    #[test]
+    fn rejects_ecpds_plugin_when_ecmwf_feature_is_off() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["ecpds".to_string()]),
+            true,
+        ));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("ecpds plugin must be rejected when ecmwf feature is off");
+        let msg = err.to_string();
+        assert!(msg.contains("requires the 'ecmwf' Cargo feature"), "got: {msg}");
+        assert!(msg.contains("--features ecmwf"), "got: {msg}");
+    }
+
+    #[cfg(feature = "ecmwf")]
+    #[test]
+    fn accepts_ecpds_plugin_when_ecmwf_feature_is_on() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["ecpds".to_string()]),
+            true,
+        ));
+        validate_stream_plugin_settings(&settings)
+            .expect("ecpds plugin with required=true must be accepted when ecmwf feature is on");
+    }
+
+    #[test]
+    fn accepts_no_plugins_field() {
+        let settings = basic_settings_with_schema(schema_with_plugins("diss", None, true));
+        validate_stream_plugin_settings(&settings)
+            .expect("schemas without auth.plugins must be accepted");
     }
 
     #[test]
