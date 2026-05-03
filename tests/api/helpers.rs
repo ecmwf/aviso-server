@@ -64,7 +64,7 @@ static STREAMING_TRUSTED_PROXY_SERVER: OnceCell<RunningServer> = OnceCell::const
 static TEST_GLOBAL_CONFIG: OnceLock<()> = OnceLock::new();
 
 #[cfg(feature = "ecmwf")]
-static MOCK_ECPDS_URL: LazyLock<String> = LazyLock::new(|| start_sync_mock_ecpds_server());
+static MOCK_ECPDS_URL: LazyLock<String> = LazyLock::new(start_sync_mock_ecpds_server);
 
 struct RunningServer {
     address: String,

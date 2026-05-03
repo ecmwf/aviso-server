@@ -89,13 +89,12 @@ pub fn enforce_stream_auth(
             // No read_roles → any authenticated user can read.
         }
         StreamOperation::Write => match &stream_auth.write_roles {
-            Some(write_roles) => {
-                if !is_admin && !user.has_any_role(write_roles) {
-                    return Err(forbidden_response(
-                        "User does not have required write role for this stream",
-                    ));
-                }
+            Some(write_roles) if !is_admin && !user.has_any_role(write_roles) => {
+                return Err(forbidden_response(
+                    "User does not have required write role for this stream",
+                ));
             }
+            Some(_) => {}
             None if !is_admin => {
                 return Err(forbidden_response(
                     "Only administrators can write to this stream",
