@@ -93,6 +93,40 @@ pub fn mock_ecpds() -> &'static MockEcpds {
     &MOCK_ECPDS
 }
 
+/// Build a test JWT for the standard "localrealm" with the given
+/// `username` and `roles`. Shared by `tests/api/auth.rs` and
+/// `tests/api/ecpds_auth.rs` so token construction stays consistent
+/// (claims shape, realm, secret, expiry) across the auth test surface.
+pub fn test_jwt(username: &str, roles: &[&str]) -> String {
+    test_jwt_with_secret_and_exp(username, roles, "test-jwt-secret", 3600)
+}
+
+/// Parameterised variant of [`test_jwt`] for tests that need to forge
+/// expired tokens or use a non-default signing secret.
+pub fn test_jwt_with_secret_and_exp(
+    username: &str,
+    roles: &[&str],
+    secret: &str,
+    exp_offset_seconds: i64,
+) -> String {
+    let claims = aviso_server::auth::JwtClaims {
+        sub: Some(username.to_string()),
+        iss: None,
+        exp: (chrono::Utc::now().timestamp() + exp_offset_seconds) as usize,
+        iat: Some(chrono::Utc::now().timestamp() as usize),
+        username: Some(username.to_string()),
+        realm: Some("localrealm".to_string()),
+        roles: roles.iter().map(|r| (*r).to_string()).collect(),
+        attributes: HashMap::new(),
+    };
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .expect("token must encode")
+}
+
 struct RunningServer {
     address: String,
     _shutdown_token: CancellationToken,

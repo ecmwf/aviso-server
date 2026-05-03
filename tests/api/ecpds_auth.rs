@@ -1,28 +1,8 @@
-use crate::helpers::{mock_ecpds, spawn_streaming_test_app_with_auth};
-use aviso_server::auth::JwtClaims;
-use chrono::Utc;
-use jsonwebtoken::{EncodingKey, Header, encode};
+use crate::helpers::{mock_ecpds, spawn_streaming_test_app_with_auth, test_jwt};
 use serde_json::json;
-use std::collections::HashMap;
-
 
 fn ecpds_token(username: &str, roles: &[&str]) -> String {
-    let claims = JwtClaims {
-        sub: Some(username.to_string()),
-        iss: None,
-        exp: (Utc::now().timestamp() + 3600) as usize,
-        iat: Some(Utc::now().timestamp() as usize),
-        username: Some(username.to_string()),
-        realm: Some("localrealm".to_string()),
-        roles: roles.iter().map(|r| (*r).to_string()).collect(),
-        attributes: HashMap::new(),
-    };
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret("test-jwt-secret".as_bytes()),
-    )
-    .expect("token must encode")
+    test_jwt(username, roles)
 }
 
 fn diss_ecpds_watch_body(destination: &str) -> serde_json::Value {

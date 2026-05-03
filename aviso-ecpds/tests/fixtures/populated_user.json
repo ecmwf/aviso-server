@@ -1,0 +1,20 @@
+{
+  "destinationList": [
+    {
+      "name": "CIP",
+      "type": 32,
+      "active": true
+    },
+    {
+      "name": "FOO",
+      "type": 16,
+      "active": true
+    },
+    {
+      "name": "BAR",
+      "type": 16,
+      "active": false
+    }
+  ],
+  "success": "yes"
+}
