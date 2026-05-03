@@ -109,15 +109,27 @@ impl Application {
         }
 
         #[cfg(feature = "ecpds")]
-        if let Err(e) = validate_ecpds_settings(&configuration) {
-            error!(
-                service_name = SERVICE_NAME,
-                service_version = SERVICE_VERSION,
-                event_name = "startup.ecpds.validation.failed",
-                error = %e,
-                "ECPDS configuration validation failed"
-            );
-            return Err(std::io::Error::other(e));
+        {
+            if let Err(e) = validate_ecpds_settings(&configuration) {
+                error!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_name = "startup.ecpds.validation.failed",
+                    error = %e,
+                    "ECPDS configuration validation failed"
+                );
+                return Err(std::io::Error::other(e));
+            }
+            if let Err(e) = configuration.init_global_ecpds_checker() {
+                error!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_name = "startup.ecpds.checker_init.failed",
+                    error = %e,
+                    "ECPDS checker initialization failed"
+                );
+                return Err(std::io::Error::other(e));
+            }
         }
 
         let address = format!(

@@ -1,26 +1,52 @@
 use crate::config::EcpdsConfig;
 use futures::future::join_all;
 use serde::Deserialize;
+use thiserror::Error;
 use tracing::{debug, warn};
 
-#[derive(Debug)]
+/// Errors produced by the ECPDS client and checker.
+///
+/// `Display` strings are not part of the public contract; route handlers
+/// match on variants, not message text.
+#[derive(Debug, Error)]
 pub enum EcpdsError {
+    /// All configured ECPDS servers failed to respond, or no server-level
+    /// success was achieved under the active partial-outage policy.
+    /// Maps to HTTP 503 at the route layer.
+    #[error("ECPDS service is unaccessible")]
     ServiceUnavailable,
+
+    /// The user is not allowed to read for the requested destination, or
+    /// the destination identifier was missing from the request. Maps to
+    /// HTTP 403 at the route layer.
+    #[error("Access denied: {0}")]
     AccessDenied(String),
-    InvalidResponse(String),
-}
 
-impl std::fmt::Display for EcpdsError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::ServiceUnavailable => write!(f, "ECPDS service is unaccessible"),
-            Self::AccessDenied(msg) => write!(f, "Access denied: {}", msg),
-            Self::InvalidResponse(msg) => write!(f, "Invalid response from ECPDS: {}", msg),
-        }
-    }
-}
+    /// An ECPDS server returned a body that could not be parsed against
+    /// our expected schema. Logged with the offending server index.
+    #[error("Invalid response from ECPDS server {server_index}: {source}")]
+    InvalidResponse {
+        server_index: usize,
+        #[source]
+        source: serde_json::Error,
+    },
 
-impl std::error::Error for EcpdsError {}
+    /// One of the configured server URLs failed to parse at construction
+    /// time. Surfaces during `EcpdsClient::new` so misconfigurations fail
+    /// at startup rather than per request.
+    #[error("Invalid ECPDS server URL '{server}': {source}")]
+    InvalidServerUrl {
+        server: String,
+        #[source]
+        source: url::ParseError,
+    },
+
+    /// The underlying `reqwest::Client` could not be built. Should not
+    /// happen at runtime under normal conditions; treated as a fatal
+    /// configuration error at startup.
+    #[error("HTTP client construction failed: {0}")]
+    HttpClientBuild(#[source] reqwest::Error),
+}
 
 #[derive(Deserialize)]
 struct EcpdsResponse {
@@ -30,28 +56,46 @@ struct EcpdsResponse {
     success: String,
 }
 
+#[derive(Debug)]
 pub struct EcpdsClient {
     http: reqwest::Client,
-    servers: Vec<String>,
+    servers: Vec<reqwest::Url>,
     username: String,
     password: String,
     target_field: String,
 }
 
 impl EcpdsClient {
-    pub fn new(config: &EcpdsConfig) -> Self {
+    /// Build an ECPDS client from a validated config.
+    ///
+    /// Fails fast if any configured server URL is malformed or if the
+    /// underlying `reqwest::Client` cannot be constructed. The parsed
+    /// server URLs are stored once so per-request URL building does not
+    /// re-parse them.
+    pub fn new(config: &EcpdsConfig) -> Result<Self, EcpdsError> {
         let http = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(30))
             .build()
-            .expect("Failed to build reqwest client");
+            .map_err(EcpdsError::HttpClientBuild)?;
 
-        Self {
+        let servers = config
+            .servers
+            .iter()
+            .map(|s| {
+                reqwest::Url::parse(s).map_err(|source| EcpdsError::InvalidServerUrl {
+                    server: s.clone(),
+                    source,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        Ok(Self {
             http,
-            servers: config.servers.clone(),
+            servers,
             username: config.username.clone(),
             password: config.password.clone(),
             target_field: config.target_field.clone(),
-        }
+        })
     }
 
     /// Query all configured ECPDS servers in parallel for a user's destinations,
@@ -94,16 +138,16 @@ impl EcpdsClient {
     }
 
     /// Build a request URL by safely appending the destination-list path to
-    /// `server` and adding the username as a percent-encoded query parameter.
+    /// the pre-parsed `base` server URL and adding the username as a
+    /// percent-encoded query parameter.
     ///
     /// Accepts servers with or without a path component (e.g. a reverse-proxy
     /// prefix like `https://proxy.example/ecpds-api/`). Trailing slashes are
     /// normalised so paths join cleanly.
-    fn build_request_url(server: &str, username: &str) -> Result<reqwest::Url, String> {
-        let mut url = reqwest::Url::parse(server)
-            .map_err(|e| format!("invalid server URL '{server}': {e}"))?;
+    fn build_request_url(base: &reqwest::Url, username: &str) -> Result<reqwest::Url, String> {
+        let mut url = base.clone();
         url.path_segments_mut()
-            .map_err(|()| format!("server URL '{server}' cannot be a base"))?
+            .map_err(|()| format!("server URL '{base}' cannot be a base"))?
             .pop_if_empty()
             .extend(["ecpds", "v1", "destination", "list"]);
         url.query_pairs_mut().append_pair("id", username);
@@ -112,7 +156,7 @@ impl EcpdsClient {
 
     async fn fetch_from_server(
         &self,
-        server: &str,
+        server: &reqwest::Url,
         username: &str,
     ) -> Result<Vec<String>, String> {
         let url = Self::build_request_url(server, username)?;
@@ -177,7 +221,7 @@ mod tests {
             .await;
 
         let config = make_config(vec![server.url()]);
-        let client = EcpdsClient::new(&config);
+        let client = EcpdsClient::new(&config).expect("client must build");
         let result = client.fetch_user_destinations("testuser").await.unwrap();
 
         mock.assert_async().await;
@@ -209,7 +253,7 @@ mod tests {
             .await;
 
         let config = make_config(vec![server_a.url(), server_b.url()]);
-        let client = EcpdsClient::new(&config);
+        let client = EcpdsClient::new(&config).expect("client must build");
         let mut result = client.fetch_user_destinations("testuser").await.unwrap();
         result.sort();
 
@@ -219,7 +263,7 @@ mod tests {
     #[tokio::test]
     async fn fetch_returns_service_unavailable_when_all_servers_down() {
         let config = make_config(vec!["http://localhost:1".to_string()]);
-        let client = EcpdsClient::new(&config);
+        let client = EcpdsClient::new(&config).expect("client must build");
         let result = client.fetch_user_destinations("testuser").await;
         assert!(matches!(result, Err(EcpdsError::ServiceUnavailable)));
     }
@@ -239,7 +283,7 @@ mod tests {
             .await;
 
         let config = make_config(vec!["http://localhost:1".to_string(), server.url()]);
-        let client = EcpdsClient::new(&config);
+        let client = EcpdsClient::new(&config).expect("client must build");
         let result = client.fetch_user_destinations("testuser").await.unwrap();
         assert!(result.contains(&"CIP".to_string()));
     }
@@ -258,7 +302,7 @@ mod tests {
 
         let mut config = make_config(vec![server.url()]);
         config.target_field = "id".to_string();
-        let client = EcpdsClient::new(&config);
+        let client = EcpdsClient::new(&config).expect("client must build");
         let result = client.fetch_user_destinations("testuser").await.unwrap();
         assert!(result.contains(&"DEST1".to_string()));
         assert!(!result.contains(&"CIP".to_string()));
@@ -266,11 +310,9 @@ mod tests {
 
     #[test]
     fn build_request_url_percent_encodes_special_chars() {
-        let url = EcpdsClient::build_request_url(
-            "http://example.com",
-            "user+name with spaces&extra=injected",
-        )
-        .expect("URL must build");
+        let base = reqwest::Url::parse("http://example.com").unwrap();
+        let url = EcpdsClient::build_request_url(&base, "user+name with spaces&extra=injected")
+            .expect("URL must build");
         let s = url.as_str();
         assert!(s.starts_with("http://example.com/ecpds/v1/destination/list?id="));
         assert!(s.contains("user%2Bname"), "got {s}");
@@ -281,8 +323,8 @@ mod tests {
 
     #[test]
     fn build_request_url_handles_reverse_proxy_prefix_with_trailing_slash() {
-        let url =
-            EcpdsClient::build_request_url("https://proxy.example/ecpds-api/", "alice").unwrap();
+        let base = reqwest::Url::parse("https://proxy.example/ecpds-api/").unwrap();
+        let url = EcpdsClient::build_request_url(&base, "alice").unwrap();
         assert_eq!(
             url.as_str(),
             "https://proxy.example/ecpds-api/ecpds/v1/destination/list?id=alice"
@@ -291,8 +333,8 @@ mod tests {
 
     #[test]
     fn build_request_url_handles_reverse_proxy_prefix_without_trailing_slash() {
-        let url =
-            EcpdsClient::build_request_url("https://proxy.example/ecpds-api", "alice").unwrap();
+        let base = reqwest::Url::parse("https://proxy.example/ecpds-api").unwrap();
+        let url = EcpdsClient::build_request_url(&base, "alice").unwrap();
         assert_eq!(
             url.as_str(),
             "https://proxy.example/ecpds-api/ecpds/v1/destination/list?id=alice"
@@ -300,8 +342,11 @@ mod tests {
     }
 
     #[test]
-    fn build_request_url_rejects_invalid_server() {
-        assert!(EcpdsClient::build_request_url("not a url", "alice").is_err());
+    fn client_construction_rejects_invalid_server_url() {
+        let config = make_config(vec!["not a url".to_string()]);
+        let err = EcpdsClient::new(&config)
+            .expect_err("invalid server URL must be rejected at construction");
+        assert!(matches!(err, EcpdsError::InvalidServerUrl { .. }));
     }
 
     #[tokio::test]
@@ -320,7 +365,7 @@ mod tests {
             .await;
 
         let config = make_config(vec![server.url()]);
-        let client = EcpdsClient::new(&config);
+        let client = EcpdsClient::new(&config).expect("client must build");
         let result = client
             .fetch_user_destinations("u+s er&name")
             .await
@@ -343,7 +388,7 @@ mod tests {
             .await;
 
         let config = make_config(vec![format!("{}/some-prefix/", server.url())]);
-        let client = EcpdsClient::new(&config);
+        let client = EcpdsClient::new(&config).expect("client must build");
         let result = client
             .fetch_user_destinations("alice")
             .await

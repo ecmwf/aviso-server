@@ -30,15 +30,6 @@ impl Settings {
         let _ = GLOBAL_APPLICATION_SETTINGS.set(self.application.clone());
         let _ = GLOBAL_WATCH_SETTINGS.set(self.watch_endpoint.clone());
 
-        #[cfg(feature = "ecpds")]
-        {
-            let checker = self
-                .ecpds
-                .as_ref()
-                .map(aviso_ecpds::checker::EcpdsChecker::new);
-            let _ = GLOBAL_ECPDS_CHECKER.set(checker);
-        }
-
         tracing::info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
@@ -48,6 +39,35 @@ impl Settings {
             base_url = %self.application.base_url,
             "Global configuration initialized successfully"
         );
+    }
+
+    /// Build and install the global ECPDS checker (if configured).
+    ///
+    /// Separate from [`Self::init_global_config`] so it can be invoked
+    /// **after** config validation and after metrics/auth are
+    /// constructed during `Application::build`. Idempotent: calling
+    /// twice is a no-op.
+    ///
+    /// Returns an error if checker construction fails (e.g. invalid
+    /// server URL or HTTP client builder error).
+    #[cfg(feature = "ecpds")]
+    pub fn init_global_ecpds_checker(&self) -> Result<(), aviso_ecpds::EcpdsError> {
+        if GLOBAL_ECPDS_CHECKER.get().is_some() {
+            return Ok(());
+        }
+        let checker = match self.ecpds.as_ref() {
+            Some(cfg) => Some(aviso_ecpds::checker::EcpdsChecker::new(cfg)?),
+            None => None,
+        };
+        let _ = GLOBAL_ECPDS_CHECKER.set(checker);
+        tracing::info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_name = "configuration.ecpds.initialized",
+            configured = self.ecpds.is_some(),
+            "ECPDS checker global initialized"
+        );
+        Ok(())
     }
 
     pub fn get_global_notification_schema() -> &'static Option<HashMap<String, EventSchema>> {

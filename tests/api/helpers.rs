@@ -670,6 +670,10 @@ fn ensure_test_global_config_initialized() {
             }
         }
         Settings::init_global_config(&configuration);
+        #[cfg(feature = "ecpds")]
+        configuration
+            .init_global_ecpds_checker()
+            .expect("ECPDS checker init in tests must succeed");
     });
 }
 

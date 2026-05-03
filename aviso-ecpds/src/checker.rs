@@ -12,12 +12,17 @@ pub struct EcpdsChecker {
 }
 
 impl EcpdsChecker {
-    pub fn new(config: &EcpdsConfig) -> Self {
-        Self {
-            client: EcpdsClient::new(config),
+    /// Build a checker from a validated config.
+    ///
+    /// Propagates [`EcpdsError`] from the underlying [`EcpdsClient`]
+    /// constructor so misconfigurations (invalid server URLs, broken
+    /// HTTP client) fail at startup rather than per request.
+    pub fn new(config: &EcpdsConfig) -> Result<Self, EcpdsError> {
+        Ok(Self {
+            client: EcpdsClient::new(config)?,
             cache: DestinationCache::new(config.cache_ttl_seconds),
             match_key: config.match_key.clone(),
-        }
+        })
     }
 
     /// Check if `username` has access to the destination value extracted from `identifier`.
@@ -81,7 +86,7 @@ mod tests {
     #[tokio::test]
     async fn access_granted_when_destination_in_cached_list() {
         let config = make_checker_config();
-        let checker = EcpdsChecker::new(&config);
+        let checker = EcpdsChecker::new(&config).expect("checker must build");
         checker
             .cache
             .set("john", vec!["CIP".to_string(), "FOO".to_string()])
@@ -96,7 +101,7 @@ mod tests {
     #[tokio::test]
     async fn access_denied_when_destination_not_in_list() {
         let config = make_checker_config();
-        let checker = EcpdsChecker::new(&config);
+        let checker = EcpdsChecker::new(&config).expect("checker must build");
         checker.cache.set("john", vec!["CIP".to_string()]).await;
 
         let result = checker
@@ -108,7 +113,7 @@ mod tests {
     #[tokio::test]
     async fn access_denied_when_match_key_missing_from_identifier() {
         let config = make_checker_config();
-        let checker = EcpdsChecker::new(&config);
+        let checker = EcpdsChecker::new(&config).expect("checker must build");
         let empty: HashMap<String, String> = HashMap::new();
 
         let result = checker.check_access("john", &empty).await;
@@ -118,7 +123,7 @@ mod tests {
     #[tokio::test]
     async fn service_unavailable_when_cache_miss_and_server_down() {
         let config = make_checker_config();
-        let checker = EcpdsChecker::new(&config);
+        let checker = EcpdsChecker::new(&config).expect("checker must build");
 
         let result = checker
             .check_access("john", &make_identifier("CIP"))
