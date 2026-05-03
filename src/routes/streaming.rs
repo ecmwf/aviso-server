@@ -184,7 +184,15 @@ pub async fn enforce_ecpds_auth(
     );
 
     match checker.check_access(&user.username, canonicalized_params).await {
-        Ok(()) => Ok(()),
+        Ok(cache_outcome) => {
+            tracing::debug!(
+                username = %user.username,
+                event_type = %event_type,
+                cache_outcome = ?cache_outcome,
+                "ECPDS access allowed"
+            );
+            Ok(())
+        }
         Err(aviso_ecpds::EcpdsError::AccessDenied(msg)) => {
             tracing::warn!(
                 username = %user.username,

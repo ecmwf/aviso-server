@@ -663,6 +663,7 @@ fn ensure_test_global_config_initialized() {
                 target_field: "name".to_string(),
                 match_key: "destination".to_string(),
                 cache_ttl_seconds: 300,
+            max_entries: 10_000,
                 servers: vec![MOCK_ECPDS_URL.clone()],
             });
             if let Some(schema) = configuration.notification_schema.as_mut() {

@@ -1,5 +1,5 @@
 use crate::{
-    cache::DestinationCache,
+    cache::{CacheOutcome, DestinationCache},
     client::{EcpdsClient, EcpdsError},
     config::EcpdsConfig,
 };
@@ -20,20 +20,28 @@ impl EcpdsChecker {
     pub fn new(config: &EcpdsConfig) -> Result<Self, EcpdsError> {
         Ok(Self {
             client: EcpdsClient::new(config)?,
-            cache: DestinationCache::new(config.cache_ttl_seconds),
+            cache: DestinationCache::new(config.cache_ttl_seconds, config.max_entries),
             match_key: config.match_key.clone(),
         })
     }
 
-    /// Check if `username` has access to the destination value extracted from `identifier`.
-    /// - Extracts the value of `match_key` from the identifier map
-    /// - Checks cache first; on miss, fetches from ECPDS servers
-    /// - Returns Ok(()) if the destination is in the user's list, Err(AccessDenied) if not
+    /// Check whether `username` is authorised to read for the
+    /// destination value extracted from `identifier`.
+    ///
+    /// 1. Read `match_key` from `identifier` (returns
+    ///    [`EcpdsError::AccessDenied`] if missing).
+    /// 2. Look up the user's destination list via the single-flight
+    ///    cache (one upstream fetch per missing key, even under
+    ///    concurrent reconnects).
+    /// 3. Linearly scan the list for `destination`.
+    ///
+    /// Returns the [`CacheOutcome`] alongside the result so the route
+    /// layer can record cache hit/miss as a Prometheus label.
     pub async fn check_access(
         &self,
         username: &str,
         identifier: &HashMap<String, String>,
-    ) -> Result<(), EcpdsError> {
+    ) -> Result<CacheOutcome, EcpdsError> {
         let destination = identifier.get(&self.match_key).ok_or_else(|| {
             EcpdsError::AccessDenied(format!(
                 "Required field '{}' not found in request identifiers",
@@ -41,22 +49,26 @@ impl EcpdsChecker {
             ))
         })?;
 
-        let destinations = if let Some(cached) = self.cache.get(username).await {
-            cached
-        } else {
-            let fetched = self.client.fetch_user_destinations(username).await?;
-            self.cache.set(username, fetched.clone()).await;
-            fetched
-        };
+        let client = &self.client;
+        let (destinations, outcome) = self
+            .cache
+            .try_get_or_fetch(username, || client.fetch_user_destinations(username))
+            .await?;
 
         if destinations.contains(destination) {
-            Ok(())
+            Ok(outcome)
         } else {
             Err(EcpdsError::AccessDenied(format!(
                 "User '{}' does not have access to destination '{}'",
                 username, destination
             )))
         }
+    }
+
+    /// Number of distinct usernames currently held in the cache.
+    /// Sampled by the route layer's `cache_size` Prometheus gauge.
+    pub fn cache_entry_count(&self) -> u64 {
+        self.cache.entry_count()
     }
 }
 
@@ -73,6 +85,7 @@ mod tests {
             target_field: "name".to_string(),
             match_key: "destination".to_string(),
             cache_ttl_seconds: 300,
+            max_entries: 1000,
             servers: vec!["http://localhost:1".to_string()],
         }
     }
@@ -92,10 +105,11 @@ mod tests {
             .set("john", vec!["CIP".to_string(), "FOO".to_string()])
             .await;
 
-        let result = checker
+        let outcome = checker
             .check_access("john", &make_identifier("CIP"))
-            .await;
-        assert!(result.is_ok());
+            .await
+            .expect("must succeed");
+        assert_eq!(outcome, CacheOutcome::Hit);
     }
 
     #[tokio::test]
