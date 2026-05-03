@@ -940,8 +940,33 @@ def _ecpds_identifier(config: Config, destination: str) -> dict:
     return identifier
 
 
+def _ecpds_post_status(
+    config: Config, path: str, body: dict, headers: dict[str, str]
+) -> tuple[int, str]:
+    """POST and return (status, response_text), reading at most a small
+    chunk of any SSE body. Used by the ECPDS smoke cases which only
+    care about the HTTP status of the watch endpoint, not the stream
+    payload."""
+    timeout = build_timeout(config, read=2.0)
+    try:
+        with httpx.Client(
+            base_url=config.base_url, timeout=timeout, headers=headers
+        ) as client:
+            with client.stream("POST", path, json=body) as response:
+                first_chunk = ""
+                if response.status_code == 200:
+                    for chunk in response.iter_text():
+                        first_chunk = chunk
+                        break
+                else:
+                    first_chunk = response.read().decode("utf-8", errors="replace")
+                return response.status_code, first_chunk
+    except httpx.HTTPError as exc:
+        raise SmokeFailure(f"request failed: {exc}") from exc
+
+
 def test_ecpds_allowed_destination_returns_200(config: Config) -> None:
-    """Allowed user reading an entitled destination → 200 SSE stream."""
+    """Allowed user reading an entitled destination must get a 200 watch stream."""
     skip = _ecpds_skip_reason(config)
     if skip:
         print(f"[INFO] skipping ECPDS smoke test ({skip})")
@@ -955,22 +980,16 @@ def test_ecpds_allowed_destination_returns_200(config: Config) -> None:
         "identifier": _ecpds_identifier(config, config.ecpds_allowed_destination),
     }
 
-    output = capture_watch_output(
-        config,
-        body,
-        max_seconds=2.0,
-        path="/api/v1/watch",
-        headers=headers,
-    )
-    if "expected status 200" in output or "HTTP/1.1 4" in output or "HTTP/1.1 5" in output:
+    status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
+    if status != 200:
         raise SmokeFailure(
-            "expected 200 for allowed user + allowed destination, got non-2xx; "
-            f"server response: {truncate_text(output)}"
+            f"expected 200 for allowed user + allowed destination, got {status}; "
+            f"response: {truncate_text(response)}"
         )
 
 
 def test_ecpds_denied_destination_returns_403(config: Config) -> None:
-    """Allowed user reading an unentitled destination → 403."""
+    """Allowed user reading an unentitled destination must get a 403."""
     skip = _ecpds_skip_reason(config)
     if skip:
         print(f"[INFO] skipping ECPDS smoke test ({skip})")
@@ -984,7 +1003,7 @@ def test_ecpds_denied_destination_returns_403(config: Config) -> None:
         "identifier": _ecpds_identifier(config, config.ecpds_denied_destination),
     }
 
-    status, response = request_json(config, "POST", "/api/v1/watch", body, headers=headers)
+    status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
     if status != 403:
         raise SmokeFailure(
             f"expected 403 for allowed user + DENIED destination, got {status}; "
@@ -993,10 +1012,12 @@ def test_ecpds_denied_destination_returns_403(config: Config) -> None:
 
 
 def test_ecpds_notify_unaffected(config: Config) -> None:
-    """notify on an ECPDS-protected stream is not gated by the plugin.
-    Admins can write regardless of ECPDS state, so we use the admin
-    creds here to confirm notify never returns 503/forbidden because of
-    ECPDS."""
+    """NOTIFY on an ECPDS-protected stream must succeed (200) for the
+    admin user. The plugin is read-only, so it must not gate writes —
+    a 503 here would mean it incorrectly tried to consult ECPDS on a
+    write, and a 403/401 would mean admin auth is broken (a config
+    issue with `AUTH_ADMIN_USER`/`AUTH_ADMIN_PASS`, not the plugin).
+    Either way, anything other than 2xx is a failure."""
     skip = _ecpds_skip_reason(config)
     if skip:
         print(f"[INFO] skipping ECPDS smoke test ({skip})")
@@ -1014,10 +1035,12 @@ def test_ecpds_notify_unaffected(config: Config) -> None:
         body,
         headers=config.admin_auth_headers(),
     )
-    if status == 503:
+    if not (200 <= status < 300):
         raise SmokeFailure(
-            "notify on ECPDS-protected stream returned 503; the plugin must "
-            "not run on writes. response: " + truncate_text(response)
+            f"expected 2xx on notify for an ECPDS-protected stream, got {status}; "
+            f"a 503 means the plugin incorrectly ran on a write, a 401/403 "
+            f"means AUTH_ADMIN_USER/AUTH_ADMIN_PASS need to match your auth-o-tron "
+            f"config. response: {truncate_text(response)}"
         )
 
 

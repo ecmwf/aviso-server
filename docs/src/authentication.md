@@ -191,7 +191,7 @@ ecpds:
   partial_outage_policy: strict   # default: strict; alternative: any_success
 ```
 
-3. Enable the plugin on a stream by adding `plugins: ["ecpds"]` to its `auth` block:
+3. Enable the plugin on a stream by adding `plugins: ["ecpds"]` to its `auth` block. Minimal canonical shape:
 
 ```yaml
 notification_schema:
@@ -208,10 +208,10 @@ notification_schema:
       # ... other fields ...
     auth:
       required: true                  # MUST be true
-      read_roles:
-        ecmwf: ["*"]
       plugins: ["ecpds"]
 ```
+
+`read_roles` is optional. If you want a realm-wide gate **before** ECPDS even runs (e.g. block users from realms you don't trust to query ECPDS in the first place), add it; if not, omit it and the plugin runs for every authenticated user.
 
 The plugin requires (and startup validation enforces):
 

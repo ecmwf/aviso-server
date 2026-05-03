@@ -237,31 +237,43 @@ The smoke script covers:
 
 If your build has `--features ecpds` enabled and your config has a working `ecpds:` block pointing at your real ECPDS servers, the smoke script can verify the plugin end-to-end against that ECPDS. It's off by default.
 
-You need a known **allowed** user (one entitled to a specific destination per your ECPDS) and a destination value that user is **not** entitled to. Then:
+**Prerequisites for this path:**
+
+- The server must run with `auth.enabled: true` and `auth.mode: direct`. The smoke script sends HTTP Basic credentials, which Aviso forwards to auth-o-tron only in **direct mode**. Trusted-proxy mode would require an upstream proxy to mint a JWT — out of scope for the smoke script.
+- The auth-o-tron config must know about three users: an admin user (`AUTH_ADMIN_USER` / `AUTH_ADMIN_PASS`, defaults `admin-user` / `admin-pass`) used for the NOTIFY-bypass case, and the ECPDS user (`ECPDS_ALLOWED_USER` / `ECPDS_ALLOWED_PASS`) used for the watch cases. The bundled `scripts/example_auth_config.yaml` has the admin defaults; you'll need to add your ECPDS user there too if it doesn't already exist.
+- You need a destination value the ECPDS user **is** entitled to and one they are **not** entitled to (the latter can be a deliberately-fake string).
+
+Then:
 
 ```bash
 ECPDS_ENABLED=true \
   ECPDS_EVENT_TYPE=dissemination \
   ECPDS_MATCH_KEY=destination \
-  ECPDS_ALLOWED_USER="<jwt-username>" \
-  ECPDS_ALLOWED_PASS="<password>" \
+  ECPDS_ALLOWED_USER="<auth-o-tron-username>" \
+  ECPDS_ALLOWED_PASS="<auth-o-tron-password>" \
   ECPDS_ALLOWED_DESTINATION="<destination-the-user-can-read>" \
   ECPDS_DENIED_DESTINATION="NOT-A-REAL-DEST" \
   ECPDS_EXTRA_IDENTIFIER='{"class":"od"}' \
+  AUTH_ADMIN_USER=admin-user \
+  AUTH_ADMIN_PASS=admin-pass \
   python3 scripts/smoke_test.py
 ```
+
+`ECPDS_EXTRA_IDENTIFIER` is merged into the request identifier so any other `required: true` fields on your schema are populated; leave it empty if `destination` is the only required field.
 
 What the three ECPDS smoke cases verify:
 
 | Case | What it asserts |
 |---|---|
-| `ecpds: allowed user + entitled destination -> 200` | The watch endpoint returns 200 for `ECPDS_ALLOWED_USER` reading `ECPDS_ALLOWED_DESTINATION`. |
-| `ecpds: allowed user + DENIED destination -> 403` | The same user reading `ECPDS_DENIED_DESTINATION` is rejected with 403. |
-| `ecpds: notify on ECPDS-protected stream is not gated` | An admin POSTing a notification on the ECPDS-protected stream does not get a 503 (the plugin is read-only). |
+| `ecpds: allowed user + entitled destination -> 200` | `POST /api/v1/watch` returns HTTP 200 for `ECPDS_ALLOWED_USER` reading `ECPDS_ALLOWED_DESTINATION`. |
+| `ecpds: allowed user + DENIED destination -> 403` | Same endpoint returns HTTP 403 for the same user reading `ECPDS_DENIED_DESTINATION`. |
+| `ecpds: notify on ECPDS-protected stream is not gated` | `POST /api/v1/notification` returns 2xx for `AUTH_ADMIN_USER`. The plugin is read-only; a 503 here would mean it incorrectly ran on a write. |
 
 Tip: if all three skip with `[INFO] skipping ECPDS smoke test`, double-check `ECPDS_ENABLED=true` and that the required env vars are set.
 
 If the first case fails with `503 Service Unavailable`, the issue is likely between Aviso and ECPDS rather than at the plugin layer — see the [ECPDS Plugin Runbook](./ecpds-runbook.md) for triage.
+
+If the third case fails with 401 or 403, your `AUTH_ADMIN_USER` / `AUTH_ADMIN_PASS` don't match your auth-o-tron config; that's an auth setup issue, not an ECPDS issue.
 
 ---
 

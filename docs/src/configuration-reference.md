@@ -95,7 +95,7 @@ Exposed metrics:
 | `aviso_sse_unique_users_active` | gauge | `endpoint` | Distinct users with active SSE connections. |
 | `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. |
 
-When built with `--features ecpds` and ECPDS is configured, four additional metrics are exposed:
+A binary built with `--features ecpds` always registers the following five metrics (they exist as Prometheus series even before any ECPDS request is processed; the values stay at zero until the plugin is invoked):
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
