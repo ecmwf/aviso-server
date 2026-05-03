@@ -13,12 +13,25 @@ use tracing::{debug, info, warn};
 /// reading logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchOutcome {
+    /// All servers under the active policy succeeded.
     Success,
+    /// At least one server returned HTTP 401 — service-account creds
+    /// are wrong, expired, or revoked.
     Unauthorized,
+    /// At least one server returned HTTP 403 — service-account has no
+    /// permission to query the destination list.
     Forbidden,
+    /// At least one server returned HTTP 5xx — ECPDS itself is broken.
     ServerError,
+    /// At least one server returned a body that did not parse against
+    /// the expected schema. Likely an ECPDS contract drift.
     InvalidResponse,
+    /// Network-level failure (DNS, connect timeout, request timeout,
+    /// TLS handshake) on every server, or no servers configured.
     Unreachable,
+    /// Strict policy: all servers responded successfully but their
+    /// destination lists are not equal. Treated as a 503 to preserve
+    /// confidentiality.
     Divergence,
 }
 
@@ -56,7 +69,14 @@ impl FetchOutcome {
 /// `outcome` label on `aviso_ecpds_access_decisions_total`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DenyReason {
+    /// The user authenticated successfully and the request carried a
+    /// valid `match_key` value, but the destination is not in the
+    /// user's authorised destination list.
     DestinationNotInList,
+    /// The request did not carry a value for the configured
+    /// `match_key`. Should be impossible if config validation passed
+    /// (the schema enforces `required: true` on the field), but the
+    /// runtime keeps the check as a defence-in-depth.
     MatchKeyMissing,
 }
 
@@ -82,14 +102,21 @@ pub enum EcpdsError {
     /// (e.g. all servers were unreachable, returned 401, etc.). Maps
     /// to HTTP 503 at the route layer.
     #[error("ECPDS service is unaccessible ({fetch_outcome:?})")]
-    ServiceUnavailable { fetch_outcome: FetchOutcome },
+    ServiceUnavailable {
+        /// Dominant cause across all servers, used by the route layer
+        /// to label `aviso_ecpds_fetch_total{outcome=...}`.
+        fetch_outcome: FetchOutcome,
+    },
 
     /// The user is not allowed to read for the requested destination,
     /// or the destination identifier was missing from the request.
     /// Maps to HTTP 403 at the route layer.
     #[error("Access denied: {message}")]
     AccessDenied {
+        /// Typed deny reason consumed by the route layer's metrics
+        /// labelling and tracing event field.
         reason: DenyReason,
+        /// Human-readable detail; not part of any external contract.
         message: String,
     },
 
@@ -97,7 +124,10 @@ pub enum EcpdsError {
     /// our expected schema. Logged with the offending server index.
     #[error("Invalid response from ECPDS server {server_index}: {message}")]
     InvalidResponse {
+        /// Zero-based index into the configured `ecpds.servers` list.
         server_index: usize,
+        /// Underlying parser error message; not part of any external
+        /// contract.
         message: String,
     },
 
@@ -106,7 +136,9 @@ pub enum EcpdsError {
     /// at startup rather than per request.
     #[error("Invalid ECPDS server URL '{server}': {source}")]
     InvalidServerUrl {
+        /// The original (unparsed) server URL string from config.
         server: String,
+        /// Underlying parse error.
         #[source]
         source: url::ParseError,
     },
@@ -124,8 +156,12 @@ pub enum EcpdsError {
     /// [`FetchOutcome`].
     #[error("HTTP request to ECPDS server {server_index} failed: {message}")]
     Http {
+        /// Zero-based index into the configured `ecpds.servers` list.
         server_index: usize,
+        /// HTTP status from the server, or `None` for transport-level
+        /// failure (DNS, connect, TLS, request timeout).
         status: Option<u16>,
+        /// Human-readable detail; not part of any external contract.
         message: String,
     },
 }
@@ -171,6 +207,13 @@ struct EcpdsResponse {
     success: String,
 }
 
+/// HTTP client over one or more ECPDS servers.
+///
+/// Stateless aside from the prebuilt `reqwest::Client` and the parsed
+/// server URLs. Cloning the underlying `reqwest::Client` is cheap (it
+/// shares the connection pool internally), but this struct itself is
+/// not cloned in practice — one global instance lives behind the
+/// `OnceLock` in `aviso-server`'s configuration module.
 #[derive(Debug)]
 pub struct EcpdsClient {
     http: reqwest::Client,

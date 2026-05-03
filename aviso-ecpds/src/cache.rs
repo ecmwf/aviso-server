@@ -9,7 +9,12 @@ use std::time::Duration;
 /// this as a Prometheus label so on-call can see the cache hit ratio.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CacheOutcome {
+    /// The destination list was served from the in-process cache; no
+    /// upstream ECPDS call was made for this request.
     Hit,
+    /// The destination list was not in the cache; an upstream ECPDS
+    /// call was made (single-flight: at most one per missing key
+    /// across concurrent waiters).
     Miss,
 }
 

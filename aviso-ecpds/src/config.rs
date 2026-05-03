@@ -43,8 +43,14 @@ fn default_connect_timeout() -> u64 {
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PartialOutagePolicy {
+    /// Every configured server must respond successfully and return
+    /// the same set of destinations. Default; preserves
+    /// confidentiality at the cost of availability.
     #[default]
     Strict,
+    /// Succeed if any one server replies; union the destination lists
+    /// across reachable servers. Preserves availability at the cost
+    /// of widening access if a permissive server is the survivor.
     AnySuccess,
 }
 
@@ -67,21 +73,44 @@ fn default_partial_outage_policy() -> PartialOutagePolicy {
 ///   [`PartialOutagePolicy`] for the security trade-off.
 #[derive(Deserialize, Serialize, Clone)]
 pub struct EcpdsConfig {
+    /// Service-account username for HTTP Basic Auth to ECPDS.
     pub username: String,
+    /// Service-account password. Redacted in [`fmt::Debug`] output and
+    /// in the redacted `Settings` dump emitted at startup.
     pub password: String,
+    /// JSON field of each ECPDS destination record whose string value
+    /// is matched against the request's `match_key` value. Default
+    /// `"name"`.
     #[serde(default = "default_target_field")]
     pub target_field: String,
+    /// Identifier field whose value is treated as the destination to
+    /// authorise. Must appear in the schema's `topic.key_order` and
+    /// be marked `required: true` in the schema's `identifier`.
     pub match_key: String,
+    /// How long to cache a user's destination list before re-fetching
+    /// (seconds). Default 300.
     #[serde(default = "default_cache_ttl")]
     pub cache_ttl_seconds: u64,
+    /// Maximum number of distinct usernames held in the cache before
+    /// TinyLFU eviction. Default 10 000.
     #[serde(default = "default_max_entries")]
     pub max_entries: u64,
+    /// Total wall-clock timeout for a single ECPDS HTTP request.
+    /// Default 30 seconds.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
+    /// TCP + TLS handshake timeout for a single ECPDS HTTP request.
+    /// Default 5 seconds.
     #[serde(default = "default_connect_timeout")]
     pub connect_timeout_seconds: u64,
+    /// How to merge per-server destination lists when more than one
+    /// ECPDS server is configured. Default
+    /// [`PartialOutagePolicy::Strict`].
     #[serde(default = "default_partial_outage_policy")]
     pub partial_outage_policy: PartialOutagePolicy,
+    /// List of ECPDS server base URLs (each `http://...` or
+    /// `https://...`, no query string, no fragment; trailing slashes
+    /// are normalised).
     pub servers: Vec<String>,
 }
 

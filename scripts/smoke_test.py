@@ -39,6 +39,32 @@ Optional JetStream expectation checks:
     EXPECT_MAX_BYTES=...
     EXPECT_MAX_MESSAGES_PER_SUBJECT=...
     EXPECT_COMPRESSION=s2|none|true|false
+
+End-to-end ECPDS plugin tests (only run against a binary built with
+`--features ecpds` and a real ECPDS configured in the YAML):
+
+    ECPDS_ENABLED=true
+        Set to enable the ECPDS smoke cases. Default off.
+    ECPDS_EVENT_TYPE=dissemination
+        Schema name on the server that has plugins: ["ecpds"].
+    ECPDS_MATCH_KEY=destination
+        Identifier field used as the destination key.
+    ECPDS_ALLOWED_USER=alice
+        ECPDS username known to be authorised for ECPDS_ALLOWED_DESTINATION.
+    ECPDS_ALLOWED_PASS=alice-pass
+        Password for that user (used by direct-mode auth-o-tron flow).
+    ECPDS_ALLOWED_DESTINATION=CIP
+        A destination value the allowed user is entitled to read.
+    ECPDS_DENIED_DESTINATION=NOT-A-REAL-DEST
+        A destination value the allowed user is NOT entitled to read.
+    ECPDS_EXTRA_IDENTIFIER='{"class":"od"}'
+        Optional JSON object merged into the request identifier so the
+        schema's other required fields are populated. Empty/absent is
+        fine when the schema has only `destination` required.
+
+These tests verify allow / deny / cache-coalescing on YOUR ECPDS by
+hitting the running Aviso server with the supplied credentials. They
+do NOT need an Aviso-side mock; they call the real upstream.
 """
 
 from __future__ import annotations
@@ -91,6 +117,14 @@ class Config:
     auth_enabled: bool = os.getenv("AUTH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
     auth_admin_user: str = os.getenv("AUTH_ADMIN_USER", "admin-user")
     auth_admin_pass: str = os.getenv("AUTH_ADMIN_PASS", "admin-pass")
+    ecpds_enabled: bool = os.getenv("ECPDS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    ecpds_event_type: str = os.getenv("ECPDS_EVENT_TYPE", "dissemination")
+    ecpds_match_key: str = os.getenv("ECPDS_MATCH_KEY", "destination")
+    ecpds_allowed_user: str = os.getenv("ECPDS_ALLOWED_USER", "")
+    ecpds_allowed_pass: str = os.getenv("ECPDS_ALLOWED_PASS", "")
+    ecpds_allowed_destination: str = os.getenv("ECPDS_ALLOWED_DESTINATION", "")
+    ecpds_denied_destination: str = os.getenv("ECPDS_DENIED_DESTINATION", "NOT-A-REAL-DEST")
+    ecpds_extra_identifier_json: str = os.getenv("ECPDS_EXTRA_IDENTIFIER", "")
     verbose: bool = False
 
     def admin_auth_headers(self) -> dict[str, str]:
@@ -869,6 +903,124 @@ def test_auth_dissemination_reader_cannot_write(config: Config) -> None:
         raise SmokeFailure(f"expected 403 for reader writing to dissemination, got {status}")
 
 
+def _ecpds_skip_reason(config: Config) -> str | None:
+    if not config.ecpds_enabled:
+        return "ECPDS_ENABLED is not set"
+    if not config.auth_enabled:
+        return "ECPDS plugin requires AUTH_ENABLED=true"
+    missing = [
+        name
+        for name, value in [
+            ("ECPDS_ALLOWED_USER", config.ecpds_allowed_user),
+            ("ECPDS_ALLOWED_PASS", config.ecpds_allowed_pass),
+            ("ECPDS_ALLOWED_DESTINATION", config.ecpds_allowed_destination),
+        ]
+        if not value
+    ]
+    if missing:
+        return f"required env not set: {', '.join(missing)}"
+    return None
+
+
+def _ecpds_identifier(config: Config, destination: str) -> dict:
+    identifier: dict = {config.ecpds_match_key: destination}
+    raw = config.ecpds_extra_identifier_json.strip()
+    if raw:
+        try:
+            extra = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise SmokeFailure(
+                f"ECPDS_EXTRA_IDENTIFIER is not valid JSON: {e}"
+            ) from e
+        if not isinstance(extra, dict):
+            raise SmokeFailure(
+                "ECPDS_EXTRA_IDENTIFIER must be a JSON object"
+            )
+        identifier.update(extra)
+    return identifier
+
+
+def test_ecpds_allowed_destination_returns_200(config: Config) -> None:
+    """Allowed user reading an entitled destination → 200 SSE stream."""
+    skip = _ecpds_skip_reason(config)
+    if skip:
+        print(f"[INFO] skipping ECPDS smoke test ({skip})")
+        return
+
+    headers = config.auth_headers_for(
+        config.ecpds_allowed_user, config.ecpds_allowed_pass
+    )
+    body = {
+        "event_type": config.ecpds_event_type,
+        "identifier": _ecpds_identifier(config, config.ecpds_allowed_destination),
+    }
+
+    output = capture_watch_output(
+        config,
+        body,
+        max_seconds=2.0,
+        path="/api/v1/watch",
+        headers=headers,
+    )
+    if "expected status 200" in output or "HTTP/1.1 4" in output or "HTTP/1.1 5" in output:
+        raise SmokeFailure(
+            "expected 200 for allowed user + allowed destination, got non-2xx; "
+            f"server response: {truncate_text(output)}"
+        )
+
+
+def test_ecpds_denied_destination_returns_403(config: Config) -> None:
+    """Allowed user reading an unentitled destination → 403."""
+    skip = _ecpds_skip_reason(config)
+    if skip:
+        print(f"[INFO] skipping ECPDS smoke test ({skip})")
+        return
+
+    headers = config.auth_headers_for(
+        config.ecpds_allowed_user, config.ecpds_allowed_pass
+    )
+    body = {
+        "event_type": config.ecpds_event_type,
+        "identifier": _ecpds_identifier(config, config.ecpds_denied_destination),
+    }
+
+    status, response = request_json(config, "POST", "/api/v1/watch", body, headers=headers)
+    if status != 403:
+        raise SmokeFailure(
+            f"expected 403 for allowed user + DENIED destination, got {status}; "
+            f"response: {truncate_text(response)}"
+        )
+
+
+def test_ecpds_notify_unaffected(config: Config) -> None:
+    """notify on an ECPDS-protected stream is not gated by the plugin.
+    Admins can write regardless of ECPDS state, so we use the admin
+    creds here to confirm notify never returns 503/forbidden because of
+    ECPDS."""
+    skip = _ecpds_skip_reason(config)
+    if skip:
+        print(f"[INFO] skipping ECPDS smoke test ({skip})")
+        return
+
+    body = {
+        "event_type": config.ecpds_event_type,
+        "identifier": _ecpds_identifier(config, "any-value-not-checked"),
+        "payload": {"note": "ecpds-notify-bypass-smoke"},
+    }
+    status, response = request_json(
+        config,
+        "POST",
+        "/api/v1/notification",
+        body,
+        headers=config.admin_auth_headers(),
+    )
+    if status == 503:
+        raise SmokeFailure(
+            "notify on ECPDS-protected stream returned 503; the plugin must "
+            "not run on writes. response: " + truncate_text(response)
+        )
+
+
 def expected_compression_value(raw: str) -> str:
     normalized = raw.strip().lower()
     if normalized in {"true", "s2"}:
@@ -1029,6 +1181,18 @@ def main() -> int:
         SmokeCase(
             "jetstream stream policy is inspectable (and optionally matches expected values)",
             test_jetstream_policy_visibility,
+        ),
+        SmokeCase(
+            "ecpds: allowed user + entitled destination -> 200",
+            test_ecpds_allowed_destination_returns_200,
+        ),
+        SmokeCase(
+            "ecpds: allowed user + DENIED destination -> 403",
+            test_ecpds_denied_destination_returns_403,
+        ),
+        SmokeCase(
+            "ecpds: notify on ECPDS-protected stream is not gated",
+            test_ecpds_notify_unaffected,
         ),
     ]
 

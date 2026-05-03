@@ -6,6 +6,12 @@ use crate::{
 use std::collections::HashMap;
 use tracing::debug;
 
+/// Public facade combining the ECPDS HTTP client, the per-username
+/// destination cache, and the destination match-key logic.
+///
+/// One instance is held in a global `OnceLock` and shared across all
+/// route handlers. Construction validates the configuration; per-call
+/// behaviour is concentrated in [`Self::check_access`].
 pub struct EcpdsChecker {
     client: EcpdsClient,
     pub(crate) cache: DestinationCache,

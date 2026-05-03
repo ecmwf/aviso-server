@@ -52,24 +52,28 @@ When enabled:
 | `required` | `bool` | — | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
 | `read_roles` | `map<string, string[]>` | — | Realm-scoped roles for read access (watch/replay). When omitted, any authenticated user can read. Use `["*"]` as the role list to grant realm-wide access. |
 | `write_roles` | `map<string, string[]>` | — | Realm-scoped roles for write access (notify). When omitted, only users matching global `admin_roles` can write. Use `["*"]` as the role list to grant realm-wide access. |
-| `plugins` | `string[]` | — | Optional list of authorization plugins to run after role-based checks. Currently supported: `"ecpds"` (requires `--features ecmwf` build). |
+| `plugins` | `string[]` | — | Optional list of authorization plugins to run after role-based checks. Currently supported: `"ecpds"` (requires `--features ecpds` build). On a build without the required feature, startup fails with a clear error pointing at the offending stream — silent skip would widen access. Empty `plugins: []` is rejected; omit the field instead. Plugins only run when `auth.required` is `true`. |
 
 See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
 
 ## `ecpds`
 
-Optional ECPDS destination authorization. Only available when built with `--features ecmwf`. When configured, streams can reference the `"ecpds"` plugin in their `auth.plugins` list to enforce destination-level access control on `watch` and `replay` requests.
+Optional ECPDS destination authorization. Only available when built with `--features ecpds`. When configured, streams can reference the `"ecpds"` plugin in their `auth.plugins` list to enforce destination-level access control on `watch` and `replay` requests.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `username` | `string` | none | Service account username for ECPDS API authentication. |
-| `password` | `string` | none | Service account password. Redacted in debug output. |
-| `servers` | `string[]` | none | List of ECPDS server base URLs. All servers are queried in parallel; results are merged and deduplicated. |
-| `match_key` | `string` | none | Identifier field to match against the user's destination list (e.g. `"destination"`). |
-| `target_field` | `string` | `"name"` | JSON field to extract from each ECPDS destination record. |
-| `cache_ttl_seconds` | `u64` | `300` | How long (in seconds) to cache a user's destination list before re-fetching. |
+| `username` | `string` | none | Service account username used for HTTP Basic Auth to ECPDS. Must not be empty. |
+| `password` | `string` | none | Service account password. Redacted in debug output and in `/api/v1/schema` responses. Must not be empty. |
+| `servers` | `string[]` | none | List of ECPDS server base URLs. Each must parse as a `http://` or `https://` URL with no query string and no fragment. Path prefixes (e.g. `https://proxy.example/ecpds-api/`) are accepted. The plugin appends `/ecpds/v1/destination/list?id=<username>` itself. |
+| `match_key` | `string` | none | Identifier field to match against the user's destination list (e.g. `"destination"`). Must be a single bare identifier name (no whitespace, `/` or NUL) and must appear in the schema's `topic.key_order` AND be `required: true` in the schema's `identifier`. |
+| `target_field` | `string` | `"name"` | JSON field to extract from each ECPDS destination record. Records that lack this field are silently skipped (logged at `info` as `auth.ecpds.fetch.skipped_record`). |
+| `cache_ttl_seconds` | `u64` | `300` | How long (in seconds) to cache a user's destination list before re-fetching. Must be `> 0`. |
+| `max_entries` | `u64` | `10000` | Maximum number of distinct usernames held in the cache; eviction policy is moka's TinyLFU. Must be `> 0`. |
+| `request_timeout_seconds` | `u64` | `30` | Total wall-clock timeout for a single ECPDS HTTP request, end of TLS handshake to end of response body. Must be `> 0`. |
+| `connect_timeout_seconds` | `u64` | `5` | TCP + TLS handshake timeout for a single ECPDS HTTP request. Must be `> 0`. |
+| `partial_outage_policy` | `"strict"\|"any_success"` | `"strict"` | How to merge per-server destination lists when more than one server is configured. `strict` (recommended): all servers must agree, otherwise 503. `any_success`: succeed if any one server replies (union the lists; warn on divergence). See [ECPDS Destination Authorization](./authentication.md#partial-outage-policy) for the security trade-off. |
 
-See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization) for setup and runtime behavior.
+See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization) for setup and runtime behavior, and the [ECPDS runbook](./ecpds-runbook.md) for operational triage.
 
 ## `metrics`
 
@@ -90,6 +94,16 @@ Exposed metrics:
 | `aviso_sse_connections_total` | counter | `endpoint`, `event_type` | Total SSE connections opened. |
 | `aviso_sse_unique_users_active` | gauge | `endpoint` | Distinct users with active SSE connections. |
 | `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. |
+
+When built with `--features ecpds` and ECPDS is configured, four additional metrics are exposed:
+
+| Metric | Type | Labels | Description |
+|---|---|---|---|
+| `aviso_ecpds_cache_hits_total` | counter | — | ECPDS destination cache hits (requests served without an upstream call). |
+| `aviso_ecpds_cache_misses_total` | counter | — | ECPDS destination cache misses (requests that triggered an upstream fetch). |
+| `aviso_ecpds_cache_size` | gauge | — | Current number of distinct usernames in the cache. Read from moka's authoritative count after eviction. |
+| `aviso_ecpds_access_decisions_total` | counter | `outcome` | Access decisions. `outcome` ∈ {`allow`, `deny_destination`, `deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}. |
+| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check that touched the upstream). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_5xx`, `invalid_response`, `unreachable`, `divergence`}. |
 
 Process-level metrics (CPU, memory, open FDs) are automatically collected on Linux.
 

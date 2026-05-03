@@ -161,15 +161,17 @@ When a per-stream `auth` block is present, `auth.required` must be explicitly se
 
 ## ECPDS Destination Authorization
 
-When built with `--features ecmwf`, Aviso supports an optional authorization plugin that checks whether a user has access to a specific ECPDS destination before allowing `watch` or `replay` requests.
+When built with `--features ecpds`, Aviso supports an optional authorization plugin that checks whether a user has access to a specific ECPDS destination before allowing `watch` or `replay` requests. The plugin is read-only: it never runs on `notify`.
 
 ### Enabling the plugin
 
-1. Build Aviso with the `ecmwf` feature:
+1. Build Aviso with the `ecpds` feature:
 
 ```bash
-cargo build --release --features ecmwf
+cargo build --release --features ecpds
 ```
+
+   On a build without this feature, any YAML containing `plugins: ["ecpds"]` is **rejected at startup** with an error pointing at the offending stream. This is deliberate: silently skipping the plugin would widen access.
 
 2. Add a top-level `ecpds` section to your config with ECPDS service credentials:
 
@@ -181,8 +183,12 @@ ecpds:
     - "https://ecpds-primary.ecmwf.int"
     - "https://ecpds-secondary.ecmwf.int"
   match_key: "destination"
-  target_field: "name"
-  cache_ttl_seconds: 300
+  target_field: "name"            # default: "name"
+  cache_ttl_seconds: 300          # default: 300 (5 min)
+  max_entries: 10000              # default: 10000
+  request_timeout_seconds: 30     # default: 30
+  connect_timeout_seconds: 5      # default: 5
+  partial_outage_policy: strict   # default: strict; alternative: any_success
 ```
 
 3. Enable the plugin on a stream by adding `plugins: ["ecpds"]` to its `auth` block:
@@ -195,34 +201,67 @@ notification_schema:
     topic:
       base: "diss"
       key_order: ["destination", "target", "class", "expver", "domain", "date", "time", "stream", "step"]
+    identifier:
+      destination:
+        - type: StringHandler
+          required: true              # MUST be required
+      # ... other fields ...
     auth:
-      required: true
+      required: true                  # MUST be true
       read_roles:
         ecmwf: ["*"]
       plugins: ["ecpds"]
 ```
 
+The plugin requires (and startup validation enforces):
+
+- `match_key` (default `"destination"`) is present in the schema's `topic.key_order`.
+- The same field is marked `required: true` in the schema's `identifier`. Without this, an operator could deploy a schema where the destination value is optional and a client could bypass the check by simply omitting the field.
+- `auth.required` is `true`. The plugin runs after standard stream auth, so plugins on a stream where `auth.required` is `false` would never execute.
+
 ### How it works at runtime
 
-- On `watch` or `replay`, after standard role-based auth passes, the ECPDS plugin extracts the `match_key` value (e.g. `destination`) from the request identifier.
-- It queries all configured ECPDS servers in parallel for the user's authorized destination list, caching the result for `cache_ttl_seconds`.
-- If the requested destination is in the user's list, the request proceeds. Otherwise, a `403 Forbidden` is returned.
-- Admins (users matching global `admin_roles`) bypass the ECPDS check entirely.
+1. Standard role-based stream auth runs first. If it fails (missing token, wrong realm/role), the request fails before the ECPDS plugin sees it.
+2. The plugin extracts the `match_key` value (e.g. `destination`) from the request's canonicalised identifier.
+3. It looks up the user's destination list in an in-process cache. If absent, it queries the configured ECPDS servers in parallel, then merges per the [`partial_outage_policy`](#partial-outage-policy).
+4. If the requested destination is in the user's list, the request proceeds. Otherwise, `403 Forbidden`.
+5. Users matching the global `auth.admin_roles` bypass step 2-4 entirely.
+
+### Partial-outage policy
+
+When more than one ECPDS server is configured, the `partial_outage_policy` field decides what happens if servers disagree or a subset is down.
+
+| Value | Behaviour | Operational implication |
+|-------|-----------|-------------------------|
+| `strict` (default) | Every configured server must reply successfully **and** return the same set of destinations. Any server failure or any divergence fails the lookup. | Confidentiality-preserving: if servers disagree (replication lag, partial outage), the stricter view wins. **Loss of one server = total ECPDS unavailability.** |
+| `any_success` | The lookup succeeds if any one server replies. The destination list is the union across reachable servers. | Availability-preserving: a single reachable server keeps the plugin working. **An out-of-sync permissive server can widen access** until others come back. Divergence is logged at `warn`. |
+
+The plugin emits `auth.ecpds.fetch.divergence` (`warn`) when servers disagree, in either policy. Operators should treat divergence as a replication issue to investigate at the ECPDS side.
 
 ### Error responses
 
 | Code | HTTP Status | When |
 |------|-------------|------|
 | `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. |
-| `SERVICE_UNAVAILABLE` | `503` | All configured ECPDS servers are unreachable or returned errors. |
+| `SERVICE_UNAVAILABLE` | `503` | The lookup failed under the active `partial_outage_policy`. The cause is in the structured tracing event `auth.ecpds.check.unavailable` and on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_5xx`, `divergence`, `invalid_response`). |
 
 ### Caching
 
-Destination lists are cached per-user for `cache_ttl_seconds` (default: 300). During this window, subsequent requests for the same user skip the ECPDS query. Cache entries expire silently; the next request triggers a fresh fetch.
+Destination lists are cached per-user for `cache_ttl_seconds` (default 300). The cache is bounded at `max_entries` (default 10 000) with TinyLFU eviction. Successful results are cached; **errors are not** — a transient outage doesn't extend itself by being cached.
 
-The `notify` endpoint is not checked by the ECPDS plugin. Destination authorization only applies to read operations (`watch`, `replay`).
+The cache is **single-flight**: concurrent requests for the same uncached username produce exactly one upstream ECPDS call; the rest await its result. This protects ECPDS during SSE-reconnect storms.
 
-For the full `ecpds` field reference, see the [`ecpds` section in Configuration Reference](./configuration-reference.md#ecpds).
+The cache is **process-local**. Restarting Aviso clears it. Multiple replicas have independent caches.
+
+### What is not checked
+
+`notify` (write) is never gated by ECPDS. The plugin applies only to reads (`watch`, `replay`).
+
+### No retries by design
+
+Aviso does not retry failed ECPDS calls. A 503 is the signal to investigate ECPDS itself, not to bump timeouts. See the [ECPDS runbook](./ecpds-runbook.md) for triage steps.
+
+For the full `ecpds` field reference, see the [`ecpds` section in Configuration Reference](./configuration-reference.md#ecpds). For metrics and tracing event names, see the [ECPDS runbook](./ecpds-runbook.md).
 
 ## Admin Endpoints
 

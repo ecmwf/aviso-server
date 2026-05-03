@@ -37,6 +37,7 @@
 - [Configuration](./configuration.md)
 - [Configuration Reference](./configuration-reference.md)
 - [Authentication](./authentication.md)
+- [ECPDS Plugin Runbook](./ecpds-runbook.md)
 
 ---
 
