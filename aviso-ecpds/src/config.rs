@@ -13,6 +13,37 @@ fn default_max_entries() -> u64 {
     10_000
 }
 
+/// How to merge per-server destination lists when more than one ECPDS
+/// server is configured.
+///
+/// Operational trade-off:
+///
+/// - [`PartialOutagePolicy::Strict`] (default) — every configured
+///   server must respond successfully **and** return the same set of
+///   destinations. Any server failure or any divergence between
+///   servers fails the lookup with [`crate::EcpdsError::ServiceUnavailable`].
+///   This is the confidentiality-preserving default: under a
+///   replication lag or partial outage, denying access is preferable
+///   to potentially granting access based on a stale or incomplete
+///   server's view.
+///
+/// - [`PartialOutagePolicy::AnySuccess`] — succeed as soon as any one
+///   server responds; union the destination lists across reachable
+///   servers. This is more available but lets a single permissive (or
+///   compromised) server widen access. Loud `tracing::warn!` is
+///   emitted on divergence so on-call sees it.
+#[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+pub enum PartialOutagePolicy {
+    #[default]
+    Strict,
+    AnySuccess,
+}
+
+fn default_partial_outage_policy() -> PartialOutagePolicy {
+    PartialOutagePolicy::default()
+}
+
 /// Static configuration for the ECPDS authorization plugin.
 ///
 /// Field defaults are operationally meaningful:
@@ -24,6 +55,8 @@ fn default_max_entries() -> u64 {
 /// - `target_field = "name"`: the field of each ECPDS destination
 ///   record whose string value is matched against the request's
 ///   `match_key`.
+/// - `partial_outage_policy = Strict`: see
+///   [`PartialOutagePolicy`] for the security trade-off.
 #[derive(Deserialize, Serialize, Clone)]
 pub struct EcpdsConfig {
     pub username: String,
@@ -35,6 +68,8 @@ pub struct EcpdsConfig {
     pub cache_ttl_seconds: u64,
     #[serde(default = "default_max_entries")]
     pub max_entries: u64,
+    #[serde(default = "default_partial_outage_policy")]
+    pub partial_outage_policy: PartialOutagePolicy,
     pub servers: Vec<String>,
 }
 
@@ -47,6 +82,7 @@ impl fmt::Debug for EcpdsConfig {
             .field("match_key", &self.match_key)
             .field("cache_ttl_seconds", &self.cache_ttl_seconds)
             .field("max_entries", &self.max_entries)
+            .field("partial_outage_policy", &self.partial_outage_policy)
             .field("servers", &self.servers)
             .finish()
     }
@@ -65,6 +101,7 @@ mod tests {
             match_key: "destination".to_string(),
             cache_ttl_seconds: 300,
             max_entries: 10_000,
+            partial_outage_policy: PartialOutagePolicy::Strict,
             servers: vec!["http://server1.example.com".to_string()],
         };
 

@@ -1,8 +1,9 @@
-use crate::config::EcpdsConfig;
+use crate::config::{EcpdsConfig, PartialOutagePolicy};
 use futures::future::join_all;
 use serde::Deserialize;
+use std::collections::HashSet;
 use thiserror::Error;
-use tracing::{debug, warn};
+use tracing::{debug, info, warn};
 
 /// Errors produced by the ECPDS client and checker.
 ///
@@ -63,6 +64,7 @@ pub struct EcpdsClient {
     username: String,
     password: String,
     target_field: String,
+    partial_outage_policy: PartialOutagePolicy,
 }
 
 impl EcpdsClient {
@@ -95,11 +97,17 @@ impl EcpdsClient {
             username: config.username.clone(),
             password: config.password.clone(),
             target_field: config.target_field.clone(),
+            partial_outage_policy: config.partial_outage_policy,
         })
     }
 
-    /// Query all configured ECPDS servers in parallel for a user's destinations,
-    /// merge and deduplicate the results.
+    /// Query all configured ECPDS servers in parallel for `username`'s
+    /// destination list, then merge per the configured
+    /// [`PartialOutagePolicy`].
+    ///
+    /// Returns a sorted, deduplicated `Vec<String>` on success, or
+    /// [`EcpdsError::ServiceUnavailable`] when the policy's success
+    /// criterion is not met.
     pub async fn fetch_user_destinations(&self, username: &str) -> Result<Vec<String>, EcpdsError> {
         let futures = self
             .servers
@@ -108,33 +116,89 @@ impl EcpdsClient {
 
         let results = join_all(futures).await;
 
-        let mut all_destinations: Vec<String> = Vec::new();
-        let mut any_success = false;
-
-        for (i, result) in results.into_iter().enumerate() {
+        for (i, result) in results.iter().enumerate() {
             match result {
-                Ok(mut dests) => {
-                    any_success = true;
-                    all_destinations.append(&mut dests);
-                    debug!(
-                        "ECPDS server {} returned destinations for user {}",
-                        self.servers[i], username
-                    );
-                }
-                Err(e) => {
-                    warn!("ECPDS server {} failed: {}", self.servers[i], e);
-                }
+                Ok(_) => debug!(
+                    server_index = i,
+                    server = %self.servers[i],
+                    username,
+                    "auth.ecpds.fetch.succeeded"
+                ),
+                Err(e) => warn!(
+                    server_index = i,
+                    server = %self.servers[i],
+                    username,
+                    error = %e,
+                    "auth.ecpds.fetch.failed"
+                ),
             }
         }
 
-        if !any_success {
+        match self.partial_outage_policy {
+            PartialOutagePolicy::Strict => self.merge_strict(results),
+            PartialOutagePolicy::AnySuccess => self.merge_any_success(results),
+        }
+    }
+
+    fn merge_strict(
+        &self,
+        results: Vec<Result<Vec<String>, String>>,
+    ) -> Result<Vec<String>, EcpdsError> {
+        let mut canonical: Option<HashSet<String>> = None;
+        for (i, result) in results.into_iter().enumerate() {
+            let dests = result.map_err(|_| EcpdsError::ServiceUnavailable)?;
+            let set: HashSet<String> = dests.into_iter().collect();
+            match canonical.as_ref() {
+                None => canonical = Some(set),
+                Some(prev) if prev == &set => {}
+                Some(prev) => {
+                    let divergence_count = prev.symmetric_difference(&set).count();
+                    warn!(
+                        server_index = i,
+                        divergence_count,
+                        "auth.ecpds.fetch.divergence"
+                    );
+                    return Err(EcpdsError::ServiceUnavailable);
+                }
+            }
+        }
+        let mut destinations: Vec<String> = canonical.unwrap_or_default().into_iter().collect();
+        destinations.sort();
+        Ok(destinations)
+    }
+
+    fn merge_any_success(
+        &self,
+        results: Vec<Result<Vec<String>, String>>,
+    ) -> Result<Vec<String>, EcpdsError> {
+        let mut server_sets: Vec<HashSet<String>> = Vec::new();
+        for result in results {
+            if let Ok(dests) = result {
+                server_sets.push(dests.into_iter().collect());
+            }
+        }
+        if server_sets.is_empty() {
             return Err(EcpdsError::ServiceUnavailable);
         }
 
-        all_destinations.sort();
-        all_destinations.dedup();
+        let union: HashSet<String> = server_sets.iter().flat_map(|s| s.iter().cloned()).collect();
+        let all_agree = server_sets.iter().all(|s| s == &union);
+        if !all_agree && server_sets.len() > 1 {
+            let max_div: usize = server_sets
+                .iter()
+                .map(|s| union.symmetric_difference(s).count())
+                .max()
+                .unwrap_or(0);
+            warn!(
+                divergence_count = max_div,
+                reachable_servers = server_sets.len(),
+                "auth.ecpds.fetch.divergence"
+            );
+        }
 
-        Ok(all_destinations)
+        let mut destinations: Vec<String> = union.into_iter().collect();
+        destinations.sort();
+        Ok(destinations)
     }
 
     /// Build a request URL by safely appending the destination-list path to
@@ -177,7 +241,8 @@ impl EcpdsClient {
             .await
             .map_err(|e| format!("JSON parse error: {e}"))?;
 
-        let destinations = ecpds_resp
+        let total = ecpds_resp.destination_list.len();
+        let destinations: Vec<String> = ecpds_resp
             .destination_list
             .into_iter()
             .filter_map(|record| {
@@ -188,6 +253,16 @@ impl EcpdsClient {
             })
             .collect();
 
+        let skipped = total - destinations.len();
+        if skipped > 0 {
+            info!(
+                target_field = %self.target_field,
+                skipped,
+                total,
+                "auth.ecpds.fetch.skipped_record"
+            );
+        }
+
         Ok(destinations)
     }
 }
@@ -195,7 +270,7 @@ impl EcpdsClient {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::config::EcpdsConfig;
+    use crate::config::{EcpdsConfig, PartialOutagePolicy};
 
     fn make_config(servers: Vec<String>) -> EcpdsConfig {
         EcpdsConfig {
@@ -205,6 +280,7 @@ mod tests {
             match_key: "destination".to_string(),
             cache_ttl_seconds: 300,
             max_entries: 1000,
+            partial_outage_policy: PartialOutagePolicy::Strict,
             servers,
         }
     }
@@ -231,7 +307,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_merges_and_deduplicates_multi_server() {
+    async fn any_success_policy_merges_and_deduplicates_multi_server() {
         let mut server_a = mockito::Server::new_async().await;
         let mut server_b = mockito::Server::new_async().await;
 
@@ -253,7 +329,8 @@ mod tests {
             .create_async()
             .await;
 
-        let config = make_config(vec![server_a.url(), server_b.url()]);
+        let mut config = make_config(vec![server_a.url(), server_b.url()]);
+        config.partial_outage_policy = PartialOutagePolicy::AnySuccess;
         let client = EcpdsClient::new(&config).expect("client must build");
         let mut result = client.fetch_user_destinations("testuser").await.unwrap();
         result.sort();
@@ -270,7 +347,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn fetch_succeeds_when_one_server_is_down() {
+    async fn any_success_policy_succeeds_when_one_server_is_down() {
         let mut server = mockito::Server::new_async().await;
         server
             .mock("GET", "/ecpds/v1/destination/list")
@@ -283,10 +360,106 @@ mod tests {
             .create_async()
             .await;
 
-        let config = make_config(vec!["http://localhost:1".to_string(), server.url()]);
+        let mut config = make_config(vec!["http://localhost:1".to_string(), server.url()]);
+        config.partial_outage_policy = PartialOutagePolicy::AnySuccess;
         let client = EcpdsClient::new(&config).expect("client must build");
         let result = client.fetch_user_destinations("testuser").await.unwrap();
         assert!(result.contains(&"CIP".to_string()));
+    }
+
+    #[tokio::test]
+    async fn strict_policy_fails_when_one_server_is_down() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"destinationList":[{"name":"CIP"}],"success":"yes"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec!["http://localhost:1".to_string(), server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("strict policy must fail when any server is unreachable");
+        assert!(matches!(err, EcpdsError::ServiceUnavailable));
+    }
+
+    #[tokio::test]
+    async fn strict_policy_fails_when_servers_disagree() {
+        let mut server_a = mockito::Server::new_async().await;
+        let mut server_b = mockito::Server::new_async().await;
+        server_a
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"destinationList":[{"name":"CIP"}],"success":"yes"}"#)
+            .create_async()
+            .await;
+        server_b
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"destinationList":[{"name":"BAR"}],"success":"yes"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server_a.url(), server_b.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("strict policy must fail when servers disagree");
+        assert!(matches!(err, EcpdsError::ServiceUnavailable));
+    }
+
+    #[tokio::test]
+    async fn strict_policy_succeeds_when_servers_agree() {
+        let mut server_a = mockito::Server::new_async().await;
+        let mut server_b = mockito::Server::new_async().await;
+        for srv in [&mut server_a, &mut server_b] {
+            srv.mock("GET", "/ecpds/v1/destination/list")
+                .match_query(mockito::Matcher::Any)
+                .with_status(200)
+                .with_header("content-type", "application/json")
+                .with_body(
+                    r#"{"destinationList":[{"name":"CIP"},{"name":"FOO"}],"success":"yes"}"#,
+                )
+                .create_async()
+                .await;
+        }
+
+        let config = make_config(vec![server_a.url(), server_b.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let mut result = client.fetch_user_destinations("testuser").await.unwrap();
+        result.sort();
+        assert_eq!(result, vec!["CIP".to_string(), "FOO".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn parsing_tolerates_records_missing_target_field() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"destinationList":[{"name":"CIP"},{"id":"no-name"},{"name":"FOO"}],"success":"yes"}"#,
+            )
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let mut result = client.fetch_user_destinations("testuser").await.unwrap();
+        result.sort();
+        assert_eq!(result, vec!["CIP".to_string(), "FOO".to_string()]);
     }
 
     #[tokio::test]

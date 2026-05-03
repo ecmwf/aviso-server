@@ -1822,6 +1822,7 @@ mod tests {
                 match_key: "destination".to_string(),
                 cache_ttl_seconds: 300,
             max_entries: 10_000,
+            partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
                 servers: vec!["http://localhost".to_string()],
             }
         }

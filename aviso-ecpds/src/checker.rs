@@ -86,6 +86,7 @@ mod tests {
             match_key: "destination".to_string(),
             cache_ttl_seconds: 300,
             max_entries: 1000,
+            partial_outage_policy: crate::config::PartialOutagePolicy::Strict,
             servers: vec!["http://localhost:1".to_string()],
         }
     }
