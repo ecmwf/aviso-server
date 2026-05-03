@@ -268,7 +268,10 @@ async fn watch_ecpds_concurrent_requests_coalesce() {
 async fn watch_ecpds_username_with_special_chars_handled() {
     let app = spawn_streaming_test_app_with_auth().await;
     let client = reqwest::Client::new();
-    let token = ecpds_token("ecpds-user-special-chars", &["reader"]);
+    let username = "u+s er&name";
+    let token = ecpds_token(username, &["reader"]);
+    let mock = mock_ecpds();
+    let before = mock.count_for(username);
 
     let response = client
         .post(format!("{}/api/v1/watch", app.address))
@@ -280,6 +283,13 @@ async fn watch_ecpds_username_with_special_chars_handled() {
         .expect("watch request should complete");
 
     assert_eq!(response.status(), reqwest::StatusCode::OK);
+    let after = mock.count_for(username);
+    assert_eq!(
+        after - before,
+        1,
+        "username with `+`, ` ` and `&` must round-trip URL-encoded \
+         and reach the upstream identified by the original (decoded) value"
+    );
 }
 
 #[tokio::test]

@@ -34,6 +34,7 @@ pub struct EcpdsMetrics {
     pub cache_misses_total: IntCounter,
     pub cache_size: IntGauge,
     pub access_decisions_total: IntCounterVec,
+    pub fetch_total: IntCounterVec,
 }
 
 /// Application-level metrics registered in a shared Prometheus registry.
@@ -140,6 +141,15 @@ impl AppMetrics {
                 opts!(
                     "aviso_ecpds_access_decisions_total",
                     "ECPDS access check outcomes"
+                ),
+                &["outcome"],
+                registry
+            )
+            .expect("metric must register"),
+            fetch_total: register_int_counter_vec_with_registry!(
+                opts!(
+                    "aviso_ecpds_fetch_total",
+                    "ECPDS upstream fetch outcomes (recorded once per access check that touched the upstream)"
                 ),
                 &["outcome"],
                 registry

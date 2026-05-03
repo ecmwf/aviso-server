@@ -1,9 +1,10 @@
 use crate::{
     cache::{CacheOutcome, DestinationCache},
-    client::{EcpdsClient, EcpdsError},
+    client::{DenyReason, EcpdsClient, EcpdsError},
     config::EcpdsConfig,
 };
 use std::collections::HashMap;
+use tracing::debug;
 
 pub struct EcpdsChecker {
     client: EcpdsClient,
@@ -43,10 +44,13 @@ impl EcpdsChecker {
         identifier: &HashMap<String, String>,
     ) -> Result<CacheOutcome, EcpdsError> {
         let destination = identifier.get(&self.match_key).ok_or_else(|| {
-            EcpdsError::AccessDenied(format!(
-                "Required field '{}' not found in request identifiers",
-                self.match_key
-            ))
+            EcpdsError::AccessDenied {
+                reason: DenyReason::MatchKeyMissing,
+                message: format!(
+                    "Required field '{}' not found in request identifiers",
+                    self.match_key
+                ),
+            }
         })?;
 
         let client = &self.client;
@@ -55,13 +59,29 @@ impl EcpdsChecker {
             .try_get_or_fetch(username, || client.fetch_user_destinations(username))
             .await?;
 
+        match outcome {
+            CacheOutcome::Hit => debug!(
+                event_name = "auth.ecpds.cache.hit",
+                username,
+                "ECPDS destination cache hit"
+            ),
+            CacheOutcome::Miss => debug!(
+                event_name = "auth.ecpds.cache.miss",
+                username,
+                "ECPDS destination cache miss"
+            ),
+        }
+
         if destinations.contains(destination) {
             Ok(outcome)
         } else {
-            Err(EcpdsError::AccessDenied(format!(
-                "User '{}' does not have access to destination '{}'",
-                username, destination
-            )))
+            Err(EcpdsError::AccessDenied {
+                reason: DenyReason::DestinationNotInList,
+                message: format!(
+                    "User '{}' does not have access to destination '{}'",
+                    username, destination
+                ),
+            })
         }
     }
 
@@ -124,7 +144,7 @@ mod tests {
         let result = checker
             .check_access("john", &make_identifier("BAR"))
             .await;
-        assert!(matches!(result, Err(EcpdsError::AccessDenied(_))));
+        assert!(matches!(result, Err(EcpdsError::AccessDenied { .. })));
     }
 
     #[tokio::test]
@@ -134,7 +154,7 @@ mod tests {
         let empty: HashMap<String, String> = HashMap::new();
 
         let result = checker.check_access("john", &empty).await;
-        assert!(matches!(result, Err(EcpdsError::AccessDenied(_))));
+        assert!(matches!(result, Err(EcpdsError::AccessDenied { .. })));
     }
 
     #[tokio::test]
@@ -145,6 +165,6 @@ mod tests {
         let result = checker
             .check_access("john", &make_identifier("CIP"))
             .await;
-        assert!(matches!(result, Err(EcpdsError::ServiceUnavailable)));
+        assert!(matches!(result, Err(EcpdsError::ServiceUnavailable { .. })));
     }
 }

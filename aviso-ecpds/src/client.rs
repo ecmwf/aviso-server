@@ -5,23 +5,93 @@ use std::collections::HashSet;
 use thiserror::Error;
 use tracing::{debug, info, warn};
 
+/// Coarse-grained reason a single ECPDS fetch (or merged fetch under a
+/// partial-outage policy) failed. Surfaces in
+/// [`EcpdsError::ServiceUnavailable { .. }::fetch_outcome`] and is recorded
+/// as the `outcome` label on `aviso_ecpds_fetch_total` so on-call can
+/// distinguish "upstream is down" from "credentials are wrong" without
+/// reading logs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FetchOutcome {
+    Success,
+    Unauthorized,
+    Forbidden,
+    ServerError,
+    InvalidResponse,
+    Unreachable,
+    Divergence,
+}
+
+impl FetchOutcome {
+    /// Stable Prometheus label string for this outcome.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Success => "success",
+            Self::Unauthorized => "http_401",
+            Self::Forbidden => "http_403",
+            Self::ServerError => "http_5xx",
+            Self::InvalidResponse => "invalid_response",
+            Self::Unreachable => "unreachable",
+            Self::Divergence => "divergence",
+        }
+    }
+
+    fn pessimistic_max(self, other: Self) -> Self {
+        fn rank(o: FetchOutcome) -> u8 {
+            match o {
+                FetchOutcome::Unauthorized => 6,
+                FetchOutcome::Forbidden => 5,
+                FetchOutcome::InvalidResponse => 4,
+                FetchOutcome::ServerError => 3,
+                FetchOutcome::Unreachable => 2,
+                FetchOutcome::Divergence => 1,
+                FetchOutcome::Success => 0,
+            }
+        }
+        if rank(other) > rank(self) { other } else { self }
+    }
+}
+
+/// Why an ECPDS access check denied the user. Maps 1:1 to the
+/// `outcome` label on `aviso_ecpds_access_decisions_total`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DenyReason {
+    DestinationNotInList,
+    MatchKeyMissing,
+}
+
+impl DenyReason {
+    /// Stable Prometheus label string for this reason.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::DestinationNotInList => "deny_destination",
+            Self::MatchKeyMissing => "deny_match_key_missing",
+        }
+    }
+}
+
 /// Errors produced by the ECPDS client and checker.
 ///
-/// `Display` strings are not part of the public contract; route handlers
-/// match on variants, not message text.
+/// `Display` strings are not part of the public contract; route
+/// handlers match on variants and use [`FetchOutcome`] / [`DenyReason`]
+/// for typed branching, not message text.
 #[derive(Debug, Error)]
 pub enum EcpdsError {
-    /// All configured ECPDS servers failed to respond, or no server-level
-    /// success was achieved under the active partial-outage policy.
-    /// Maps to HTTP 503 at the route layer.
-    #[error("ECPDS service is unaccessible")]
-    ServiceUnavailable,
+    /// The merged fetch under the active partial-outage policy did
+    /// not succeed. The `fetch_outcome` carries the dominant cause
+    /// (e.g. all servers were unreachable, returned 401, etc.). Maps
+    /// to HTTP 503 at the route layer.
+    #[error("ECPDS service is unaccessible ({fetch_outcome:?})")]
+    ServiceUnavailable { fetch_outcome: FetchOutcome },
 
-    /// The user is not allowed to read for the requested destination, or
-    /// the destination identifier was missing from the request. Maps to
-    /// HTTP 403 at the route layer.
-    #[error("Access denied: {0}")]
-    AccessDenied(String),
+    /// The user is not allowed to read for the requested destination,
+    /// or the destination identifier was missing from the request.
+    /// Maps to HTTP 403 at the route layer.
+    #[error("Access denied: {message}")]
+    AccessDenied {
+        reason: DenyReason,
+        message: String,
+    },
 
     /// An ECPDS server returned a body that could not be parsed against
     /// our expected schema. Logged with the offending server index.
@@ -47,14 +117,50 @@ pub enum EcpdsError {
     #[error("HTTP client construction failed: {0}")]
     HttpClientBuild(#[source] reqwest::Error),
 
-    /// In-flight HTTP request to an ECPDS server failed (network
-    /// error, timeout, non-success status). Captured per-server so
-    /// the merge layer can decide policy outcome.
+    /// In-flight HTTP request to an ECPDS server failed. `status` is
+    /// `None` for network/timeout errors and `Some(code)` when the
+    /// server returned a non-success HTTP status. Captured per-server
+    /// so the merge layer can categorise the failure into a
+    /// [`FetchOutcome`].
     #[error("HTTP request to ECPDS server {server_index} failed: {message}")]
     Http {
         server_index: usize,
+        status: Option<u16>,
         message: String,
     },
+}
+
+impl EcpdsError {
+    /// Per-error fetch outcome category. Used by the merge layer to
+    /// derive the dominant `FetchOutcome` for a multi-server failure
+    /// and by the route layer to label
+    /// `aviso_ecpds_fetch_total{outcome=...}`.
+    pub fn fetch_outcome(&self) -> FetchOutcome {
+        match self {
+            Self::Http { status, .. } => match status {
+                Some(401) => FetchOutcome::Unauthorized,
+                Some(403) => FetchOutcome::Forbidden,
+                Some(s) if (500..600).contains(s) => FetchOutcome::ServerError,
+                Some(_) => FetchOutcome::ServerError,
+                None => FetchOutcome::Unreachable,
+            },
+            Self::InvalidResponse { .. } => FetchOutcome::InvalidResponse,
+            Self::ServiceUnavailable { fetch_outcome } => *fetch_outcome,
+            Self::AccessDenied { .. }
+            | Self::InvalidServerUrl { .. }
+            | Self::HttpClientBuild(_) => FetchOutcome::Unreachable,
+        }
+    }
+
+    /// Typed deny reason if this error is an [`Self::AccessDenied`],
+    /// otherwise `None`. Used by the route layer to label
+    /// `aviso_ecpds_access_decisions_total`.
+    pub fn deny_reason(&self) -> Option<DenyReason> {
+        match self {
+            Self::AccessDenied { reason, .. } => Some(*reason),
+            _ => None,
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -115,11 +221,13 @@ impl EcpdsClient {
     /// [`PartialOutagePolicy`].
     ///
     /// Returns a sorted, deduplicated `Vec<String>` on success, or
-    /// [`EcpdsError::ServiceUnavailable`] when the policy's success
+    /// [`EcpdsError::ServiceUnavailable { .. }`] when the policy's success
     /// criterion is not met.
     pub async fn fetch_user_destinations(&self, username: &str) -> Result<Vec<String>, EcpdsError> {
         if self.servers.is_empty() {
-            return Err(EcpdsError::ServiceUnavailable);
+            return Err(EcpdsError::ServiceUnavailable {
+                fetch_outcome: FetchOutcome::Unreachable,
+            });
         }
 
         let futures = self
@@ -133,17 +241,19 @@ impl EcpdsClient {
         for (i, result) in results.iter().enumerate() {
             match result {
                 Ok(_) => debug!(
+                    event_name = "auth.ecpds.fetch.succeeded",
                     server_index = i,
                     server = %self.servers[i],
                     username,
-                    "auth.ecpds.fetch.succeeded"
+                    "ECPDS server fetch succeeded"
                 ),
                 Err(e) => warn!(
+                    event_name = "auth.ecpds.fetch.failed",
                     server_index = i,
                     server = %self.servers[i],
                     username,
                     error = %e,
-                    "auth.ecpds.fetch.failed"
+                    "ECPDS server fetch failed"
                 ),
             }
         }
@@ -159,11 +269,20 @@ impl EcpdsClient {
         results: Vec<Result<Vec<String>, EcpdsError>>,
     ) -> Result<Vec<String>, EcpdsError> {
         if results.is_empty() {
-            return Err(EcpdsError::ServiceUnavailable);
+            return Err(EcpdsError::ServiceUnavailable {
+                fetch_outcome: FetchOutcome::Unreachable,
+            });
         }
         let mut canonical: Option<HashSet<String>> = None;
         for (i, result) in results.into_iter().enumerate() {
-            let dests = result.map_err(|_| EcpdsError::ServiceUnavailable)?;
+            let dests = match result {
+                Ok(d) => d,
+                Err(e) => {
+                    return Err(EcpdsError::ServiceUnavailable {
+                        fetch_outcome: e.fetch_outcome(),
+                    });
+                }
+            };
             let set: HashSet<String> = dests.into_iter().collect();
             match canonical.as_ref() {
                 None => canonical = Some(set),
@@ -171,11 +290,14 @@ impl EcpdsClient {
                 Some(prev) => {
                     let divergence_count = prev.symmetric_difference(&set).count();
                     warn!(
+                        event_name = "auth.ecpds.fetch.divergence",
                         server_index = i,
                         divergence_count,
-                        "auth.ecpds.fetch.divergence"
+                        "ECPDS servers disagree under strict policy"
                     );
-                    return Err(EcpdsError::ServiceUnavailable);
+                    return Err(EcpdsError::ServiceUnavailable {
+                        fetch_outcome: FetchOutcome::Divergence,
+                    });
                 }
             }
         }
@@ -190,13 +312,23 @@ impl EcpdsClient {
         results: Vec<Result<Vec<String>, EcpdsError>>,
     ) -> Result<Vec<String>, EcpdsError> {
         let mut server_sets: Vec<HashSet<String>> = Vec::new();
+        let mut worst_failure: Option<FetchOutcome> = None;
         for result in results {
-            if let Ok(dests) = result {
-                server_sets.push(dests.into_iter().collect());
+            match result {
+                Ok(dests) => server_sets.push(dests.into_iter().collect()),
+                Err(e) => {
+                    let outcome = e.fetch_outcome();
+                    worst_failure = Some(match worst_failure {
+                        None => outcome,
+                        Some(prev) => prev.pessimistic_max(outcome),
+                    });
+                }
             }
         }
         if server_sets.is_empty() {
-            return Err(EcpdsError::ServiceUnavailable);
+            return Err(EcpdsError::ServiceUnavailable {
+                fetch_outcome: worst_failure.unwrap_or(FetchOutcome::Unreachable),
+            });
         }
 
         let union: HashSet<String> = server_sets.iter().flat_map(|s| s.iter().cloned()).collect();
@@ -212,9 +344,10 @@ impl EcpdsClient {
                 }
             }
             warn!(
+                event_name = "auth.ecpds.fetch.divergence",
                 pairwise_divergence_count = max_pair_div,
                 reachable_servers = server_sets.len(),
-                "auth.ecpds.fetch.divergence"
+                "ECPDS servers disagree under any_success policy (using union)"
             );
         }
 
@@ -249,6 +382,7 @@ impl EcpdsClient {
         let url = Self::build_request_url(server, username).map_err(|message| {
             EcpdsError::Http {
                 server_index,
+                status: None,
                 message,
             }
         })?;
@@ -260,6 +394,7 @@ impl EcpdsClient {
             .await
             .map_err(|e| EcpdsError::Http {
                 server_index,
+                status: None,
                 message: e.to_string(),
             })?;
 
@@ -267,6 +402,7 @@ impl EcpdsClient {
         if !status.is_success() {
             return Err(EcpdsError::Http {
                 server_index,
+                status: Some(status.as_u16()),
                 message: format!("HTTP {status}"),
             });
         }
@@ -292,10 +428,11 @@ impl EcpdsClient {
         let skipped = total - destinations.len();
         if skipped > 0 {
             info!(
+                event_name = "auth.ecpds.fetch.skipped_record",
                 target_field = %self.target_field,
                 skipped,
                 total,
-                "auth.ecpds.fetch.skipped_record"
+                "ECPDS records missing target_field were skipped"
             );
         }
 
@@ -381,7 +518,7 @@ mod tests {
         let config = make_config(vec!["http://localhost:1".to_string()]);
         let client = EcpdsClient::new(&config).expect("client must build");
         let result = client.fetch_user_destinations("testuser").await;
-        assert!(matches!(result, Err(EcpdsError::ServiceUnavailable)));
+        assert!(matches!(result, Err(EcpdsError::ServiceUnavailable { .. })));
     }
 
     #[tokio::test]
@@ -423,7 +560,7 @@ mod tests {
             .fetch_user_destinations("testuser")
             .await
             .expect_err("strict policy must fail when any server is unreachable");
-        assert!(matches!(err, EcpdsError::ServiceUnavailable));
+        assert!(matches!(err, EcpdsError::ServiceUnavailable { .. }));
     }
 
     #[tokio::test]
@@ -453,7 +590,7 @@ mod tests {
             .fetch_user_destinations("testuser")
             .await
             .expect_err("strict policy must fail when servers disagree");
-        assert!(matches!(err, EcpdsError::ServiceUnavailable));
+        assert!(matches!(err, EcpdsError::ServiceUnavailable { .. }));
     }
 
     #[tokio::test]
@@ -477,6 +614,82 @@ mod tests {
         let mut result = client.fetch_user_destinations("testuser").await.unwrap();
         result.sort();
         assert_eq!(result, vec!["CIP".to_string(), "FOO".to_string()]);
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_http_401_as_unauthorized() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(401)
+            .with_body(r#"{"error":"unauthorized"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("must fail");
+        let outcome = err.fetch_outcome();
+        assert_eq!(outcome, FetchOutcome::Unauthorized, "got {outcome:?}");
+        assert_eq!(outcome.label(), "http_401");
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_http_500_as_server_error() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(500)
+            .with_body(r#"{"error":"oops"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("must fail");
+        assert_eq!(err.fetch_outcome(), FetchOutcome::ServerError);
+        assert_eq!(err.fetch_outcome().label(), "http_5xx");
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_malformed_json_as_invalid_response() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body("not even close to valid json")
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("must fail");
+        assert_eq!(err.fetch_outcome(), FetchOutcome::InvalidResponse);
+        assert_eq!(err.fetch_outcome().label(), "invalid_response");
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_unreachable_as_unreachable() {
+        let config = make_config(vec!["http://127.0.0.1:1".to_string()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("must fail");
+        assert_eq!(err.fetch_outcome(), FetchOutcome::Unreachable);
     }
 
     #[tokio::test]

@@ -234,12 +234,24 @@ pub async fn enforce_ecpds_auth(
         m.ecpds.cache_size.set(checker.cache_entry_count() as i64);
     }
 
+    let record_fetch = |outcome_label: &str| {
+        if let Some(m) = metrics.as_ref() {
+            m.ecpds
+                .fetch_total
+                .with_label_values(&[outcome_label])
+                .inc();
+        }
+    };
+
     match result {
         Ok(cache_outcome) => {
             if let Some(m) = metrics.as_ref() {
                 match cache_outcome {
                     aviso_ecpds::cache::CacheOutcome::Hit => m.ecpds.cache_hits_total.inc(),
-                    aviso_ecpds::cache::CacheOutcome::Miss => m.ecpds.cache_misses_total.inc(),
+                    aviso_ecpds::cache::CacheOutcome::Miss => {
+                        m.ecpds.cache_misses_total.inc();
+                        record_fetch(aviso_ecpds::client::FetchOutcome::Success.label());
+                    }
                 }
             }
             tracing::info!(
@@ -254,41 +266,35 @@ pub async fn enforce_ecpds_auth(
             record_decision("allow");
             Ok(())
         }
-        Err(aviso_ecpds::EcpdsError::AccessDenied(msg)) => {
-            let reason = if msg.contains("Required field") {
-                "match_key_missing"
-            } else {
-                "destination_not_in_user_list"
-            };
+        Err(aviso_ecpds::EcpdsError::AccessDenied { reason, message }) => {
             tracing::warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_name = "auth.ecpds.check.denied",
                 event_type = %event_type,
                 username = %user.username,
-                reason,
+                reason = ?reason,
                 "ECPDS access denied"
             );
-            record_decision(if reason == "match_key_missing" {
-                "deny_match_key_missing"
-            } else {
-                "deny_destination"
-            });
-            Err(forbidden_response(&msg))
+            record_decision(reason.label());
+            Err(forbidden_response(&message))
         }
-        Err(aviso_ecpds::EcpdsError::ServiceUnavailable) => {
+        Err(aviso_ecpds::EcpdsError::ServiceUnavailable { fetch_outcome }) => {
             tracing::warn!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_name = "auth.ecpds.check.unavailable",
                 event_type = %event_type,
                 username = %user.username,
+                fetch_outcome = ?fetch_outcome,
                 "ECPDS service unavailable"
             );
             record_decision("unavailable");
+            record_fetch(fetch_outcome.label());
             Err(ecpds_service_unavailable_response())
         }
         Err(e) => {
+            let outcome = e.fetch_outcome();
             tracing::error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
@@ -299,6 +305,7 @@ pub async fn enforce_ecpds_auth(
                 "Unexpected ECPDS error"
             );
             record_decision("error");
+            record_fetch(outcome.label());
             Err(HttpResponse::InternalServerError().json(serde_json::json!({
                 "code": "INTERNAL_ERROR",
                 "error": "internal_error",

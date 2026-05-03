@@ -114,20 +114,28 @@ impl DestinationCache {
 ///
 /// Variants whose source type is not `Clone` (wrapped
 /// `reqwest::Error`, `url::ParseError`) collapse to
-/// [`EcpdsError::ServiceUnavailable`] — the route layer maps that to
+/// [`EcpdsError::ServiceUnavailable { .. }`] — the route layer maps that to
 /// HTTP 503, which is the right semantics when an upstream call
 /// failed. Collapsing to `AccessDenied` would incorrectly surface as
 /// HTTP 403 to waiters, suggesting the user lacks permission when
 /// the real cause was a service-side error.
 fn clone_ecpds_error(err: &EcpdsError) -> EcpdsError {
+    use crate::client::FetchOutcome;
     match err {
-        EcpdsError::ServiceUnavailable => EcpdsError::ServiceUnavailable,
-        EcpdsError::AccessDenied(msg) => EcpdsError::AccessDenied(msg.clone()),
+        EcpdsError::ServiceUnavailable { fetch_outcome } => EcpdsError::ServiceUnavailable {
+            fetch_outcome: *fetch_outcome,
+        },
+        EcpdsError::AccessDenied { reason, message } => EcpdsError::AccessDenied {
+            reason: *reason,
+            message: message.clone(),
+        },
         EcpdsError::Http {
             server_index,
+            status,
             message,
         } => EcpdsError::Http {
             server_index: *server_index,
+            status: *status,
             message: message.clone(),
         },
         EcpdsError::InvalidResponse {
@@ -138,7 +146,9 @@ fn clone_ecpds_error(err: &EcpdsError) -> EcpdsError {
             message: message.clone(),
         },
         EcpdsError::HttpClientBuild(_) | EcpdsError::InvalidServerUrl { .. } => {
-            EcpdsError::ServiceUnavailable
+            EcpdsError::ServiceUnavailable {
+                fetch_outcome: FetchOutcome::Unreachable,
+            }
         }
     }
 }
@@ -275,11 +285,15 @@ mod tests {
         let err = cache
             .try_get_or_fetch("doomed", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                async { Err(EcpdsError::ServiceUnavailable) }
+                async {
+                    Err(EcpdsError::ServiceUnavailable {
+                        fetch_outcome: crate::client::FetchOutcome::Unreachable,
+                    })
+                }
             })
             .await
             .expect_err("must error");
-        assert!(matches!(err, EcpdsError::ServiceUnavailable));
+        assert!(matches!(err, EcpdsError::ServiceUnavailable { .. }));
         let calls_clone = calls.clone();
         let _ok = cache
             .try_get_or_fetch("doomed", move || {
@@ -310,7 +324,9 @@ mod tests {
                         async move {
                             calls.fetch_add(1, Ordering::SeqCst);
                             tokio::time::sleep(Duration::from_millis(50)).await;
-                            Err(EcpdsError::ServiceUnavailable)
+                            Err(EcpdsError::ServiceUnavailable {
+                                fetch_outcome: crate::client::FetchOutcome::Unreachable,
+                            })
                         }
                     })
                     .await
@@ -319,7 +335,7 @@ mod tests {
         for handle in handles {
             let result = handle.await.unwrap();
             assert!(
-                matches!(result, Err(EcpdsError::ServiceUnavailable)),
+                matches!(result, Err(EcpdsError::ServiceUnavailable { .. })),
                 "all waiters must observe ServiceUnavailable, never AccessDenied"
             );
         }
