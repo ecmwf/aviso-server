@@ -45,8 +45,15 @@ End-to-end ECPDS plugin tests (only run against a binary built with
 
     ECPDS_ENABLED=true
         Set to enable the ECPDS smoke cases. Default off.
-    ECPDS_EVENT_TYPE=dissemination
+    ECPDS_EVENT_TYPE=ecpds_test
         Schema name on the server that has plugins: ["ecpds"].
+        IMPORTANT: this schema is assumed to have `match_key` as its
+        ONLY required identifier field. The smoke test sends a minimal
+        request body and does not paper over additional required
+        fields — if your schema has more, add a dedicated minimal
+        ECPDS test schema instead of pointing this at your production
+        dissemination schema. See the Getting Started doc for an
+        example test schema.
     ECPDS_MATCH_KEY=destination
         Identifier field used as the destination key.
     ECPDS_ALLOWED_USER=alice
@@ -57,14 +64,10 @@ End-to-end ECPDS plugin tests (only run against a binary built with
         A destination value the allowed user is entitled to read.
     ECPDS_DENIED_DESTINATION=NOT-A-REAL-DEST
         A destination value the allowed user is NOT entitled to read.
-    ECPDS_EXTRA_IDENTIFIER='{"class":"od"}'
-        Optional JSON object merged into the request identifier so the
-        schema's other required fields are populated. Empty/absent is
-        fine when the schema has only `destination` required.
 
-These tests verify allow / deny / cache-coalescing on YOUR ECPDS by
-hitting the running Aviso server with the supplied credentials. They
-do NOT need an Aviso-side mock; they call the real upstream.
+These tests verify allow / deny on YOUR ECPDS by hitting the running
+Aviso server with the supplied credentials. They do NOT need an
+Aviso-side mock; they call the real upstream.
 """
 
 from __future__ import annotations
@@ -118,13 +121,12 @@ class Config:
     auth_admin_user: str = os.getenv("AUTH_ADMIN_USER", "admin-user")
     auth_admin_pass: str = os.getenv("AUTH_ADMIN_PASS", "admin-pass")
     ecpds_enabled: bool = os.getenv("ECPDS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
-    ecpds_event_type: str = os.getenv("ECPDS_EVENT_TYPE", "dissemination")
+    ecpds_event_type: str = os.getenv("ECPDS_EVENT_TYPE", "ecpds_test")
     ecpds_match_key: str = os.getenv("ECPDS_MATCH_KEY", "destination")
     ecpds_allowed_user: str = os.getenv("ECPDS_ALLOWED_USER", "")
     ecpds_allowed_pass: str = os.getenv("ECPDS_ALLOWED_PASS", "")
     ecpds_allowed_destination: str = os.getenv("ECPDS_ALLOWED_DESTINATION", "")
     ecpds_denied_destination: str = os.getenv("ECPDS_DENIED_DESTINATION", "NOT-A-REAL-DEST")
-    ecpds_extra_identifier_json: str = os.getenv("ECPDS_EXTRA_IDENTIFIER", "")
     verbose: bool = False
 
     def admin_auth_headers(self) -> dict[str, str]:
@@ -923,21 +925,17 @@ def _ecpds_skip_reason(config: Config) -> str | None:
 
 
 def _ecpds_identifier(config: Config, destination: str) -> dict:
-    identifier: dict = {config.ecpds_match_key: destination}
-    raw = config.ecpds_extra_identifier_json.strip()
-    if raw:
-        try:
-            extra = json.loads(raw)
-        except json.JSONDecodeError as e:
-            raise SmokeFailure(
-                f"ECPDS_EXTRA_IDENTIFIER is not valid JSON: {e}"
-            ) from e
-        if not isinstance(extra, dict):
-            raise SmokeFailure(
-                "ECPDS_EXTRA_IDENTIFIER must be a JSON object"
-            )
-        identifier.update(extra)
-    return identifier
+    return {config.ecpds_match_key: destination}
+
+
+def _ecpds_failure_hint_for_400() -> str:
+    return (
+        "got 400 from the schema validator before the request reached the ECPDS plugin. "
+        "The smoke test sends a minimal identifier ({match_key: destination}) and does not "
+        "populate any other fields. If your ECPDS_EVENT_TYPE schema has additional "
+        "required identifier fields, add a dedicated minimal ECPDS test schema as shown in "
+        "the Getting Started doc instead of pointing the smoke test at your production schema."
+    )
 
 
 def _ecpds_post_status(
@@ -981,6 +979,8 @@ def test_ecpds_allowed_destination_returns_200(config: Config) -> None:
     }
 
     status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
+    if status == 400:
+        raise SmokeFailure(_ecpds_failure_hint_for_400() + f" response: {truncate_text(response)}")
     if status != 200:
         raise SmokeFailure(
             f"expected 200 for allowed user + allowed destination, got {status}; "
@@ -1004,6 +1004,8 @@ def test_ecpds_denied_destination_returns_403(config: Config) -> None:
     }
 
     status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
+    if status == 400:
+        raise SmokeFailure(_ecpds_failure_hint_for_400() + f" response: {truncate_text(response)}")
     if status != 403:
         raise SmokeFailure(
             f"expected 403 for allowed user + DENIED destination, got {status}; "
