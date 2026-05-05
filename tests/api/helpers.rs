@@ -764,6 +764,26 @@ fn ensure_ecpds_test_schemas(schema: &mut HashMap<String, EventSchema>) {
         plugins: Some(vec!["ecpds".to_string()]),
     });
     schema.insert("dissemination_ecpds".to_string(), diss_ecpds);
+
+    let mut diss_ecpds_writable = build_dissemination_schema();
+    diss_ecpds_writable
+        .topic
+        .as_mut()
+        .expect("dissemination schema must have topic")
+        .base = "diss_ecpds_writable".to_string();
+    diss_ecpds_writable.auth = Some(StreamAuthConfig {
+        required: true,
+        read_roles: None,
+        write_roles: Some(HashMap::from([(
+            "localrealm".to_string(),
+            vec!["producer".to_string()],
+        )])),
+        plugins: Some(vec!["ecpds".to_string()]),
+    });
+    schema.insert(
+        "dissemination_ecpds_writable".to_string(),
+        diss_ecpds_writable,
+    );
 }
 
 fn ensure_test_global_config_initialized() {

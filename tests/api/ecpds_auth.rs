@@ -290,7 +290,7 @@ async fn watch_ecpds_username_with_special_chars_handled() {
 }
 
 #[tokio::test]
-async fn notify_on_ecpds_protected_stream_does_not_invoke_ecpds() {
+async fn notify_on_ecpds_protected_stream_does_not_invoke_ecpds_for_admin() {
     let app = spawn_streaming_test_app_with_auth().await;
     let client = reqwest::Client::new();
     let username = "admin-user-notify-bypass";
@@ -323,5 +323,61 @@ async fn notify_on_ecpds_protected_stream_does_not_invoke_ecpds() {
     assert_eq!(
         after, before,
         "notify must NOT invoke the ECPDS plugin under any policy"
+    );
+}
+
+/// Non-admin counterpart to the admin notify-bypass test above. The ECPDS
+/// plugin is read-only by design (only `enforce_ecpds_auth` callers in
+/// watch/replay invoke it); admins additionally bypass the plugin even
+/// on reads, so a passing admin test does not by itself prove that the
+/// plugin is not consulted on writes. This case uses a non-admin
+/// `producer` writer on a stream whose `auth.write_roles` grants that
+/// role write access while keeping `plugins: ["ecpds"]` enabled. If a
+/// future change accidentally wired `enforce_ecpds_auth` into the notify
+/// path, the mock ECPDS would be hit (and likely deny since the user has
+/// no destination list) rather than letting this assertion stay green.
+#[tokio::test]
+async fn notify_on_ecpds_protected_stream_does_not_invoke_ecpds_for_non_admin_writer() {
+    let app = spawn_streaming_test_app_with_auth().await;
+    let client = reqwest::Client::new();
+    let username = "producer-user-notify-non-admin";
+    let token = ecpds_token(username, &["producer"]);
+    let mock = mock_ecpds();
+    let before = mock.count_for(username);
+
+    let response = client
+        .post(format!("{}/api/v1/notification", app.address))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&json!({
+            "event_type": "dissemination_ecpds_writable",
+            "identifier": {
+                "destination": "any-value-not-checked",
+                "class": "od"
+            },
+            "payload": { "note": "non-admin notify smoke" }
+        }))
+        .send()
+        .await
+        .expect("notify request should complete");
+
+    let status = response.status();
+    assert_ne!(
+        status,
+        reqwest::StatusCode::FORBIDDEN,
+        "non-admin producer must be authorised to write by the test schema's \
+         write_roles. A 403 here means either the schema or the role mapping \
+         drifted; this test cannot prove notify ungating from a 403."
+    );
+    assert_ne!(
+        status,
+        reqwest::StatusCode::SERVICE_UNAVAILABLE,
+        "notify by a non-admin producer on an ECPDS-protected writable stream \
+         must not 503. A 503 means the plugin incorrectly ran on a write."
+    );
+    let after = mock.count_for(username);
+    assert_eq!(
+        after, before,
+        "notify must NOT invoke the ECPDS plugin even for a non-admin writer"
     );
 }
