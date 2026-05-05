@@ -176,6 +176,7 @@ pub async fn enforce_ecpds_auth(
             service_version = SERVICE_VERSION,
             event_name = "auth.ecpds.check.error",
             event_type = %event_type,
+            username = %user.username,
             error_kind = "missing_auth_settings",
             "AuthSettings not found in app_data — server misconfiguration"
         );
@@ -207,6 +208,7 @@ pub async fn enforce_ecpds_auth(
             service_version = SERVICE_VERSION,
             event_name = "auth.ecpds.check.error",
             event_type = %event_type,
+            username = %user.username,
             error_kind = "missing_checker",
             "ECPDS plugin referenced but no checker configured"
         );
