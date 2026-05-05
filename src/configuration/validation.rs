@@ -98,6 +98,101 @@ pub fn validate_auth_settings(auth: &AuthSettings) -> Result<()> {
     Ok(())
 }
 
+/// Single source of truth for every plugin name this codebase
+/// recognizes in the per-stream `auth.plugins` list. Adding a new
+/// plugin is one row.
+struct PluginMeta {
+    /// Plugin name as it appears in YAML (`auth.plugins: [<name>]`).
+    name: &'static str,
+    /// Cargo feature flag this plugin requires, or `None` if it is
+    /// always available.
+    required_feature: Option<&'static str>,
+    /// Whether the required Cargo feature is currently compiled into
+    /// this binary. `cfg!()` evaluates at compile time, so this is a
+    /// const-eligible expression.
+    compiled: bool,
+}
+
+const PLUGINS: &[PluginMeta] = &[PluginMeta {
+    name: "ecpds",
+    required_feature: Some("ecpds"),
+    compiled: cfg!(feature = "ecpds"),
+}];
+
+fn known_plugin(name: &str) -> Option<&'static PluginMeta> {
+    PLUGINS.iter().find(|p| p.name == name)
+}
+
+fn known_plugin_names() -> Vec<&'static str> {
+    PLUGINS.iter().map(|p| p.name).collect()
+}
+
+/// Validates per-stream `auth.plugins` lists fail-closed.
+///
+/// Rejects:
+/// - empty plugin lists (operators should omit the field instead),
+/// - unknown plugin names (typos),
+/// - plugins whose required Cargo feature is not compiled in
+///   (otherwise the plugin's check would silently not run),
+/// - plugins on a stream where `auth.required` is `false`
+///   (plugins only run after stream-level auth passes, so this would
+///   never execute the plugin).
+///
+/// This function is **always compiled** (regardless of feature flags)
+/// so that misconfigured deployments fail at startup instead of silently
+/// running without the expected authorization plugin.
+pub fn validate_stream_plugin_settings(settings: &Settings) -> Result<()> {
+    let Some(schema_map) = settings.notification_schema.as_ref() else {
+        return Ok(());
+    };
+
+    for (event_type, schema) in schema_map {
+        let Some(stream_auth) = schema.auth.as_ref() else {
+            continue;
+        };
+        let Some(plugins) = stream_auth.plugins.as_ref() else {
+            continue;
+        };
+
+        if plugins.is_empty() {
+            bail!(
+                "Schema '{event_type}' auth.plugins must not be empty; \
+                 omit the field instead of setting plugins: []"
+            );
+        }
+
+        for plugin in plugins {
+            let Some(meta) = known_plugin(plugin) else {
+                bail!(
+                    "Schema '{event_type}' auth.plugins references unknown plugin '{plugin}'. \
+                     Known plugins: {:?}",
+                    known_plugin_names()
+                );
+            };
+            if let Some(required_feature) = meta.required_feature
+                && !meta.compiled
+            {
+                bail!(
+                    "Schema '{event_type}' auth.plugins references plugin '{plugin}', \
+                     which requires the '{required_feature}' Cargo feature. \
+                     Rebuild aviso-server with `--features {required_feature}` or \
+                     remove the plugin from this stream's auth config."
+                );
+            }
+        }
+
+        if !stream_auth.required {
+            bail!(
+                "Schema '{event_type}' auth.plugins is set but auth.required is false. \
+                 Plugins only run after stream-level auth passes; \
+                 set auth.required=true or remove the plugins list."
+            );
+        }
+    }
+
+    Ok(())
+}
+
 /// Validates stream-level auth blocks against global auth mode.
 ///
 /// Stream auth rules are enforceable only when `auth.enabled=true`.
@@ -290,11 +385,173 @@ fn validate_policy_fields(
     Ok(())
 }
 
+#[cfg(feature = "ecpds")]
+pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
+    let ecpds_streams: Vec<&str> = settings
+        .notification_schema
+        .as_ref()
+        .map(|schema| {
+            schema
+                .iter()
+                .filter(|(_, event_schema)| {
+                    event_schema
+                        .auth
+                        .as_ref()
+                        .and_then(|a| a.plugins.as_ref())
+                        .map(|plugins| plugins.iter().any(|p| p == "ecpds"))
+                        .unwrap_or(false)
+                })
+                .map(|(name, _)| name.as_str())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if ecpds_streams.is_empty() {
+        return Ok(());
+    }
+
+    let ecpds_config = settings.ecpds.as_ref().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Streams {:?} reference the 'ecpds' plugin but no 'ecpds' configuration section was found",
+            ecpds_streams
+        )
+    })?;
+
+    if ecpds_config.servers.is_empty() {
+        bail!("ecpds.servers must contain at least one server URL");
+    }
+    for (i, server) in ecpds_config.servers.iter().enumerate() {
+        if server.trim().is_empty() {
+            bail!("ecpds.servers[{i}] must not be empty or whitespace");
+        }
+        let parsed = reqwest::Url::parse(server).map_err(|e| {
+            anyhow::anyhow!("ecpds.servers[{i}] '{server}' is not a valid URL: {e}")
+        })?;
+        match parsed.scheme() {
+            "https" => {}
+            "http" => {
+                // The plugin authenticates to ECPDS with HTTP Basic Auth
+                // (service-account credentials). Sending those over plain
+                // HTTP to anything other than the local host would put the
+                // password and the per-user destination lookups on the
+                // wire without TLS. Restrict http:// to loopback so the
+                // mockito-based test fixtures keep working but a typo
+                // from `https://` to `http://` on a real deployment fails
+                // closed at startup.
+                let host = parsed.host_str().unwrap_or("");
+                let is_loopback = matches!(host, "127.0.0.1" | "[::1]" | "localhost");
+                if !is_loopback {
+                    bail!(
+                        "ecpds.servers[{i}] '{server}' uses plain http:// to a non-loopback host. \
+                         The ECPDS plugin authenticates with HTTP Basic Auth (service-account \
+                         credentials), so plain http would send those credentials and per-user \
+                         destination lookups over the network without TLS. Use https:// for any \
+                         reachable host; http:// is accepted only for loopback ({{127.0.0.1, \
+                         [::1], localhost}}) for local testing."
+                    );
+                }
+            }
+            other => bail!(
+                "ecpds.servers[{i}] '{server}' has unsupported scheme '{other}'; \
+                 only 'http' (loopback only) and 'https' are accepted"
+            ),
+        }
+        if parsed.query().is_some() {
+            bail!(
+                "ecpds.servers[{i}] '{server}' must not contain a query string; \
+                 the plugin appends '?id=<username>' itself"
+            );
+        }
+        if parsed.fragment().is_some() {
+            bail!("ecpds.servers[{i}] '{server}' must not contain a URL fragment");
+        }
+    }
+    if ecpds_config.username.trim().is_empty() {
+        bail!("ecpds.username must not be empty or whitespace");
+    }
+    if ecpds_config.username != ecpds_config.username.trim() {
+        bail!("ecpds.username must not have leading or trailing whitespace");
+    }
+    if ecpds_config.password.trim().is_empty() {
+        bail!("ecpds.password must not be empty or whitespace");
+    }
+    if ecpds_config.password != ecpds_config.password.trim() {
+        bail!("ecpds.password must not have leading or trailing whitespace");
+    }
+    if ecpds_config.target_field.trim().is_empty() {
+        bail!("ecpds.target_field must not be empty or whitespace");
+    }
+    if ecpds_config.target_field != ecpds_config.target_field.trim() {
+        bail!("ecpds.target_field must not have leading or trailing whitespace");
+    }
+    if ecpds_config.match_key.trim().is_empty() {
+        bail!("ecpds.match_key must not be empty or whitespace");
+    }
+    if ecpds_config
+        .match_key
+        .chars()
+        .any(|c| c.is_whitespace() || c == '/' || c == '\0')
+    {
+        bail!(
+            "ecpds.match_key '{}' must be a single bare identifier name; \
+             whitespace, '/' and NUL are not allowed",
+            ecpds_config.match_key
+        );
+    }
+    if ecpds_config.cache_ttl_seconds == 0 {
+        bail!("ecpds.cache_ttl_seconds must be greater than zero");
+    }
+    if ecpds_config.max_entries == 0 {
+        bail!("ecpds.max_entries must be greater than zero");
+    }
+    if ecpds_config.request_timeout_seconds == 0 {
+        bail!("ecpds.request_timeout_seconds must be greater than zero");
+    }
+    if ecpds_config.connect_timeout_seconds == 0 {
+        bail!("ecpds.connect_timeout_seconds must be greater than zero");
+    }
+
+    // The plugin reads `match_key` from the request's canonicalized
+    // identifier params at runtime (`EcpdsChecker::check_access`
+    // does `identifier.get(&self.match_key)`), not from the topic
+    // routing key. Streams without an explicit `topic` block, or
+    // streams whose `topic.key_order` filters on a different field,
+    // still surface the request param to the plugin via the
+    // canonicalized params, so the plugin authorises correctly. We
+    // therefore validate that `match_key` exists in the schema's
+    // `identifier` and is `required: true` (so the value is
+    // guaranteed before the plugin runs), but we deliberately do
+    // NOT require it to appear in `topic.key_order`.
+    if let Some(schema) = &settings.notification_schema {
+        for stream_name in &ecpds_streams {
+            let Some(event_schema) = schema.get(*stream_name) else {
+                continue;
+            };
+            match event_schema.identifier.get(&ecpds_config.match_key) {
+                None => bail!(
+                    "ecpds.match_key '{}' has no identifier rule defined in schema '{}'",
+                    ecpds_config.match_key,
+                    stream_name
+                ),
+                Some(field) if !field.is_required() => bail!(
+                    "ecpds.match_key '{}' must be required: true in schema '{}' \
+                     so the value is guaranteed to be present before the plugin runs",
+                    ecpds_config.match_key,
+                    stream_name
+                ),
+                Some(_) => {}
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         validate_auth_settings, validate_metrics_settings, validate_schema_storage_policy_support,
-        validate_stream_auth_settings,
+        validate_stream_auth_settings, validate_stream_plugin_settings,
     };
     use crate::configuration::{
         ApplicationSettings, AuthMode, AuthSettings, EventSchema, EventStoragePolicy,
@@ -340,6 +597,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         }
     }
 
@@ -361,6 +619,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         }
     }
 
@@ -601,6 +860,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -666,6 +926,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -725,6 +986,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),
+            ecpds: None,
         };
 
         let err = validate_schema_storage_policy_support(&settings)
@@ -973,6 +1235,7 @@ mod tests {
                     required: true,
                     read_roles: None,
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1007,6 +1270,7 @@ mod tests {
                         vec!["reader".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1044,6 +1308,7 @@ mod tests {
                         "testrealm".to_string(),
                         vec!["producer".to_string()],
                     )])),
+                    plugins: None,
                 }),
             },
         );
@@ -1078,6 +1343,7 @@ mod tests {
                     required: true,
                     read_roles: None,
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1092,6 +1358,128 @@ mod tests {
 
         validate_stream_auth_settings(&settings)
             .expect("required=true without role lists should be accepted");
+    }
+
+    fn schema_with_plugins(
+        event_type: &str,
+        plugins: Option<Vec<String>>,
+        auth_required: bool,
+    ) -> HashMap<String, EventSchema> {
+        let mut schema_map = HashMap::new();
+        schema_map.insert(
+            event_type.to_string(),
+            EventSchema {
+                payload: None,
+                topic: Some(TopicConfig {
+                    base: event_type.to_string(),
+                    key_order: vec![],
+                }),
+                endpoint: None,
+                identifier: HashMap::new(),
+                storage_policy: None,
+                auth: Some(crate::configuration::StreamAuthConfig {
+                    required: auth_required,
+                    read_roles: None,
+                    write_roles: None,
+                    plugins,
+                }),
+            },
+        );
+        schema_map
+    }
+
+    #[test]
+    fn rejects_empty_plugins_list() {
+        let settings = basic_settings_with_schema(schema_with_plugins("diss", Some(vec![]), true));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("empty plugins list must be rejected");
+        assert!(
+            err.to_string().contains("auth.plugins must not be empty"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn rejects_unknown_plugin_name() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["typo".to_string()]),
+            true,
+        ));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("unknown plugin name must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("unknown plugin 'typo'"), "got: {msg}");
+        assert!(msg.contains("Known plugins"), "got: {msg}");
+    }
+
+    #[cfg(feature = "ecpds")]
+    #[test]
+    fn rejects_ecpds_plugin_when_auth_required_is_false() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["ecpds".to_string()]),
+            false,
+        ));
+        let err = validate_stream_plugin_settings(&settings).expect_err(
+            "ecpds plugin paired with auth.required=false must be rejected when feature is on",
+        );
+        assert!(
+            err.to_string().contains("auth.required is false"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn unknown_plugin_error_takes_precedence_over_required_false() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["typo".to_string()]),
+            false,
+        ));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("unknown-plugin error must surface ahead of required-false");
+        assert!(
+            err.to_string().contains("unknown plugin 'typo'"),
+            "got: {err}"
+        );
+    }
+
+    #[cfg(not(feature = "ecpds"))]
+    #[test]
+    fn rejects_ecpds_plugin_when_ecpds_feature_is_off() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["ecpds".to_string()]),
+            true,
+        ));
+        let err = validate_stream_plugin_settings(&settings)
+            .expect_err("ecpds plugin must be rejected when ecpds feature is off");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("requires the 'ecpds' Cargo feature"),
+            "got: {msg}"
+        );
+        assert!(msg.contains("--features ecpds"), "got: {msg}");
+    }
+
+    #[cfg(feature = "ecpds")]
+    #[test]
+    fn accepts_ecpds_plugin_when_ecpds_feature_is_on() {
+        let settings = basic_settings_with_schema(schema_with_plugins(
+            "diss",
+            Some(vec!["ecpds".to_string()]),
+            true,
+        ));
+        validate_stream_plugin_settings(&settings)
+            .expect("ecpds plugin with required=true must be accepted when ecpds feature is on");
+    }
+
+    #[test]
+    fn accepts_no_plugins_field() {
+        let settings = basic_settings_with_schema(schema_with_plugins("diss", None, true));
+        validate_stream_plugin_settings(&settings)
+            .expect("schemas without auth.plugins must be accepted");
     }
 
     #[test]
@@ -1115,6 +1503,7 @@ mod tests {
                         vec!["reader".to_string(), " ".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1152,6 +1541,7 @@ mod tests {
                     required: true,
                     read_roles: Some(HashMap::new()),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1189,6 +1579,7 @@ mod tests {
                     required: true,
                     read_roles: None,
                     write_roles: Some(HashMap::new()),
+                    plugins: None,
                 }),
             },
         );
@@ -1226,6 +1617,7 @@ mod tests {
                     required: true,
                     read_roles: Some(HashMap::from([("testrealm".to_string(), vec![])])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1263,6 +1655,7 @@ mod tests {
                         vec!["reader".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1300,6 +1693,7 @@ mod tests {
                         vec!["reader".to_string()],
                     )])),
                     write_roles: None,
+                    plugins: None,
                 }),
             },
         );
@@ -1364,6 +1758,7 @@ mod tests {
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics,
+            ecpds: None,
         }
     }
 
@@ -1432,5 +1827,456 @@ mod tests {
             },
         );
         validate_metrics_settings(&settings).expect("distinct port should pass");
+    }
+
+    #[cfg(feature = "ecpds")]
+    mod ecpds {
+        use super::super::validate_ecpds_settings;
+        use super::basic_settings_with_schema;
+        use crate::configuration::{
+            EventSchema, IdentifierFieldConfig, Settings, StreamAuthConfig, TopicConfig,
+        };
+        use aviso_validators::ValidationRules;
+        use std::collections::HashMap;
+
+        fn ecpds_protected_schema(
+            match_key: &str,
+            match_required: bool,
+        ) -> HashMap<String, EventSchema> {
+            let mut identifier = HashMap::new();
+            identifier.insert(
+                match_key.to_string(),
+                IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
+                    required: match_required,
+                    max_length: None,
+                }),
+            );
+            let mut schema = HashMap::new();
+            schema.insert(
+                "diss".to_string(),
+                EventSchema {
+                    payload: None,
+                    topic: Some(TopicConfig {
+                        base: "diss".to_string(),
+                        key_order: vec![match_key.to_string()],
+                    }),
+                    endpoint: None,
+                    identifier,
+                    storage_policy: None,
+                    auth: Some(StreamAuthConfig {
+                        required: true,
+                        read_roles: None,
+                        write_roles: None,
+                        plugins: Some(vec!["ecpds".to_string()]),
+                    }),
+                },
+            );
+            schema
+        }
+
+        fn settings_with_ecpds(
+            ecpds: aviso_ecpds::config::EcpdsConfig,
+            match_key: &str,
+            match_required: bool,
+        ) -> Settings {
+            let mut s =
+                basic_settings_with_schema(ecpds_protected_schema(match_key, match_required));
+            s.ecpds = Some(ecpds);
+            s
+        }
+
+        fn good_ecpds_config() -> aviso_ecpds::config::EcpdsConfig {
+            aviso_ecpds::config::EcpdsConfig {
+                username: "u".to_string(),
+                password: "p".to_string(),
+                target_field: "name".to_string(),
+                match_key: "destination".to_string(),
+                cache_ttl_seconds: 300,
+                max_entries: 10_000,
+                request_timeout_seconds: 30,
+                connect_timeout_seconds: 5,
+                partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
+                servers: vec!["http://localhost".to_string()],
+            }
+        }
+
+        #[test]
+        fn accepts_well_formed_settings() {
+            let settings = settings_with_ecpds(good_ecpds_config(), "destination", true);
+            validate_ecpds_settings(&settings).expect("should accept");
+        }
+
+        #[test]
+        fn rejects_when_plugin_referenced_but_no_ecpds_section() {
+            let mut s = basic_settings_with_schema(ecpds_protected_schema("destination", true));
+            s.ecpds = None;
+            let err = validate_ecpds_settings(&s).expect_err("must fail");
+            assert!(
+                err.to_string().contains("no 'ecpds' configuration section"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_invalid_server_url() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["not a url".to_string()];
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(err.to_string().contains("not a valid URL"), "got: {err}");
+        }
+
+        #[test]
+        fn rejects_unsupported_scheme() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["ftp://example.com".to_string()];
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string().contains("unsupported scheme 'ftp'"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_server_url_with_query_string() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["https://example.com/?already=set".to_string()];
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string().contains("must not contain a query string"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_server_url_with_fragment() {
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["https://example.com/#frag".to_string()];
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string().contains("must not contain a URL fragment"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn accepts_https_to_any_host_and_http_to_loopback() {
+            for url in [
+                "https://b.example",
+                "http://127.0.0.1",
+                "http://127.0.0.1:8080",
+                "http://localhost",
+                "http://localhost:8080",
+                "http://[::1]",
+            ] {
+                let mut cfg = good_ecpds_config();
+                cfg.servers = vec![url.to_string()];
+                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                    .unwrap_or_else(|e| panic!("should accept {url}: {e}"));
+            }
+        }
+
+        #[test]
+        fn rejects_plain_http_to_non_loopback_host() {
+            // The plugin uses HTTP Basic Auth (service-account credentials)
+            // to talk to ECPDS, so plain http to a real host would put the
+            // password on the wire without TLS. This test pins the
+            // fail-closed behaviour: a typo from https:// to http:// on a
+            // production deployment must abort startup.
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["http://ecpds.example.int".to_string()];
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("uses plain http:// to a non-loopback host"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_zero_cache_ttl() {
+            let mut cfg = good_ecpds_config();
+            cfg.cache_ttl_seconds = 0;
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("cache_ttl_seconds must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_zero_max_entries() {
+            let mut cfg = good_ecpds_config();
+            cfg.max_entries = 0;
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("max_entries must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_zero_request_timeout() {
+            let mut cfg = good_ecpds_config();
+            cfg.request_timeout_seconds = 0;
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("request_timeout_seconds must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_zero_connect_timeout() {
+            let mut cfg = good_ecpds_config();
+            cfg.connect_timeout_seconds = 0;
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("connect_timeout_seconds must be greater than zero"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_empty_target_field() {
+            let mut cfg = good_ecpds_config();
+            cfg.target_field = String::new();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string().contains("target_field must not be empty"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_username() {
+            let mut cfg = good_ecpds_config();
+            cfg.username = "   ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.username must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_password() {
+            let mut cfg = good_ecpds_config();
+            cfg.password = "\t\n  ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.password must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_target_field() {
+            let mut cfg = good_ecpds_config();
+            cfg.target_field = "   ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.target_field must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_match_key() {
+            let mut cfg = good_ecpds_config();
+            cfg.match_key = "   ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.match_key must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_padded_username() {
+            let mut cfg = good_ecpds_config();
+            cfg.username = "  user  ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.username must not have leading or trailing whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_padded_password() {
+            let mut cfg = good_ecpds_config();
+            cfg.password = "pw\n".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.password must not have leading or trailing whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_padded_target_field() {
+            let mut cfg = good_ecpds_config();
+            cfg.target_field = " name ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.target_field must not have leading or trailing whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_match_key_with_whitespace() {
+            let mut cfg = good_ecpds_config();
+            cfg.match_key = "dest ination".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("must be a single bare identifier name"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_match_key_not_in_schema_identifier() {
+            let cfg = good_ecpds_config();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "other_key", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("has no identifier rule defined in schema"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn accepts_match_key_outside_topic_key_order() {
+            // Explicit regression: streams whose `topic.key_order`
+            // filters on a different field (or whose schema has no
+            // `topic` block at all) must still validate when the
+            // request body's identifier carries `match_key`. The
+            // plugin reads from canonicalized identifier params at
+            // runtime, not from topic routing.
+            let cfg = good_ecpds_config();
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss")
+                && let Some(topic) = event.topic.as_mut()
+            {
+                topic.key_order = vec!["unrelated_field".to_string()];
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(cfg);
+            validate_ecpds_settings(&settings).expect(
+                "match_key absent from topic.key_order must NOT block startup; \
+                 the plugin reads it from the request body, not the topic",
+            );
+        }
+
+        #[test]
+        fn accepts_match_key_when_schema_has_no_topic_block() {
+            let cfg = good_ecpds_config();
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss") {
+                event.topic = None;
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(cfg);
+            validate_ecpds_settings(&settings).expect(
+                "schemas with no topic block must still pass when match_key \
+                 is in identifier and required",
+            );
+        }
+
+        #[test]
+        fn rejects_match_key_not_required_in_schema() {
+            let cfg = good_ecpds_config();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", false))
+                .expect_err("must fail");
+            assert!(
+                err.to_string().contains("must be required: true in schema"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn build_ecpds_checker_returns_none_when_no_stream_opts_in() {
+            let cfg = good_ecpds_config();
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss")
+                && let Some(auth) = event.auth.as_mut()
+            {
+                auth.plugins = None;
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(cfg);
+            let result = settings
+                .build_ecpds_checker()
+                .expect("must succeed when no stream opts in");
+            assert!(
+                result.is_none(),
+                "an ecpds: block referenced by no stream must not produce a \
+                 checker; otherwise a stale block with a malformed server URL \
+                 would break startup for a deployment that doesn't actually \
+                 authorise anything through ECPDS"
+            );
+        }
+
+        #[test]
+        fn build_ecpds_checker_returns_some_when_stream_opts_in() {
+            let cfg = good_ecpds_config();
+            let settings = settings_with_ecpds(cfg, "destination", true);
+            let result = settings
+                .build_ecpds_checker()
+                .expect("must succeed for a well-formed config");
+            assert!(result.is_some(), "configured + opted-in must build checker");
+        }
+
+        #[test]
+        fn build_ecpds_checker_swallows_invalid_server_url_when_unused() {
+            let mut bad = good_ecpds_config();
+            bad.servers = vec!["this is not a url".to_string()];
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss")
+                && let Some(auth) = event.auth.as_mut()
+            {
+                auth.plugins = None;
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(bad);
+            let result = settings.build_ecpds_checker();
+            assert!(
+                matches!(result, Ok(None)),
+                "with an unused ecpds: block, build_ecpds_checker must not \
+                 call EcpdsChecker::new and must not surface InvalidServerUrl"
+            );
+        }
     }
 }

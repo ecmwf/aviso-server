@@ -8,6 +8,10 @@ auth:
   timeout_in_ms: 3000
 
 providers:
+  - name: "ecmwf-api"
+    type: "ecmwf-api"
+    realm: "ecmwf"
+    uri: "https://api.ecmwf.int/v1"
   - name: "plain-provider"
     type: "plain"
     realm: "localrealm"
@@ -20,6 +24,13 @@ providers:
         password: "producer-pass"
 
 augmenters:
+  - name: "ecmwf-role-augmenter"
+    type: "plain_advanced"
+    realm: "ecmwf"
+    match:
+      username: ["<your-ecmwf-username>"]
+    augment:
+      roles: ["admin"]
   - name: "plain-role-augmenter"
     type: "plain"
     realm: "localrealm"

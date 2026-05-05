@@ -11,9 +11,30 @@ use prometheus::{
     Encoder, IntCounterVec, IntGaugeVec, Registry, TextEncoder, opts,
     register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
 };
+#[cfg(feature = "ecpds")]
+use prometheus::{
+    IntCounter, IntGauge, register_int_counter_with_registry, register_int_gauge_with_registry,
+};
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
+
+/// Feature-gated ECPDS authorization plugin metrics.
+///
+/// Recorded by the route layer (`enforce_ecpds_auth`); the subcrate
+/// itself stays framework-agnostic. Per-server fetch
+/// success/failure/duration is published as structured `tracing`
+/// events under `auth.ecpds.fetch.*` so log-based monitoring can pick
+/// them up without coupling the subcrate to a metrics backend.
+#[cfg(feature = "ecpds")]
+#[derive(Clone, Debug)]
+pub struct EcpdsMetrics {
+    pub cache_hits_total: IntCounter,
+    pub cache_misses_total: IntCounter,
+    pub cache_size: IntGauge,
+    pub access_decisions_total: IntCounterVec,
+    pub fetch_total: IntCounterVec,
+}
 
 /// Application-level metrics registered in a shared Prometheus registry.
 #[derive(Clone, Debug)]
@@ -24,6 +45,8 @@ pub struct AppMetrics {
     pub sse_connections_total: IntCounterVec,
     pub sse_unique_users_active: IntGaugeVec,
     pub auth_requests_total: IntCounterVec,
+    #[cfg(feature = "ecpds")]
+    pub ecpds: EcpdsMetrics,
     unique_users: Arc<Mutex<HashMap<String, HashMap<String, usize>>>>,
 }
 
@@ -87,6 +110,82 @@ impl AppMetrics {
         )
         .expect("metric must register");
 
+        #[cfg(feature = "ecpds")]
+        let ecpds = {
+            let metrics = EcpdsMetrics {
+                cache_hits_total: register_int_counter_with_registry!(
+                    opts!(
+                        "aviso_ecpds_cache_hits_total",
+                        "ECPDS destination cache hits"
+                    ),
+                    registry
+                )
+                .expect("metric must register"),
+                cache_misses_total: register_int_counter_with_registry!(
+                    opts!(
+                        "aviso_ecpds_cache_misses_total",
+                        "ECPDS destination cache misses (request not served from cache; an upstream fetch ran for this caller or a concurrent caller via single-flight)"
+                    ),
+                    registry
+                )
+                .expect("metric must register"),
+                cache_size: register_int_gauge_with_registry!(
+                    opts!(
+                        "aviso_ecpds_cache_size",
+                        "Number of usernames held in the ECPDS destination cache (sampled from moka after eviction passes; may include not-yet-pruned expired entries until the next pending-tasks run)"
+                    ),
+                    registry
+                )
+                .expect("metric must register"),
+                access_decisions_total: register_int_counter_vec_with_registry!(
+                    opts!(
+                        "aviso_ecpds_access_decisions_total",
+                        "ECPDS access check outcomes"
+                    ),
+                    &["outcome"],
+                    registry
+                )
+                .expect("metric must register"),
+                fetch_total: register_int_counter_vec_with_registry!(
+                    opts!(
+                        "aviso_ecpds_fetch_total",
+                        "ECPDS upstream fetch outcomes; incremented exactly once per upstream call (the request whose check actually ran the fetch). Coalesced waiters that joined an in-flight fetch are NOT counted, so this counter measures actual upstream call volume rather than per-request fetch attempts."
+                    ),
+                    &["outcome"],
+                    registry
+                )
+                .expect("metric must register"),
+            };
+            // Pre-initialise every label value of the labelled counters
+            // so the corresponding Prometheus series exist at zero from
+            // process startup. Without this, alert rules of the form
+            // `rate(metric{outcome="error"}[5m]) > 0` silently fail to
+            // fire on the first occurrence because the series did not
+            // exist when the rule started evaluating.
+            for outcome in [
+                "allow",
+                "deny_destination",
+                "deny_match_key_missing",
+                "unavailable",
+                "admin_bypass",
+                "error",
+            ] {
+                let _ = metrics.access_decisions_total.with_label_values(&[outcome]);
+            }
+            for outcome in [
+                "success",
+                "http_401",
+                "http_403",
+                "http_4xx",
+                "http_5xx",
+                "invalid_response",
+                "unreachable",
+            ] {
+                let _ = metrics.fetch_total.with_label_values(&[outcome]);
+            }
+            metrics
+        };
+
         Self {
             registry,
             notifications_total,
@@ -94,6 +193,8 @@ impl AppMetrics {
             sse_connections_total,
             sse_unique_users_active,
             auth_requests_total,
+            #[cfg(feature = "ecpds")]
+            ecpds,
             unique_users: Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -234,8 +335,16 @@ async fn metrics_handler(registry: web::Data<Registry>) -> HttpResponse {
 
 /// Collect default process metrics (CPU, memory, open FDs) when available.
 pub fn register_process_metrics(registry: &Registry) {
-    let pc = prometheus::process_collector::ProcessCollector::new(std::process::id() as i32, "");
-    let _ = registry.register(Box::new(pc));
+    #[cfg(target_os = "linux")]
+    {
+        let pc =
+            prometheus::process_collector::ProcessCollector::new(std::process::id() as i32, "");
+        let _ = registry.register(Box::new(pc));
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = registry;
+    }
 }
 
 #[cfg(test)]
@@ -418,11 +527,44 @@ mod tests {
     fn register_process_metrics_does_not_panic() {
         let registry = Registry::new();
         register_process_metrics(&registry);
-        // Verify at least one process metric family is present.
-        let families = registry.gather();
-        assert!(
-            !families.is_empty(),
-            "process metrics should register at least one family"
-        );
+        #[cfg(target_os = "linux")]
+        {
+            let families = registry.gather();
+            assert!(
+                !families.is_empty(),
+                "process metrics should register at least one family"
+            );
+        }
+    }
+
+    #[cfg(feature = "ecpds")]
+    #[test]
+    fn ecpds_metrics_register_and_publish() {
+        let m = AppMetrics::new();
+        m.ecpds.cache_hits_total.inc();
+        m.ecpds.cache_misses_total.inc();
+        m.ecpds.cache_size.set(7);
+        m.ecpds
+            .access_decisions_total
+            .with_label_values(&["allow"])
+            .inc();
+        m.ecpds
+            .access_decisions_total
+            .with_label_values(&["deny_destination"])
+            .inc();
+
+        let encoder = TextEncoder::new();
+        let mut buf = Vec::new();
+        encoder
+            .encode(&m.registry.gather(), &mut buf)
+            .expect("encode ok");
+        let output = String::from_utf8(buf).expect("valid utf8");
+
+        assert!(output.contains("aviso_ecpds_cache_hits_total"));
+        assert!(output.contains("aviso_ecpds_cache_misses_total"));
+        assert!(output.contains("aviso_ecpds_cache_size"));
+        assert!(output.contains("aviso_ecpds_access_decisions_total"));
+        assert!(output.contains(r#"outcome="allow""#));
+        assert!(output.contains(r#"outcome="deny_destination""#));
     }
 }

@@ -30,6 +30,16 @@ Environment:
     AUTH_ENABLED=true|false (default: true)
         Must match the server's auth.enabled setting.
         When false, auth headers are omitted and auth-specific tests are skipped.
+    AUTH_MODE=direct|trusted_proxy (default: direct)
+        Must match the server's auth.mode setting. The smoke harness sends
+        HTTP Basic credentials, which Aviso accepts only in direct mode;
+        trusted_proxy mode requires Bearer JWTs minted by the upstream proxy.
+        Setting AUTH_MODE=trusted_proxy skips ALL Basic-auth smoke cases
+        (the auth_mars_*, auth_dissemination_*, and ECPDS cases) with a
+        clear reason rather than producing 401 failures attributed to the
+        wrong layer. The two no-credential auth cases
+        (auth_public_stream_no_credentials and auth_mars_unauthenticated_rejected)
+        still run because they don't depend on Basic.
     AUTH_ADMIN_USER=admin-user
     AUTH_ADMIN_PASS=admin-pass
 
@@ -39,6 +49,35 @@ Optional JetStream expectation checks:
     EXPECT_MAX_BYTES=...
     EXPECT_MAX_MESSAGES_PER_SUBJECT=...
     EXPECT_COMPRESSION=s2|none|true|false
+
+End-to-end ECPDS plugin tests (only run against a binary built with
+`--features ecpds` and a real ECPDS configured in the YAML):
+
+    ECPDS_ENABLED=true
+        Set to enable the ECPDS smoke cases. Default off.
+    ECPDS_EVENT_TYPE=ecpds_test
+        Schema name on the server that has plugins: ["ecpds"].
+        IMPORTANT: this schema is assumed to have `match_key` as its
+        ONLY required identifier field. The smoke test sends a minimal
+        request body and does not populate other required fields. If
+        your schema has more, add a dedicated minimal ECPDS test
+        schema instead of pointing this at your production
+        dissemination schema. See the Getting Started doc for an
+        example test schema.
+    ECPDS_MATCH_KEY=destination
+        Identifier field used as the destination key.
+    ECPDS_ALLOWED_USER=alice
+        ECPDS username known to be authorised for ECPDS_ALLOWED_DESTINATION.
+    ECPDS_ALLOWED_PASS=alice-pass
+        Password for that user (used by direct-mode auth-o-tron flow).
+    ECPDS_ALLOWED_DESTINATION=CIP
+        A destination value the allowed user is entitled to read.
+    ECPDS_DENIED_DESTINATION=NOT-A-REAL-DEST
+        A destination value the allowed user is NOT entitled to read.
+
+These tests verify allow / deny on YOUR ECPDS by hitting the running
+Aviso server with the supplied credentials. They do NOT need an
+Aviso-side mock; they call the real upstream.
 """
 
 from __future__ import annotations
@@ -89,8 +128,16 @@ class Config:
     expect_max_messages_per_subject: str = os.getenv("EXPECT_MAX_MESSAGES_PER_SUBJECT", "")
     expect_compression: str = os.getenv("EXPECT_COMPRESSION", "")
     auth_enabled: bool = os.getenv("AUTH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    auth_mode: str = os.getenv("AUTH_MODE", "direct").strip().lower()
     auth_admin_user: str = os.getenv("AUTH_ADMIN_USER", "admin-user")
     auth_admin_pass: str = os.getenv("AUTH_ADMIN_PASS", "admin-pass")
+    ecpds_enabled: bool = os.getenv("ECPDS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
+    ecpds_event_type: str = os.getenv("ECPDS_EVENT_TYPE", "ecpds_test")
+    ecpds_match_key: str = os.getenv("ECPDS_MATCH_KEY", "destination")
+    ecpds_allowed_user: str = os.getenv("ECPDS_ALLOWED_USER", "")
+    ecpds_allowed_pass: str = os.getenv("ECPDS_ALLOWED_PASS", "")
+    ecpds_allowed_destination: str = os.getenv("ECPDS_ALLOWED_DESTINATION", "")
+    ecpds_denied_destination: str = os.getenv("ECPDS_DENIED_DESTINATION", "NOT-A-REAL-DEST")
     verbose: bool = False
 
     def admin_auth_headers(self) -> dict[str, str]:
@@ -102,6 +149,22 @@ class Config:
         if not self.auth_enabled:
             return {}
         return {"Authorization": _basic_auth_header(username, password)}
+
+    def basic_auth_skip_reason(self) -> str | None:
+        """Return a skip reason string if a HTTP-Basic-credentialled
+        smoke case cannot run against the configured server, or None
+        if it can. Centralises the AUTH_ENABLED + AUTH_MODE gate so
+        every Basic-auth smoke case skips for the same reason.
+
+        The smoke harness only knows how to send HTTP Basic. Aviso
+        accepts Basic only in auth.mode: direct; trusted_proxy mode
+        requires Bearer JWTs minted by the upstream proxy. We do not
+        try to mint JWTs in the smoke script."""
+        if not self.auth_enabled:
+            return "AUTH_ENABLED=false"
+        if self.auth_mode != "direct":
+            return f"AUTH_MODE={self.auth_mode!r} is not 'direct'; smoke cases use HTTP Basic"
+        return None
 
 
 @dataclass(frozen=True)
@@ -722,8 +785,9 @@ def test_auth_mars_unauthenticated_rejected(config: Config) -> None:
 
 def test_auth_mars_reader_can_read(config: Config) -> None:
     """mars read_roles: localrealm: ["*"] — reader-user should be able to replay."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     stream_value = unique_token("auth-reader-read")
@@ -751,8 +815,9 @@ def test_auth_mars_reader_can_read(config: Config) -> None:
 
 def test_auth_mars_reader_cannot_write(config: Config) -> None:
     """mars write_roles: localrealm: ["producer"] — reader-user should get 403 on notify."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     status, _ = request_json(
@@ -780,8 +845,9 @@ def test_auth_mars_reader_cannot_write(config: Config) -> None:
 
 def test_auth_mars_producer_can_write(config: Config) -> None:
     """mars write_roles: localrealm: ["producer"] — producer-user should succeed."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     producer_headers = config.auth_headers_for("producer-user", "producer-pass")
     status, _ = request_json(
@@ -809,8 +875,9 @@ def test_auth_mars_producer_can_write(config: Config) -> None:
 
 def test_auth_dissemination_reader_can_read(config: Config) -> None:
     """dissemination has no read_roles — any authenticated user can replay."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     target_value = unique_token("auth-diss-reader")
@@ -840,8 +907,9 @@ def test_auth_dissemination_reader_can_read(config: Config) -> None:
 
 def test_auth_dissemination_reader_cannot_write(config: Config) -> None:
     """dissemination has no write_roles — only admins can write. reader-user should get 403."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     status, _ = request_json(
@@ -867,6 +935,164 @@ def test_auth_dissemination_reader_cannot_write(config: Config) -> None:
     )
     if status != 403:
         raise SmokeFailure(f"expected 403 for reader writing to dissemination, got {status}")
+
+
+def _ecpds_skip_reason(config: Config) -> str | None:
+    if not config.ecpds_enabled:
+        return "ECPDS_ENABLED is not set"
+    basic = config.basic_auth_skip_reason()
+    if basic:
+        return basic
+    missing = [
+        name
+        for name, value in [
+            ("ECPDS_ALLOWED_USER", config.ecpds_allowed_user),
+            ("ECPDS_ALLOWED_PASS", config.ecpds_allowed_pass),
+            ("ECPDS_ALLOWED_DESTINATION", config.ecpds_allowed_destination),
+        ]
+        if not value
+    ]
+    if missing:
+        return f"required env not set: {', '.join(missing)}"
+    return None
+
+
+def _ecpds_identifier(config: Config, destination: str) -> dict:
+    return {config.ecpds_match_key: destination}
+
+
+def _ecpds_failure_hint_for_400(config: Config) -> str:
+    return (
+        "got 400 from the schema validator before the request reached the ECPDS plugin. "
+        f"The smoke test sends a minimal identifier ({{{config.ecpds_match_key!r}: <destination>}}) "
+        "and does not populate any other fields. If your ECPDS_EVENT_TYPE schema has "
+        "additional required identifier fields, add a dedicated minimal ECPDS test schema "
+        "as shown in the Getting Started doc instead of pointing the smoke test at your "
+        "production schema."
+    )
+
+
+def _ecpds_post_status(
+    config: Config, path: str, body: dict, headers: dict[str, str]
+) -> tuple[int, str]:
+    """POST to a streaming endpoint and return (status, response_text)
+    WITHOUT consuming any payload on success. The ECPDS smoke cases
+    only care about the HTTP status of /watch (200 = ECPDS allowed the
+    request; 401/403/503 = it was rejected by auth or upstream). A
+    healthy /watch SSE stream may legitimately stay idle until an
+    event is published, so blocking on the first SSE chunk would time
+    out a perfectly working authorisation. On non-200 we still read
+    the (typically small) error body so the caller can surface it."""
+    timeout = build_timeout(config, read=2.0)
+    try:
+        with httpx.Client(
+            base_url=config.base_url, timeout=timeout, headers=headers
+        ) as client:
+            with client.stream("POST", path, json=body) as response:
+                if response.status_code == 200:
+                    return response.status_code, ""
+                body_text = response.read().decode("utf-8", errors="replace")
+                return response.status_code, body_text
+    except httpx.HTTPError as exc:
+        raise SmokeFailure(f"request failed: {exc}") from exc
+
+
+def test_ecpds_allowed_destination_returns_200(config: Config) -> None:
+    """Allowed user reading an entitled destination must get a 200 watch stream."""
+    skip = _ecpds_skip_reason(config)
+    if skip:
+        print(f"[INFO] skipping ECPDS smoke test ({skip})")
+        return
+
+    headers = config.auth_headers_for(
+        config.ecpds_allowed_user, config.ecpds_allowed_pass
+    )
+    body = {
+        "event_type": config.ecpds_event_type,
+        "identifier": _ecpds_identifier(config, config.ecpds_allowed_destination),
+    }
+
+    status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
+    if status == 400:
+        raise SmokeFailure(_ecpds_failure_hint_for_400(config) + f" response: {truncate_text(response)}")
+    if status != 200:
+        raise SmokeFailure(
+            f"expected 200 for allowed user + allowed destination, got {status}; "
+            f"response: {truncate_text(response)}"
+        )
+
+
+def test_ecpds_denied_destination_returns_403(config: Config) -> None:
+    """Allowed user reading an unentitled destination must get a 403."""
+    skip = _ecpds_skip_reason(config)
+    if skip:
+        print(f"[INFO] skipping ECPDS smoke test ({skip})")
+        return
+
+    headers = config.auth_headers_for(
+        config.ecpds_allowed_user, config.ecpds_allowed_pass
+    )
+    body = {
+        "event_type": config.ecpds_event_type,
+        "identifier": _ecpds_identifier(config, config.ecpds_denied_destination),
+    }
+
+    status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
+    if status == 400:
+        raise SmokeFailure(_ecpds_failure_hint_for_400(config) + f" response: {truncate_text(response)}")
+    if status != 403:
+        raise SmokeFailure(
+            f"expected 403 for allowed user + DENIED destination, got {status}; "
+            f"response: {truncate_text(response)}"
+        )
+
+
+def test_ecpds_notify_unaffected(config: Config) -> None:
+    """NOTIFY on an ECPDS-protected stream as an admin must succeed (2xx).
+
+    Limitation: this case uses admin credentials, and admins explicitly
+    bypass the ECPDS check, so a hypothetical regression that wired the
+    plugin into the notify path would still leave this case green
+    (the admin bypass would short-circuit before any ECPDS call). It
+    therefore confirms that admin auth is wired up and that the notify
+    handler does not unconditionally 503, but it does NOT prove non-admin
+    writes are ungated.
+
+    The non-admin proof lives in the integration test
+    `notify_on_ecpds_protected_stream_does_not_invoke_ecpds_for_non_admin_writer`,
+    which can configure a producer-role writer against a writable
+    ECPDS-protected stream. That setup is hard to reproduce in a smoke
+    test against an unknown auth-o-tron user database, so we keep this
+    case scoped to the admin path and rely on the integration test for
+    the non-admin guarantee.
+
+    A 503 here would mean the plugin incorrectly ran on a write. A
+    401/403 would mean AUTH_ADMIN_USER/AUTH_ADMIN_PASS need to match
+    your auth-o-tron config. Anything other than 2xx is a failure."""
+    skip = _ecpds_skip_reason(config)
+    if skip:
+        print(f"[INFO] skipping ECPDS smoke test ({skip})")
+        return
+
+    body = {
+        "event_type": config.ecpds_event_type,
+        "identifier": _ecpds_identifier(config, "any-value-not-checked"),
+        "payload": {"note": "ecpds-notify-bypass-smoke"},
+    }
+    status, response = request_json(
+        config,
+        "POST",
+        "/api/v1/notification",
+        body,
+        headers=config.admin_auth_headers(),
+    )
+    if not (200 <= status < 300):
+        raise SmokeFailure(
+            f"expected 2xx on notify for an ECPDS-protected stream, got {status}; "
+            f"a 503 means the plugin incorrectly ran on a write, a 401/403 "
+            f"means AUTH_ADMIN_USER/AUTH_ADMIN_PASS need to match your auth-o-tron "
+            f"config. response: {truncate_text(response)}"
+        )
 
 
 def expected_compression_value(raw: str) -> str:
@@ -1029,6 +1255,18 @@ def main() -> int:
         SmokeCase(
             "jetstream stream policy is inspectable (and optionally matches expected values)",
             test_jetstream_policy_visibility,
+        ),
+        SmokeCase(
+            "ecpds: allowed user + entitled destination -> 200",
+            test_ecpds_allowed_destination_returns_200,
+        ),
+        SmokeCase(
+            "ecpds: allowed user + DENIED destination -> 403",
+            test_ecpds_denied_destination_returns_403,
+        ),
+        SmokeCase(
+            "ecpds: notify on ECPDS-protected stream is not gated",
+            test_ecpds_notify_unaffected,
         ),
     ]
 

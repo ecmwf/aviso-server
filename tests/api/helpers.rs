@@ -61,7 +61,87 @@ static DEFAULT_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_AUTH_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_TRUSTED_PROXY_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
+#[cfg(feature = "ecpds")]
+static STREAMING_AUTH_ECPDS_PARTIAL_OUTAGE_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static TEST_GLOBAL_CONFIG: OnceLock<()> = OnceLock::new();
+
+#[cfg(feature = "ecpds")]
+static MOCK_ECPDS: LazyLock<MockEcpds> = LazyLock::new(start_sync_mock_ecpds_server);
+
+/// Mock ECPDS server that always returns 500. Used to construct a
+/// federated config with one healthy and one consistently failing
+/// server so the partial-outage path can be exercised at the HTTP
+/// layer end to end.
+#[cfg(feature = "ecpds")]
+static MOCK_ECPDS_ALWAYS_DOWN: LazyLock<MockEcpds> =
+    LazyLock::new(start_sync_mock_ecpds_server_always_down);
+
+#[cfg(feature = "ecpds")]
+pub struct MockEcpds {
+    pub url: String,
+    pub per_user_count: std::sync::Arc<std::sync::Mutex<HashMap<String, usize>>>,
+}
+
+#[cfg(feature = "ecpds")]
+impl MockEcpds {
+    /// Snapshot of the request count for a specific username (matched
+    /// by exact `id=` query parameter substring). Used by tests that
+    /// run in parallel — global request_count is racy across tests.
+    pub fn count_for(&self, username: &str) -> usize {
+        self.per_user_count
+            .lock()
+            .expect("mock counter lock")
+            .get(username)
+            .copied()
+            .unwrap_or(0)
+    }
+}
+
+#[cfg(feature = "ecpds")]
+pub fn mock_ecpds() -> &'static MockEcpds {
+    LazyLock::force(&MOCK_ECPDS);
+    &MOCK_ECPDS
+}
+
+#[cfg(feature = "ecpds")]
+pub fn mock_ecpds_always_down() -> &'static MockEcpds {
+    LazyLock::force(&MOCK_ECPDS_ALWAYS_DOWN);
+    &MOCK_ECPDS_ALWAYS_DOWN
+}
+
+/// Build a test JWT for the standard "localrealm" with the given
+/// `username` and `roles`. Shared by `tests/api/auth.rs` and
+/// `tests/api/ecpds_auth.rs` so token construction stays consistent
+/// (claims shape, realm, secret, expiry) across the auth test surface.
+pub fn test_jwt(username: &str, roles: &[&str]) -> String {
+    test_jwt_with_secret_and_exp(username, roles, "test-jwt-secret", 3600)
+}
+
+/// Parameterised variant of [`test_jwt`] for tests that need to forge
+/// expired tokens or use a non-default signing secret.
+pub fn test_jwt_with_secret_and_exp(
+    username: &str,
+    roles: &[&str],
+    secret: &str,
+    exp_offset_seconds: i64,
+) -> String {
+    let claims = aviso_server::auth::JwtClaims {
+        sub: Some(username.to_string()),
+        iss: None,
+        exp: (chrono::Utc::now().timestamp() + exp_offset_seconds) as usize,
+        iat: Some(chrono::Utc::now().timestamp() as usize),
+        username: Some(username.to_string()),
+        realm: Some("localrealm".to_string()),
+        roles: roles.iter().map(|r| (*r).to_string()).collect(),
+        attributes: HashMap::new(),
+    };
+    jsonwebtoken::encode(
+        &jsonwebtoken::Header::default(),
+        &claims,
+        &jsonwebtoken::EncodingKey::from_secret(secret.as_bytes()),
+    )
+    .expect("token must encode")
+}
 
 struct RunningServer {
     address: String,
@@ -476,6 +556,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             required: true,
             read_roles: None,
             write_roles: None,
+            plugins: None,
         });
         schema.insert("test_polygon_auth_any".to_string(), auth_any);
 
@@ -493,6 +574,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
                 vec!["admin".to_string()],
             )])),
             write_roles: None,
+            plugins: None,
         });
         schema.insert("test_polygon_auth_admin".to_string(), auth_admin);
 
@@ -506,6 +588,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
             required: false,
             read_roles: None,
             write_roles: None,
+            plugins: None,
         });
         schema.insert("test_polygon_auth_optional".to_string(), auth_optional);
 
@@ -523,6 +606,7 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
                 "localrealm".to_string(),
                 vec!["producer".to_string()],
             )])),
+            plugins: None,
         });
         schema.insert("test_polygon_auth_write".to_string(), auth_write);
     }
@@ -568,7 +652,212 @@ fn base_test_settings() -> Settings {
         watch_endpoint: WatchEndpointSettings::default(),
         auth: AuthSettings::default(),
         metrics: MetricsSettings::default(),
+        ecpds: None,
     }
+}
+
+#[cfg(feature = "ecpds")]
+fn start_sync_mock_ecpds_server() -> MockEcpds {
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let per_user: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let per_user_thread = per_user.clone();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let write_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line.trim().is_empty() => break,
+                    Err(_) => break,
+                    _ => {}
+                }
+            }
+
+            // Per-username counter is the source of truth used by
+            // tests that assert exact upstream-call counts.
+            // Indexed by decoded `id=...` so URL-encoded usernames
+            // (with `+`, `%20`, etc.) collapse to the same key.
+            if let Some(query_start) = request_line.find("?id=") {
+                let after_id = &request_line[query_start + 4..];
+                let id_end = after_id
+                    .find([' ', '&', '\r', '\n'])
+                    .unwrap_or(after_id.len());
+                let raw_id = &after_id[..id_end];
+                let decoded_id = url_decode(raw_id);
+                let mut map = per_user_thread.lock().expect("counter lock");
+                *map.entry(decoded_id).or_insert(0) += 1;
+            }
+
+            let (status, body) = if request_line.contains("id=ecpds-unavailable") {
+                (
+                    "500 Internal Server Error",
+                    r#"{"error":"mock unavailable"}"#,
+                )
+            } else if request_line.contains("id=ecpds-user")
+                || request_line.contains("id=u%2Bs+er%26name")
+                || request_line.contains("id=u%2Bs%20er%26name")
+            {
+                (
+                    "200 OK",
+                    r#"{"destinationList":[{"name":"CIP","active":true},{"name":"FOO","active":true}],"success":"yes"}"#,
+                )
+            } else {
+                ("200 OK", r#"{"destinationList":[],"success":"yes"}"#)
+            };
+
+            let response = format!(
+                "HTTP/1.1 {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                status,
+                body.len(),
+                body
+            );
+            let mut writer = write_stream;
+            let _ = writer.write_all(response.as_bytes());
+        }
+    });
+
+    MockEcpds {
+        url: format!("http://{}", addr),
+        per_user_count: per_user,
+    }
+}
+
+#[cfg(feature = "ecpds")]
+fn start_sync_mock_ecpds_server_always_down() -> MockEcpds {
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let per_user: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let per_user_thread = per_user.clone();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let write_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line.trim().is_empty() => break,
+                    Err(_) => break,
+                    _ => {}
+                }
+            }
+            if let Some(query_start) = request_line.find("?id=") {
+                let after_id = &request_line[query_start + 4..];
+                let id_end = after_id
+                    .find([' ', '&', '\r', '\n'])
+                    .unwrap_or(after_id.len());
+                let raw_id = &after_id[..id_end];
+                let decoded_id = url_decode(raw_id);
+                let mut map = per_user_thread.lock().expect("counter lock");
+                *map.entry(decoded_id).or_insert(0) += 1;
+            }
+            let body = r#"{"error":"always-down"}"#;
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let mut writer = write_stream;
+            let _ = writer.write_all(response.as_bytes());
+        }
+    });
+
+    MockEcpds {
+        url: format!("http://{}", addr),
+        per_user_count: per_user,
+    }
+}
+
+#[cfg(feature = "ecpds")]
+fn url_decode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    let bytes = s.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'+' {
+            out.push(' ');
+            i += 1;
+        } else if bytes[i] == b'%' && i + 2 < bytes.len() {
+            let hi = (bytes[i + 1] as char).to_digit(16);
+            let lo = (bytes[i + 2] as char).to_digit(16);
+            if let (Some(hi), Some(lo)) = (hi, lo) {
+                out.push((hi * 16 + lo) as u8 as char);
+                i += 3;
+            } else {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+        } else {
+            out.push(bytes[i] as char);
+            i += 1;
+        }
+    }
+    out
+}
+
+#[cfg(feature = "ecpds")]
+fn ensure_ecpds_test_schemas(schema: &mut HashMap<String, EventSchema>) {
+    let mut diss_ecpds = build_dissemination_schema();
+    diss_ecpds
+        .topic
+        .as_mut()
+        .expect("dissemination schema must have topic")
+        .base = "diss_ecpds".to_string();
+    diss_ecpds.auth = Some(StreamAuthConfig {
+        required: true,
+        read_roles: None,
+        write_roles: None,
+        plugins: Some(vec!["ecpds".to_string()]),
+    });
+    schema.insert("dissemination_ecpds".to_string(), diss_ecpds);
+
+    let mut diss_ecpds_writable = build_dissemination_schema();
+    diss_ecpds_writable
+        .topic
+        .as_mut()
+        .expect("dissemination schema must have topic")
+        .base = "diss_ecpds_writable".to_string();
+    diss_ecpds_writable.auth = Some(StreamAuthConfig {
+        required: true,
+        read_roles: None,
+        write_roles: Some(HashMap::from([(
+            "localrealm".to_string(),
+            vec!["producer".to_string()],
+        )])),
+        plugins: Some(vec!["ecpds".to_string()]),
+    });
+    schema.insert(
+        "dissemination_ecpds_writable".to_string(),
+        diss_ecpds_writable,
+    );
 }
 
 fn ensure_test_global_config_initialized() {
@@ -578,10 +867,33 @@ fn ensure_test_global_config_initialized() {
         if let Some(schema) = configuration.notification_schema.as_mut() {
             apply_jetstream_test_polygon_js_policy(schema);
         }
-        // This initialization is process-global (OnceLock-backed in production code),
-        // so tests must install a deterministic superset schema exactly once.
+        #[cfg(feature = "ecpds")]
+        {
+            LazyLock::force(&MOCK_ECPDS);
+            configuration.ecpds = Some(default_test_ecpds_config());
+            if let Some(schema) = configuration.notification_schema.as_mut() {
+                ensure_ecpds_test_schemas(schema);
+            }
+        }
         Settings::init_global_config(&configuration);
     });
+}
+
+#[cfg(feature = "ecpds")]
+pub fn default_test_ecpds_config() -> aviso_ecpds::config::EcpdsConfig {
+    LazyLock::force(&MOCK_ECPDS);
+    aviso_ecpds::config::EcpdsConfig {
+        username: "masteruser".to_string(),
+        password: "masterpass".to_string(),
+        target_field: "name".to_string(),
+        match_key: "destination".to_string(),
+        cache_ttl_seconds: 300,
+        max_entries: 10_000,
+        request_timeout_seconds: 30,
+        connect_timeout_seconds: 5,
+        partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
+        servers: vec![MOCK_ECPDS.url.clone()],
+    }
 }
 
 async fn spawn_server(
@@ -651,6 +963,55 @@ pub async fn spawn_streaming_test_app_with_auth() -> TestApp {
                 timeout_ms: 5_000,
                 ..AuthSettings::default()
             };
+            #[cfg(feature = "ecpds")]
+            {
+                configuration.ecpds = Some(default_test_ecpds_config());
+                if let Some(schema) = configuration.notification_schema.as_mut() {
+                    ensure_ecpds_test_schemas(schema);
+                }
+            }
+            spawn_server(configuration, Some(auth_server_handle)).await
+        })
+        .await;
+
+    TestApp {
+        address: running.address.clone(),
+    }
+}
+
+/// Spawn a separate test app whose ECPDS config has TWO servers (one
+/// healthy `MOCK_ECPDS`, one consistently failing `MOCK_ECPDS_ALWAYS_DOWN`)
+/// and `partial_outage_policy: AnySuccess`. Used by the partial-outage
+/// HTTP-layer test to assert the route layer surfaces the worst per-server
+/// failure on `aviso_ecpds_fetch_total` even when the merged result is
+/// `Ok` (so on-call alerts can fire on a degraded but still-serving
+/// deployment).
+#[cfg(feature = "ecpds")]
+pub async fn spawn_streaming_test_app_with_auth_partial_outage() -> TestApp {
+    LazyLock::force(&MOCK_ECPDS);
+    LazyLock::force(&MOCK_ECPDS_ALWAYS_DOWN);
+    let running = STREAMING_AUTH_ECPDS_PARTIAL_OUTAGE_SERVER
+        .get_or_init(|| async {
+            let mut configuration = base_test_settings();
+            set_streaming_auth_test_notification_schema(&mut configuration);
+            let (auth_o_tron_url, auth_server_handle) = start_mock_auth_o_tron_server()
+                .await
+                .expect("mock auth-o-tron server must start");
+            configuration.auth = AuthSettings {
+                enabled: true,
+                auth_o_tron_url,
+                jwt_secret: "test-jwt-secret".to_string(),
+                admin_roles: HashMap::from([("localrealm".to_string(), vec!["admin".to_string()])]),
+                timeout_ms: 5_000,
+                ..AuthSettings::default()
+            };
+            let mut ecpds_cfg = default_test_ecpds_config();
+            ecpds_cfg.partial_outage_policy = aviso_ecpds::config::PartialOutagePolicy::AnySuccess;
+            ecpds_cfg.servers = vec![MOCK_ECPDS.url.clone(), MOCK_ECPDS_ALWAYS_DOWN.url.clone()];
+            configuration.ecpds = Some(ecpds_cfg);
+            if let Some(schema) = configuration.notification_schema.as_mut() {
+                ensure_ecpds_test_schemas(schema);
+            }
             spawn_server(configuration, Some(auth_server_handle)).await
         })
         .await;

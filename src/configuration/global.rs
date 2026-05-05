@@ -38,6 +38,60 @@ impl Settings {
         );
     }
 
+    /// Build the per-application ECPDS checker (if configured).
+    ///
+    /// Returned to the caller (typically `Application::build`) so it
+    /// can be flowed into actix `app_data` and read by route handlers.
+    /// One instance per running Aviso process; tests may build their
+    /// own per-app instance to exercise distinct ECPDS configurations
+    /// (e.g. different `partial_outage_policy` or server lists) within
+    /// a single test binary.
+    ///
+    /// Returns `Ok(None)` (no checker built) when *either* there is
+    /// no `ecpds:` config block *or* no stream actually enables the
+    /// `"ecpds"` plugin. The opt-in is per stream, and constructing
+    /// the checker for an unused but stale `ecpds:` block would let
+    /// a malformed `servers` URL or a bad credential break startup
+    /// for a deployment that does not actually authorise any stream
+    /// through ECPDS, which contradicts the per-stream opt-in story.
+    ///
+    /// Returns an error if checker construction fails (e.g. invalid
+    /// server URL or HTTP client builder error) for a config block
+    /// that *is* referenced by at least one stream.
+    #[cfg(feature = "ecpds")]
+    pub fn build_ecpds_checker(
+        &self,
+    ) -> Result<Option<aviso_ecpds::checker::EcpdsChecker>, aviso_ecpds::EcpdsError> {
+        let any_stream_enables_ecpds = self
+            .notification_schema
+            .as_ref()
+            .map(|schema| {
+                schema.iter().any(|(_, event_schema)| {
+                    event_schema
+                        .auth
+                        .as_ref()
+                        .and_then(|a| a.plugins.as_ref())
+                        .map(|plugins| plugins.iter().any(|p| p == "ecpds"))
+                        .unwrap_or(false)
+                })
+            })
+            .unwrap_or(false);
+        let checker = match (self.ecpds.as_ref(), any_stream_enables_ecpds) {
+            (Some(cfg), true) => Some(aviso_ecpds::checker::EcpdsChecker::new(cfg)?),
+            _ => None,
+        };
+        tracing::info!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_name = "configuration.ecpds.initialized",
+            ecpds_block_present = self.ecpds.is_some(),
+            any_stream_enables_ecpds,
+            checker_built = checker.is_some(),
+            "ECPDS checker initialized"
+        );
+        Ok(checker)
+    }
+
     pub fn get_global_notification_schema() -> &'static Option<HashMap<String, EventSchema>> {
         GLOBAL_NOTIFICATION_SCHEMA
             .get()

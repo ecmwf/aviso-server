@@ -7,14 +7,11 @@
 // does it submit to any jurisdiction.
 
 use crate::helpers::{
-    spawn_streaming_test_app_with_auth, spawn_streaming_test_app_with_trusted_proxy_auth,
+    spawn_streaming_test_app_with_auth, spawn_streaming_test_app_with_trusted_proxy_auth, test_jwt,
+    test_jwt_with_secret_and_exp,
 };
-use aviso_server::auth::JwtClaims;
-use chrono::Utc;
-use jsonwebtoken::{EncodingKey, Header, encode};
 use reqwest::header::WWW_AUTHENTICATE;
 use serde_json::json;
-use std::collections::HashMap;
 
 fn auth_token_with_secret_and_exp(
     username: &str,
@@ -22,27 +19,11 @@ fn auth_token_with_secret_and_exp(
     secret: &str,
     exp_offset_seconds: i64,
 ) -> String {
-    let claims = JwtClaims {
-        sub: Some(username.to_string()),
-        iss: None,
-        exp: (Utc::now().timestamp() + exp_offset_seconds) as usize,
-        iat: Some(Utc::now().timestamp() as usize),
-        username: Some(username.to_string()),
-        realm: Some("localrealm".to_string()),
-        roles: roles.iter().map(|r| (*r).to_string()).collect(),
-        attributes: HashMap::new(),
-    };
-
-    encode(
-        &Header::default(),
-        &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
-    )
-    .expect("token must encode")
+    test_jwt_with_secret_and_exp(username, roles, secret, exp_offset_seconds)
 }
 
 fn auth_token(username: &str, roles: &[&str]) -> String {
-    auth_token_with_secret_and_exp(username, roles, "test-jwt-secret", 3600)
+    test_jwt(username, roles)
 }
 
 async fn post_notify(

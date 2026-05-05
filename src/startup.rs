@@ -15,6 +15,8 @@ use tracing::{error, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::auth::middleware::AuthMiddleware;
+#[cfg(feature = "ecpds")]
+use crate::configuration::validate_ecpds_settings;
 use crate::configuration::{AuthSettings, validate_metrics_settings};
 use crate::metrics::AppMetrics;
 use crate::openapi::ApiDoc;
@@ -26,7 +28,7 @@ use crate::routes::watch::watch;
 use crate::{
     configuration::{
         Settings, validate_auth_settings, validate_schema_storage_policy_support,
-        validate_stream_auth_settings,
+        validate_stream_auth_settings, validate_stream_plugin_settings,
     },
     notification_backend::{NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify},
@@ -73,6 +75,17 @@ impl Application {
             return Err(std::io::Error::other(e));
         }
 
+        if let Err(e) = validate_stream_plugin_settings(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.auth.plugin_validation.failed",
+                error = %e,
+                "Stream plugin configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
         if let Err(e) = validate_stream_auth_settings(&configuration) {
             error!(
                 service_name = SERVICE_NAME,
@@ -94,6 +107,39 @@ impl Application {
             );
             return Err(std::io::Error::other(e));
         }
+
+        #[cfg(feature = "ecpds")]
+        let ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>> = {
+            if let Err(e) = validate_ecpds_settings(&configuration) {
+                error!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_name = "startup.ecpds.validation.failed",
+                    error = %e,
+                    "ECPDS configuration validation failed"
+                );
+                return Err(std::io::Error::other(e));
+            }
+            // Tell the subcrate which service identity to use in its
+            // own structured tracing events (auth.ecpds.fetch.* and
+            // auth.ecpds.cache.*) so log routing/filtering by
+            // service_name groups them with the rest of the binary's
+            // events instead of leaving them under aviso-ecpds/0.1.0.
+            aviso_ecpds::set_service_identity(SERVICE_NAME, SERVICE_VERSION);
+            match configuration.build_ecpds_checker() {
+                Ok(checker) => checker.map(Arc::new),
+                Err(e) => {
+                    error!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_name = "startup.ecpds.checker_init.failed",
+                        error = %e,
+                        "ECPDS checker initialization failed"
+                    );
+                    return Err(std::io::Error::other(e));
+                }
+            }
+        };
 
         let address = format!(
             "{}:{}",
@@ -148,6 +194,8 @@ impl Application {
             shutdown.clone(),
             Arc::new(configuration.auth.clone()),
             app_metrics,
+            #[cfg(feature = "ecpds")]
+            ecpds_checker,
         )?;
 
         // stop Actix when the cancellation token is triggered
@@ -289,8 +337,11 @@ pub fn run(
     shutdown: CancellationToken,
     auth_settings: Arc<AuthSettings>,
     app_metrics: Option<AppMetrics>,
+    #[cfg(feature = "ecpds")] ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>>,
 ) -> Result<Server, std::io::Error> {
     let metrics_data = app_metrics.map(web::Data::new);
+    #[cfg(feature = "ecpds")]
+    let ecpds_data = ecpds_checker.map(web::Data::new);
     let server = HttpServer::new(move || {
         let mut app = App::new()
             .wrap(TracingLogger::default())
@@ -309,6 +360,11 @@ pub fn run(
 
         if let Some(ref metrics) = metrics_data {
             app = app.app_data(metrics.clone());
+        }
+
+        #[cfg(feature = "ecpds")]
+        if let Some(ref ecpds) = ecpds_data {
+            app = app.app_data(ecpds.clone());
         }
 
         app

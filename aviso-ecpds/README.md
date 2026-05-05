@@ -1,0 +1,69 @@
+# aviso-ecpds
+
+ECPDS (ECMWF Production Data Service) destination authorization plugin for `aviso-server`.
+
+This crate is consumed by `aviso-server` as an **optional path-dependency** behind the `ecpds` Cargo feature. It lives in its own crate so deployments that don't need ECPDS authorization compile a binary with zero ECPDS code, including zero `reqwest` calls to ECPDS-specific endpoints.
+
+## What it does
+
+When a user calls `watch` or `replay` on a stream whose schema declares `auth.plugins: ["ecpds"]`, this crate:
+
+1. Extracts the configured `match_key` value (e.g. `destination`) from the request.
+2. Looks up the user's destination list in an in-process single-flight bounded cache (TTL + size cap, eviction via moka's TinyLFU). On miss, queries the configured ECPDS servers in parallel.
+3. Merges per-server results under the configured [`PartialOutagePolicy`](src/config.rs).
+4. Allows the request iff the requested destination is in the user's authorized list. Otherwise denies with a typed [`DenyReason`](src/client.rs).
+
+`notify` is never gated.
+
+## Public API
+
+- [`config::EcpdsConfig`] and [`config::PartialOutagePolicy`]: serde-deserialized configuration.
+- [`checker::EcpdsChecker`]: fallible `new`, async `check_access`, plus `cache_entry_count` for metric sampling.
+- [`client::EcpdsError`]: domain error enum with typed [`client::FetchOutcome`] (`success`, `http_401`, `http_403`, `http_4xx`, `http_5xx`, `invalid_response`, `unreachable`) and [`client::DenyReason`] (`DestinationNotInList`, `MatchKeyMissing`). Both have stable Prometheus label strings for the `aviso_ecpds_*` metrics in `aviso-server`.
+- [`cache::CacheOutcome`]: `Hit`, `MissCoalesced` (waited on a concurrent caller's in-flight fetch), or `MissFetched { fetch_outcome }` (this caller ran the upstream fetch and surfaces its merged outcome). Returned alongside `check_access` results so the route layer can label cache hit-rate metrics and record `aviso_ecpds_fetch_total` exactly once per upstream call.
+
+This crate is **framework-agnostic** by design: it does not depend on `actix-web`, `aviso-server`, or `prometheus`. The route layer in `aviso-server` is responsible for HTTP response shaping and metric recording. This keeps the boundary between "decide" (here) and "expose" (there) clean.
+
+## ECPDS API contract assumptions
+
+ECPDS has no public REST API documentation as of this writing. The contract this crate assumes is:
+
+- `GET <server>/ecpds/v1/destination/list?id=<username>` with HTTP Basic Auth (service account credentials).
+- 200 response body parsed as `{"destinationList": [<record>, ...], "success": "<string>"}`.
+- The `success` field MUST equal exactly `"yes"`. Any other value (including `"no"`, `"YES"`, `"true"`, etc.) is treated as an upstream-reported failure and surfaces as `FetchOutcome::InvalidResponse`. This stops a server saying "I failed, here is an empty list" from silently masking the outage in `aviso_ecpds_fetch_total` and from contributing an empty allow-list to the merged decision.
+- Each record is treated as a JSON object. Records with `"active": true` AND a string-valued `target_field` (default `"name"`) contribute their `target_field` value to the user's allow-list. Records where `active` is `false`, missing, or not a boolean are silently skipped (safe default: deny). Records that lack the configured `target_field` are silently skipped. Both skip cases are logged at info as `auth.ecpds.fetch.skipped_inactive` / `auth.ecpds.fetch.skipped_record`.
+- 4xx/5xx responses are surfaced as `EcpdsError::Http { status, .. }`; the merge layer maps them to `FetchOutcome::Unauthorized`/`Forbidden`/`ClientError`/`ServerError` so SREs can distinguish "creds wrong" from "ECPDS down".
+
+These assumptions are pinned by the captured-fixture tests under [`tests/fixtures/`](tests/fixtures/) plus the integration tests in [`tests/contract.rs`](tests/contract.rs). **If a real ECPDS environment ever produces a response shape that breaks those tests, the contract has changed and this crate needs an update.** That is the single failing test to look for.
+
+## Test fixtures
+
+| Fixture | Asserts |
+|---------|---------|
+| `populated_user.json` | Three destinations (one inactive); `name` field present on each. |
+| `empty_user.json` | Empty `destinationList` with `success: "yes"` denies all destinations. |
+| `success_no.json` | `success: "no"` is treated as a server-side failure: the parser returns `FetchOutcome::InvalidResponse` so on-call sees the upstream-reported outage in metrics instead of a silent empty allow-list. |
+| `record_missing_target_field.json` | Records lacking `target_field` are silently skipped, not surfaced as destinations. |
+
+## Cargo features
+
+- `default = []` (no features).
+- The crate has no feature flags of its own. The `ecpds` feature gating happens on the **parent crate** (`aviso-server`), which optionally pulls this crate in.
+
+## Why this crate is path-dep, not workspace-member
+
+`aviso-server` follows the same convention as `aviso-validators`: domain-specific support crates live as path-dependencies rather than workspace members. The trade-off:
+
+- Default builds (no `--features ecpds`) skip the entire dependency tree introduced by this crate (`moka`, `mockito`, the extra `reqwest` config); compile time and binary size on the default build do not pay for ECPDS.
+- The root `Cargo.lock` does record this crate and its transitive dependencies (it has to: `cargo` resolves the whole graph regardless of feature gates), so adding the path dep is not lockfile-free. The win is purely on the *compile* side: optional `dep:` plus the `ecpds` feature flag means `cargo build` and `cargo build --features ecpds` produce different artifacts from the same lockfile.
+- The subcrate has its own `Cargo.toml`, so `cargo {build,test,clippy} --manifest-path aviso-ecpds/Cargo.toml` resolves only this crate's dependency graph and runs only this crate's tests, without pulling in `aviso-server`. Following the standard Rust convention for libraries, the subcrate does not commit its own `Cargo.lock`; CI re-resolves dependencies fresh on each isolated subcrate run, which is what `.github/workflows/ci.yaml` does in the dedicated subcrate test/clippy/fmt steps.
+
+## Related documentation
+
+- [Authentication > ECPDS Destination Authorization](../docs/src/authentication.md#ecpds-destination-authorization): operator-facing setup guide.
+- [ECPDS Plugin Runbook](../docs/src/ecpds-runbook.md): on-call triage.
+- [Configuration Reference > `ecpds`](../docs/src/configuration-reference.md#ecpds): every config field.
+
+## License
+
+Apache-2.0

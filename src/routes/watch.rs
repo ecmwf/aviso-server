@@ -42,9 +42,9 @@ use tracing_actix_web::RequestId;
         (status = 200, description = "SSE stream established successfully", content_type = "text/event-stream"),
         (status = 400, description = "Invalid request parameters"),
         (status = 401, description = "Missing or invalid credentials (when stream requires auth)"),
-        (status = 403, description = "Valid credentials but insufficient roles for this stream"),
+        (status = 403, description = "Valid credentials but the user lacks role-based access for this stream, or, when the stream enables the ECPDS plugin, the requested destination is not in the user's ECPDS allow-list"),
         (status = 500, description = "Failed to establish stream"),
-        (status = 503, description = "Authentication service unavailable (direct mode)")
+        (status = 503, description = "Authentication service unavailable (direct mode), or, when the stream enables the ECPDS plugin, ECPDS could not be reached under the active partial_outage_policy")
     ),
     security(
         (),
@@ -98,6 +98,17 @@ pub async fn watch(
     // Update tracing context
     tracing::Span::current().record("event_type", &context.event_type);
     record_start_at_span_fields(context.start_at);
+
+    #[cfg(feature = "ecpds")]
+    if let Err(response) = crate::routes::streaming::enforce_ecpds_auth(
+        &http_request,
+        &context.event_type,
+        &context.canonicalized_params,
+    )
+    .await
+    {
+        return response;
+    }
 
     // Use canonicalized filtering parameters produced by request processing.
     let filtering_params = Arc::new(context.canonicalized_params.clone());
