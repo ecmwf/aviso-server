@@ -101,10 +101,14 @@ Some events carry a typed enum field. The values you will see in logs are listed
   - `MatchKeyMissing`: the request body did not include the configured match-key field.
 - `fetch_outcome` (on `auth.ecpds.check.unavailable`):
   - `Unauthorized`, `Forbidden`: an ECPDS server returned 401 or 403.
+  - `ClientError`: an ECPDS server returned a 4xx other than 401 or 403 (commonly 404 for a misconfigured base URL or 429 for throttling).
   - `ServerError`: an ECPDS server returned 5xx.
   - `InvalidResponse`: an ECPDS server returned a body the parser could not read.
   - `Unreachable`: network or timeout failure.
-- `cache_outcome` (on `auth.ecpds.check.allowed`): `Hit` or `Miss`.
+- `cache_outcome` (on `auth.ecpds.check.allowed`):
+  - `Hit`: served from cache.
+  - `MissCoalesced`: the cache was empty for this key but a concurrent caller's fetch was in flight; this request waited on it.
+  - `MissFetched { fetch_outcome: ... }`: this request ran the upstream fetch itself; the inner `fetch_outcome` carries the merged per-server result (`Success` when every server responded cleanly, otherwise the worst per-server failure under `any_success`).
 
 ## How to confirm "config error vs. upstream outage"
 

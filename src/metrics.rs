@@ -123,7 +123,7 @@ impl AppMetrics {
             cache_misses_total: register_int_counter_with_registry!(
                 opts!(
                     "aviso_ecpds_cache_misses_total",
-                    "ECPDS destination cache misses (upstream fetch required)"
+                    "ECPDS destination cache misses (request not served from cache; an upstream fetch ran for this caller or a concurrent caller via single-flight)"
                 ),
                 registry
             )
