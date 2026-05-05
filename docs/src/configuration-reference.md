@@ -71,7 +71,7 @@ Optional ECPDS destination authorization. Only available when built with `--feat
 | `max_entries` | `u64` | `10000` | Maximum number of distinct usernames held in the cache; eviction policy is moka's TinyLFU. Must be `> 0`. |
 | `request_timeout_seconds` | `u64` | `30` | Total wall-clock timeout for a single ECPDS HTTP request, end of TLS handshake to end of response body. Must be `> 0`. |
 | `connect_timeout_seconds` | `u64` | `5` | TCP + TLS handshake timeout for a single ECPDS HTTP request. Must be `> 0`. |
-| `partial_outage_policy` | `"strict"\|"any_success"` | `"strict"` | How to merge per-server destination lists when more than one server is configured. `strict` (recommended): all servers must agree, otherwise 503. `any_success`: succeed if any one server replies (union the lists; warn on divergence). See [ECPDS Destination Authorization](./authentication.md#partial-outage-policy) for the security trade-off. |
+| `partial_outage_policy` | `"strict"\|"any_success"` | `"strict"` | How tolerant the merge is when one configured server fails. The destination list itself is always the union of per-server responses. `strict`: every server must respond successfully or the call fails with 503. `any_success`: take the union of whichever servers responded; only fails if no server responded. See [ECPDS Destination Authorization](./authentication.md#partial-outage-policy) for the failure-tolerance trade-off. |
 
 See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization) for setup and runtime behavior, and the [ECPDS runbook](./ecpds-runbook.md) for operational triage.
 
@@ -103,7 +103,7 @@ A binary built with `--features ecpds` always registers the following five metri
 | `aviso_ecpds_cache_misses_total` | counter | (none) | ECPDS destination cache misses (requests that triggered an upstream fetch). |
 | `aviso_ecpds_cache_size` | gauge | (none) | Current number of distinct usernames in the cache. Reflects the actual current count, with any expired entries already removed. |
 | `aviso_ecpds_access_decisions_total` | counter | `outcome` | Access decisions. `outcome` ∈ {`allow`, `deny_destination`, `deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}. |
-| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check that touched the upstream). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_5xx`, `invalid_response`, `unreachable`, `divergence`}. |
+| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check that touched the upstream). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_5xx`, `invalid_response`, `unreachable`}. |
 
 Process-level metrics (CPU, memory, open FDs) are automatically collected on Linux.
 

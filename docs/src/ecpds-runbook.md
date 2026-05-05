@@ -8,7 +8,7 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 - The plugin **fails closed**. Any internal problem returns `503 Service Unavailable`. The plugin will never accidentally allow a request.
 - The plugin **does not retry**. A `503` is the signal to investigate ECPDS, not Aviso.
 - The cache lives in process memory. Restarting Aviso clears it. Replicas have independent caches.
-- The default `partial_outage_policy` is `strict`. A single ECPDS server going away will take the whole plugin down. This is intentional.
+- The default `partial_outage_policy` is `strict`: every configured ECPDS server must respond successfully or the call fails with 503. A single ECPDS server going away takes the whole plugin down. This is intentional. The destination list itself is the **union** of every server's response under both policies; the choice is purely about how tolerant we are of per-server failures.
 
 ## Symptom and first checks
 
@@ -32,7 +32,7 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
   - `http_401` or `http_403`: service-account credentials wrong or revoked.
   - `http_5xx`: ECPDS itself is broken.
   - `invalid_response`: ECPDS response shape no longer matches what the parser expects (the contract has changed).
-  - `divergence`: strict policy and servers disagree on the user's destination list.
+
 
 ### 403 storm on watch/replay
 
@@ -69,14 +69,6 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 - **First log:** rate of `event_name=auth.ecpds.cache.miss`.
 - **Likely cause:** high miss rate with a high number of distinct usernames means `cache_ttl_seconds` is too short, `max_entries` is too small, or there are genuinely many unique users.
 
-### Tracing event `auth.ecpds.fetch.divergence`
-
-- **What you see:** the `auth.ecpds.fetch.divergence` event firing in logs, or `aviso_ecpds_fetch_total{outcome="divergence"}` incrementing. Under the default `strict` policy, you will also see a 503 storm at the same time. Under `any_success`, the requests still succeed (with a warning) but the destination list is the union across reachable servers.
-- **Why it happens:** two or more configured ECPDS servers were asked the same question (what destinations does user X have?) and gave different answers. Almost always this is a replication delay between ECPDS replicas, not an Aviso bug.
-- **First metric:** `aviso_ecpds_fetch_total{outcome="divergence"}`.
-- **First log:** `event_name=auth.ecpds.fetch.divergence`.
-- **Likely cause:** servers report different destination lists for the same user. This is almost always a replication-lag issue at the ECPDS side. Strict policy turns this into a 503. The `any_success` policy takes the union and continues with a warning.
-
 ## Tracing event reference
 
 Every event uses the codebase's standard structured shape (`service_name`, `service_version`, `event_name`, plus event-specific fields). The list below covers each event with a one-line meaning. Field-value details follow.
@@ -93,7 +85,6 @@ Every event uses the codebase's standard structured shape (`service_name`, `serv
 | `auth.ecpds.cache.miss` | debug | The destination list was not in cache; a fetch was triggered. |
 | `auth.ecpds.fetch.succeeded` | debug | A fetch to one ECPDS server succeeded. |
 | `auth.ecpds.fetch.failed` | warn | A fetch to one ECPDS server failed. See `error` field. |
-| `auth.ecpds.fetch.divergence` | warn | Two or more servers returned different destination lists for the same user. |
 | `auth.ecpds.fetch.skipped_record` | info | One or more ECPDS records were missing the configured `target_field` and got dropped. |
 
 ### Common fields
@@ -112,15 +103,7 @@ Some events carry a typed enum field. The values you will see in logs are listed
   - `ServerError`: an ECPDS server returned 5xx.
   - `InvalidResponse`: an ECPDS server returned a body the parser could not read.
   - `Unreachable`: network or timeout failure.
-  - `Divergence`: strict policy and servers disagreed.
 - `cache_outcome` (on `auth.ecpds.check.allowed`): `Hit` or `Miss`.
-
-### Divergence event field shape (by policy)
-
-`auth.ecpds.fetch.divergence` carries different fields depending on the active policy:
-
-- Under **strict** policy, the fields are `server_index` (the zero-based index of the server that disagreed) and `divergence_count` (how many destinations differed from the canonical set).
-- Under **any_success** policy, the fields are `pairwise_divergence_count` (the largest disagreement between any two servers) and `reachable_servers` (how many servers responded).
 
 ## How to confirm "config error vs. upstream outage"
 
@@ -138,9 +121,9 @@ Some events carry a typed enum field. The values you will see in logs are listed
 
 ## Blast radius of `partial_outage_policy=strict`
 
-With `strict`, **one** ECPDS server going away takes the whole plugin to 503. Any reader on a stream with `plugins: ["ecpds"]` will see 503 until the missing server returns and agrees with the others.
+With `strict`, **one** ECPDS server going away takes the whole plugin to 503. Any reader on a stream with `plugins: ["ecpds"]` will see 503 until the missing server returns. The destination list itself would still be a union once both servers respond again; the policy only governs how strictly we treat per-server failures.
 
-If your operational priority is availability over confidentiality (e.g. during a known ECPDS replication issue), an explicit and documented switch to `partial_outage_policy: any_success` is the lever. Read the security implication in the [Partial-outage policy](./authentication.md#partial-outage-policy) section before flipping.
+If you would rather keep serving requests during a partial outage at the cost of possibly missing entitlements that lived only on the unreachable server, switch to `partial_outage_policy: any_success`. Read the trade-off in the [Partial-outage policy](./authentication.md#partial-outage-policy) section before flipping.
 
 ## What "the cache is process-local" implies
 

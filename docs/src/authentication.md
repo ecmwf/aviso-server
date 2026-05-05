@@ -229,21 +229,19 @@ The plugin requires (and startup validation enforces):
 
 ### Partial-outage policy
 
-When more than one ECPDS server is configured, the `partial_outage_policy` field decides what happens if servers disagree or a subset is down.
+When more than one ECPDS server is configured, the user's effective destination list is always the **union** of every per-server response. ECMWF ECPDS deployments are typically federated (e.g. `diss-monitor` and `aux-monitor` cover different destination namespaces), so a user's full entitlement is the combination of what each server reports. The `partial_outage_policy` field only governs how tolerant the merge is when one of those servers fails or times out.
 
 | Value | Behaviour | Operational implication |
 |-------|-----------|-------------------------|
-| `strict` (default) | Every configured server must reply successfully **and** return the same set of destinations. Any server failure or any divergence fails the lookup. | Confidentiality-preserving: if servers disagree (replication lag, partial outage), the stricter view wins. **Loss of one server = total ECPDS unavailability.** |
-| `any_success` | The lookup succeeds if any one server replies. The destination list is the union across reachable servers. | Availability-preserving: a single reachable server keeps the plugin working. **An out-of-sync permissive server can widen access** until others come back. Divergence is logged at `warn`. |
-
-The plugin emits `auth.ecpds.fetch.divergence` (`warn`) when servers disagree, in either policy. Operators should treat divergence as a replication issue to investigate at the ECPDS side.
+| `strict` (default) | Every configured server must reply successfully within the per-request timeout. The destination list is the union of their responses. Any one server failing fails the whole lookup with 503. | A single ECPDS server going down takes the plugin to 503. The trade is: 503 (try again later) is preferred over 403 (definitely no access) when we can't be sure we saw the user's complete entitlement set. |
+| `any_success` | Take the union of whichever servers responded successfully within the per-request timeout. Failed servers are silently dropped from the merge. Only fails if no server responded usefully. | Keeps serving during a partial outage. The cost: if a user's only entitlement to a destination lived on an unreachable server, that user will see 403 until the server is back, even though their access is genuinely valid. |
 
 ### Error responses
 
 | Code | HTTP Status | When |
 |------|-------------|------|
 | `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. |
-| `SERVICE_UNAVAILABLE` | `503` | The lookup failed under the active `partial_outage_policy`. The cause is in the structured tracing event `auth.ecpds.check.unavailable` and on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_5xx`, `divergence`, `invalid_response`). |
+| `SERVICE_UNAVAILABLE` | `503` | The lookup failed under the active `partial_outage_policy`. The cause is in the structured tracing event `auth.ecpds.check.unavailable` and on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_5xx`, `invalid_response`). |
 
 ### Caching
 

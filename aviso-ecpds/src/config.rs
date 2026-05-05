@@ -21,36 +21,37 @@ fn default_connect_timeout() -> u64 {
     5
 }
 
-/// How to merge per-server destination lists when more than one ECPDS
-/// server is configured.
+/// How to handle per-server failures when more than one ECPDS server
+/// is configured.
 ///
-/// Operational trade-off:
+/// Both policies build the user's destination list as the **union** of
+/// per-server responses. They differ only in failure tolerance:
 ///
-/// - [`PartialOutagePolicy::Strict`] (default) — every configured
-///   server must respond successfully **and** return the same set of
-///   destinations. Any server failure or any divergence between
-///   servers fails the lookup with [`crate::EcpdsError::ServiceUnavailable`].
-///   This is the confidentiality-preserving default: under a
-///   replication lag or partial outage, denying access is preferable
-///   to potentially granting access based on a stale or incomplete
-///   server's view.
+/// - [`PartialOutagePolicy::Strict`] (default): every configured
+///   server must return successfully within the per-request timeout.
+///   If any one fails, the whole call fails with
+///   [`crate::EcpdsError::ServiceUnavailable`]. Use this when every
+///   configured server is critical for completeness and you would
+///   rather return 503 than potentially deny access the user actually
+///   has on an unreachable server.
 ///
-/// - [`PartialOutagePolicy::AnySuccess`] — succeed as soon as any one
-///   server responds; union the destination lists across reachable
-///   servers. This is more available but lets a single permissive (or
-///   compromised) server widen access. Loud `tracing::warn!` is
-///   emitted on divergence so on-call sees it.
+/// - [`PartialOutagePolicy::AnySuccess`]: succeed as long as at least
+///   one server returned successfully. Servers that timed out or
+///   failed are silently dropped from the merge. Use this when each
+///   server is independently authoritative for its own slice and the
+///   user's effective access is best approximated by the union of
+///   whichever servers were reachable.
 #[derive(Debug, Deserialize, Serialize, Clone, Copy, PartialEq, Eq, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum PartialOutagePolicy {
-    /// Every configured server must respond successfully and return
-    /// the same set of destinations. Default; preserves
-    /// confidentiality at the cost of availability.
+    /// All configured servers must respond successfully. The user's
+    /// destination list is the union of their responses. Any per-server
+    /// failure aborts the call with `ServiceUnavailable`.
     #[default]
     Strict,
-    /// Succeed if any one server replies; union the destination lists
-    /// across reachable servers. Preserves availability at the cost
-    /// of widening access if a permissive server is the survivor.
+    /// Take the union of whichever servers responded successfully
+    /// within the per-request timeout. Only fails when zero servers
+    /// returned a usable response.
     AnySuccess,
 }
 
@@ -69,8 +70,8 @@ fn default_partial_outage_policy() -> PartialOutagePolicy {
 /// - `target_field = "name"`: the field of each ECPDS destination
 ///   record whose string value is matched against the request's
 ///   `match_key`.
-/// - `partial_outage_policy = Strict`: see
-///   [`PartialOutagePolicy`] for the security trade-off.
+/// - `partial_outage_policy = Strict`: see [`PartialOutagePolicy`]
+///   for the failure-tolerance trade-off between Strict and AnySuccess.
 #[derive(Deserialize, Serialize, Clone)]
 pub struct EcpdsConfig {
     /// Service-account username for HTTP Basic Auth to ECPDS.

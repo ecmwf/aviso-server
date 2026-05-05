@@ -19,7 +19,7 @@ When a user calls `watch` or `replay` on a stream whose schema declares `auth.pl
 
 - [`config::EcpdsConfig`] and [`config::PartialOutagePolicy`]: serde-deserialized configuration.
 - [`checker::EcpdsChecker`]: fallible `new`, async `check_access`, plus `cache_entry_count` for metric sampling.
-- [`client::EcpdsError`]: domain error enum with typed [`client::FetchOutcome`] (`success`, `http_401`, `http_403`, `http_5xx`, `invalid_response`, `unreachable`, `divergence`) and [`client::DenyReason`] (`DestinationNotInList`, `MatchKeyMissing`). Both have stable Prometheus label strings for the `aviso_ecpds_*` metrics in `aviso-server`.
+- [`client::EcpdsError`]: domain error enum with typed [`client::FetchOutcome`] (`success`, `http_401`, `http_403`, `http_5xx`, `invalid_response`, `unreachable`) and [`client::DenyReason`] (`DestinationNotInList`, `MatchKeyMissing`). Both have stable Prometheus label strings for the `aviso_ecpds_*` metrics in `aviso-server`.
 - [`cache::CacheOutcome`]: `Hit` or `Miss`, returned alongside `check_access` results so the route layer can label cache hit-rate metrics.
 
 This crate is **framework-agnostic** by design: it does not depend on `actix-web`, `aviso-server`, or `prometheus`. The route layer in `aviso-server` is responsible for HTTP response shaping and metric recording. This keeps the boundary between "decide" (here) and "expose" (there) clean.

@@ -104,13 +104,17 @@ auth:
 #   # Per-request HTTP timeouts (seconds). Defaults: 30 / 5.
 #   request_timeout_seconds: 30
 #   connect_timeout_seconds: 5
-#   # How to merge per-server destination lists.
-#   # - strict (default): all servers must respond and agree, otherwise 503.
-#   #   Confidentiality-preserving; one ECPDS server going away takes the
-#   #   whole plugin to 503.
-#   # - any_success: succeed if any server replies; union the lists.
-#   #   Availability-preserving; a permissive surviving server can widen
-#   #   access. Divergence is logged at warn level.
+#   # How tolerant the merge is when one configured server fails.
+#   # The destination list itself is always the union of per-server
+#   # responses; this option only governs failure handling.
+#   # - strict (default): every server must respond successfully or the
+#   #   whole call returns 503. One ECPDS server going down takes the
+#   #   plugin to 503 until it returns.
+#   # - any_success: take the union of whichever servers responded
+#   #   successfully within the per-request timeout. Only fails when no
+#   #   server responded usefully. Useful for federated deployments
+#   #   where each server covers a different destination namespace and
+#   #   you want to keep serving during a partial outage.
 #   partial_outage_policy: strict
 
 metrics:

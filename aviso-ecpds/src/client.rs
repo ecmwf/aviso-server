@@ -7,32 +7,28 @@ use tracing::{debug, info, warn};
 
 /// Coarse-grained reason a single ECPDS fetch (or merged fetch under a
 /// partial-outage policy) failed. Surfaces in
-/// [`EcpdsError::ServiceUnavailable { .. }::fetch_outcome`] and is recorded
-/// as the `outcome` label on `aviso_ecpds_fetch_total` so on-call can
+/// [`EcpdsError::ServiceUnavailable::fetch_outcome`] and is recorded as
+/// the `outcome` label on `aviso_ecpds_fetch_total` so on-call can
 /// distinguish "upstream is down" from "credentials are wrong" without
 /// reading logs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FetchOutcome {
-    /// All servers under the active policy succeeded.
+    /// All servers under the active policy returned a parseable response.
     Success,
-    /// At least one server returned HTTP 401 — service-account creds
-    /// are wrong, expired, or revoked.
+    /// At least one server returned HTTP 401: service-account creds are
+    /// wrong, expired, or revoked.
     Unauthorized,
-    /// At least one server returned HTTP 403 — service-account has no
+    /// At least one server returned HTTP 403: service-account has no
     /// permission to query the destination list.
     Forbidden,
-    /// At least one server returned HTTP 5xx — ECPDS itself is broken.
+    /// At least one server returned HTTP 5xx: ECPDS itself is broken.
     ServerError,
     /// At least one server returned a body that did not parse against
-    /// the expected schema. Likely an ECPDS contract drift.
+    /// the expected schema (likely an ECPDS contract drift).
     InvalidResponse,
     /// Network-level failure (DNS, connect timeout, request timeout,
-    /// TLS handshake) on every server, or no servers configured.
+    /// TLS handshake), or no servers configured.
     Unreachable,
-    /// Strict policy: all servers responded successfully but their
-    /// destination lists are not equal. Treated as a 503 to preserve
-    /// confidentiality.
-    Divergence,
 }
 
 impl FetchOutcome {
@@ -45,19 +41,17 @@ impl FetchOutcome {
             Self::ServerError => "http_5xx",
             Self::InvalidResponse => "invalid_response",
             Self::Unreachable => "unreachable",
-            Self::Divergence => "divergence",
         }
     }
 
     fn pessimistic_max(self, other: Self) -> Self {
         fn rank(o: FetchOutcome) -> u8 {
             match o {
-                FetchOutcome::Unauthorized => 6,
-                FetchOutcome::Forbidden => 5,
-                FetchOutcome::InvalidResponse => 4,
-                FetchOutcome::ServerError => 3,
-                FetchOutcome::Unreachable => 2,
-                FetchOutcome::Divergence => 1,
+                FetchOutcome::Unauthorized => 5,
+                FetchOutcome::Forbidden => 4,
+                FetchOutcome::InvalidResponse => 3,
+                FetchOutcome::ServerError => 2,
+                FetchOutcome::Unreachable => 1,
                 FetchOutcome::Success => 0,
             }
         }
@@ -307,6 +301,10 @@ impl EcpdsClient {
         }
     }
 
+    /// Strict policy: every configured server must respond successfully.
+    /// The resulting destination list is the union of every server's
+    /// response. If any one server fails, the whole call fails with
+    /// the dominant failure outcome.
     fn merge_strict(
         &self,
         results: Vec<Result<Vec<String>, EcpdsError>>,
@@ -316,49 +314,40 @@ impl EcpdsClient {
                 fetch_outcome: FetchOutcome::Unreachable,
             });
         }
-        let mut canonical: Option<HashSet<String>> = None;
-        for (i, result) in results.into_iter().enumerate() {
-            let dests = match result {
-                Ok(d) => d,
+        let mut union: HashSet<String> = HashSet::new();
+        for result in results {
+            match result {
+                Ok(dests) => union.extend(dests),
                 Err(e) => {
                     return Err(EcpdsError::ServiceUnavailable {
                         fetch_outcome: e.fetch_outcome(),
                     });
                 }
-            };
-            let set: HashSet<String> = dests.into_iter().collect();
-            match canonical.as_ref() {
-                None => canonical = Some(set),
-                Some(prev) if prev == &set => {}
-                Some(prev) => {
-                    let divergence_count = prev.symmetric_difference(&set).count();
-                    warn!(
-                        event_name = "auth.ecpds.fetch.divergence",
-                        server_index = i,
-                        divergence_count,
-                        "ECPDS servers disagree under strict policy"
-                    );
-                    return Err(EcpdsError::ServiceUnavailable {
-                        fetch_outcome: FetchOutcome::Divergence,
-                    });
-                }
             }
         }
-        let mut destinations: Vec<String> =
-            canonical.expect("non-empty results invariant").into_iter().collect();
+        let mut destinations: Vec<String> = union.into_iter().collect();
         destinations.sort();
         Ok(destinations)
     }
 
+    /// AnySuccess policy: take the union of every server response that
+    /// arrived successfully within the per-request timeout. Fails only
+    /// when no server returned a usable response. Federated ECPDS
+    /// deployments (servers covering different destination namespaces)
+    /// should run with this policy.
     fn merge_any_success(
         &self,
         results: Vec<Result<Vec<String>, EcpdsError>>,
     ) -> Result<Vec<String>, EcpdsError> {
-        let mut server_sets: Vec<HashSet<String>> = Vec::new();
+        let mut union: HashSet<String> = HashSet::new();
+        let mut any_success = false;
         let mut worst_failure: Option<FetchOutcome> = None;
         for result in results {
             match result {
-                Ok(dests) => server_sets.push(dests.into_iter().collect()),
+                Ok(dests) => {
+                    any_success = true;
+                    union.extend(dests);
+                }
                 Err(e) => {
                     let outcome = e.fetch_outcome();
                     worst_failure = Some(match worst_failure {
@@ -368,32 +357,11 @@ impl EcpdsClient {
                 }
             }
         }
-        if server_sets.is_empty() {
+        if !any_success {
             return Err(EcpdsError::ServiceUnavailable {
                 fetch_outcome: worst_failure.unwrap_or(FetchOutcome::Unreachable),
             });
         }
-
-        let union: HashSet<String> = server_sets.iter().flat_map(|s| s.iter().cloned()).collect();
-        let all_agree = server_sets.iter().all(|s| s == &union);
-        if !all_agree && server_sets.len() > 1 {
-            let mut max_pair_div: usize = 0;
-            for i in 0..server_sets.len() {
-                for j in (i + 1)..server_sets.len() {
-                    let d = server_sets[i].symmetric_difference(&server_sets[j]).count();
-                    if d > max_pair_div {
-                        max_pair_div = d;
-                    }
-                }
-            }
-            warn!(
-                event_name = "auth.ecpds.fetch.divergence",
-                pairwise_divergence_count = max_pair_div,
-                reachable_servers = server_sets.len(),
-                "ECPDS servers disagree under any_success policy (using union)"
-            );
-        }
-
         let mut destinations: Vec<String> = union.into_iter().collect();
         destinations.sort();
         Ok(destinations)
@@ -607,7 +575,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn strict_policy_fails_when_servers_disagree() {
+    async fn strict_policy_unions_disjoint_responses_from_all_servers() {
         let mut server_a = mockito::Server::new_async().await;
         let mut server_b = mockito::Server::new_async().await;
         server_a
@@ -629,15 +597,13 @@ mod tests {
 
         let config = make_config(vec![server_a.url(), server_b.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let err = client
-            .fetch_user_destinations("testuser")
-            .await
-            .expect_err("strict policy must fail when servers disagree");
-        assert!(matches!(err, EcpdsError::ServiceUnavailable { .. }));
+        let mut result = client.fetch_user_destinations("testuser").await.unwrap();
+        result.sort();
+        assert_eq!(result, vec!["BAR".to_string(), "CIP".to_string()]);
     }
 
     #[tokio::test]
-    async fn strict_policy_succeeds_when_servers_agree() {
+    async fn strict_policy_unions_overlapping_responses_from_all_servers() {
         let mut server_a = mockito::Server::new_async().await;
         let mut server_b = mockito::Server::new_async().await;
         for srv in [&mut server_a, &mut server_b] {
