@@ -90,12 +90,18 @@ impl EcpdsChecker {
 
         match cache_outcome {
             CacheOutcome::Hit => debug!(
+                service_name = crate::service_name(),
+                service_version = crate::service_version(),
                 event_name = "auth.ecpds.cache.hit",
-                username, "ECPDS destination cache hit"
+                username,
+                "ECPDS destination cache hit"
             ),
             CacheOutcome::MissCoalesced | CacheOutcome::MissFetched { .. } => debug!(
+                service_name = crate::service_name(),
+                service_version = crate::service_version(),
                 event_name = "auth.ecpds.cache.miss",
-                username, "ECPDS destination cache miss"
+                username,
+                "ECPDS destination cache miss"
             ),
         }
 

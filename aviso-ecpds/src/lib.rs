@@ -44,3 +44,41 @@ pub mod config;
 
 pub use checker::EcpdsChecker;
 pub use client::EcpdsError;
+
+use std::sync::OnceLock;
+
+static SERVICE_NAME_OVERRIDE: OnceLock<&'static str> = OnceLock::new();
+static SERVICE_VERSION_OVERRIDE: OnceLock<&'static str> = OnceLock::new();
+
+/// Register the parent-process service identity used in this crate's
+/// structured tracing events.
+///
+/// The aviso-ecpds crate emits its own `auth.ecpds.fetch.*` and
+/// `auth.ecpds.cache.*` tracing events. To keep log routing and
+/// dashboards consistent with events emitted from `aviso-server`
+/// itself, the parent crate calls this once at startup with its own
+/// `SERVICE_NAME` and `SERVICE_VERSION` so subcrate events identify
+/// under the same service identity. Subsequent calls are no-ops
+/// (`OnceLock`).
+///
+/// When unset (e.g. running the subcrate's own tests in isolation),
+/// events fall back to the subcrate's own `CARGO_PKG_NAME` /
+/// `CARGO_PKG_VERSION`.
+pub fn set_service_identity(name: &'static str, version: &'static str) {
+    let _ = SERVICE_NAME_OVERRIDE.set(name);
+    let _ = SERVICE_VERSION_OVERRIDE.set(version);
+}
+
+pub(crate) fn service_name() -> &'static str {
+    SERVICE_NAME_OVERRIDE
+        .get()
+        .copied()
+        .unwrap_or(env!("CARGO_PKG_NAME"))
+}
+
+pub(crate) fn service_version() -> &'static str {
+    SERVICE_VERSION_OVERRIDE
+        .get()
+        .copied()
+        .unwrap_or(env!("CARGO_PKG_VERSION"))
+}

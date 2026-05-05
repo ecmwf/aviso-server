@@ -120,6 +120,12 @@ impl Application {
                 );
                 return Err(std::io::Error::other(e));
             }
+            // Tell the subcrate which service identity to use in its
+            // own structured tracing events (auth.ecpds.fetch.* and
+            // auth.ecpds.cache.*) so log routing/filtering by
+            // service_name groups them with the rest of the binary's
+            // events instead of leaving them under aviso-ecpds/0.1.0.
+            aviso_ecpds::set_service_identity(SERVICE_NAME, SERVICE_VERSION);
             match configuration.build_ecpds_checker() {
                 Ok(checker) => checker.map(Arc::new),
                 Err(e) => {

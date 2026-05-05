@@ -303,6 +303,8 @@ impl EcpdsClient {
         for (i, result) in results.iter().enumerate() {
             match result {
                 Ok(_) => debug!(
+                    service_name = crate::service_name(),
+                    service_version = crate::service_version(),
                     event_name = "auth.ecpds.fetch.succeeded",
                     server_index = i,
                     server = %self.servers[i],
@@ -310,6 +312,8 @@ impl EcpdsClient {
                     "ECPDS server fetch succeeded"
                 ),
                 Err(e) => warn!(
+                    service_name = crate::service_name(),
+                    service_version = crate::service_version(),
                     event_name = "auth.ecpds.fetch.failed",
                     server_index = i,
                     server = %self.servers[i],
@@ -488,6 +492,8 @@ impl EcpdsClient {
 
         if skipped_inactive > 0 {
             info!(
+                service_name = crate::service_name(),
+                service_version = crate::service_version(),
                 event_name = "auth.ecpds.fetch.skipped_inactive",
                 server_index,
                 server = %server,
@@ -499,6 +505,8 @@ impl EcpdsClient {
         }
         if skipped_missing_field > 0 {
             info!(
+                service_name = crate::service_name(),
+                service_version = crate::service_version(),
                 event_name = "auth.ecpds.fetch.skipped_record",
                 server_index,
                 server = %server,
