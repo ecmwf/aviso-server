@@ -118,6 +118,7 @@ class Config:
     expect_max_messages_per_subject: str = os.getenv("EXPECT_MAX_MESSAGES_PER_SUBJECT", "")
     expect_compression: str = os.getenv("EXPECT_COMPRESSION", "")
     auth_enabled: bool = os.getenv("AUTH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
+    auth_mode: str = os.getenv("AUTH_MODE", "direct").strip().lower()
     auth_admin_user: str = os.getenv("AUTH_ADMIN_USER", "admin-user")
     auth_admin_pass: str = os.getenv("AUTH_ADMIN_PASS", "admin-pass")
     ecpds_enabled: bool = os.getenv("ECPDS_ENABLED", "false").strip().lower() in {"1", "true", "yes", "on"}
@@ -910,6 +911,16 @@ def _ecpds_skip_reason(config: Config) -> str | None:
         return "ECPDS_ENABLED is not set"
     if not config.auth_enabled:
         return "ECPDS plugin requires AUTH_ENABLED=true"
+    if config.auth_mode != "direct":
+        # The ECPDS smoke cases authenticate end-users over HTTP Basic
+        # against the configured ECPDS_ALLOWED_USER/PASS. Aviso accepts
+        # Basic only in auth.mode: direct; in trusted_proxy mode the
+        # middleware (resolve_trusted_proxy_token in
+        # src/auth/middleware.rs) requires Bearer JWTs minted by the
+        # upstream proxy and a Basic request gets a 401 unrelated to
+        # the ECPDS plugin. Skip with a clear reason rather than
+        # producing a misleading 401 attributed to ECPDS.
+        return f"AUTH_MODE={config.auth_mode!r} is not 'direct'; smoke cases use HTTP Basic"
     missing = [
         name
         for name, value in [
