@@ -63,7 +63,7 @@ Optional ECPDS destination authorization. Only available when built with `--feat
 | Field | Type | Default | Notes |
 |---|---|---|---|
 | `username` | `string` | none | Service account username used for HTTP Basic Auth to ECPDS. Must not be empty. |
-| `password` | `string` | none | Service account password. Redacted in debug output and in `/api/v1/schema` responses. Must not be empty. |
+| `password` | `string` | none | Service account password. Redacted to `[REDACTED]` in `Debug` output (and therefore in any structured-log dump of the configuration). Must not be empty. The `/api/v1/schema` endpoint never exposes the top-level `ecpds` block at all, only per-event identifier and payload fields, so the password is not reachable through it. |
 | `servers` | `string[]` | none | List of ECPDS server base URLs. Each must parse as a `http://` or `https://` URL with no query string and no fragment. Path prefixes (e.g. `https://proxy.example/ecpds-api/`) are accepted. The plugin appends `/ecpds/v1/destination/list?id=<username>` itself. |
 | `match_key` | `string` | none | Identifier field to match against the user's destination list (e.g. `"destination"`). Must be a single bare identifier name (no whitespace, `/` or NUL) and must appear in the schema's `topic.key_order` AND be `required: true` in the schema's `identifier`. |
 | `target_field` | `string` | `"name"` | JSON field to extract from each ECPDS destination record. Records that lack this field are silently skipped (logged at `info` as `auth.ecpds.fetch.skipped_record`). |
@@ -95,15 +95,15 @@ Exposed metrics:
 | `aviso_sse_unique_users_active` | gauge | `endpoint` | Distinct users with active SSE connections. |
 | `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. |
 
-A binary built with `--features ecpds` always registers the following five metrics (they exist as Prometheus series even before any ECPDS request is processed; the values stay at zero until the plugin is invoked):
+A binary built with `--features ecpds` registers the following five metrics. The unlabelled counters and the gauge appear as Prometheus series at process startup. The two labelled counters (`access_decisions_total`, `fetch_total`) are pre-initialised at startup with every documented `outcome` value, so each `outcome` label appears as a series at zero before any ECPDS traffic; this lets alert rules of the form `rate(metric{outcome="error"}[5m]) > 0` start evaluating on a known-zero baseline rather than on a missing series.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `aviso_ecpds_cache_hits_total` | counter | (none) | ECPDS destination cache hits (requests served without an upstream call). |
-| `aviso_ecpds_cache_misses_total` | counter | (none) | ECPDS destination cache misses (requests that triggered an upstream fetch). |
-| `aviso_ecpds_cache_size` | gauge | (none) | Current number of distinct usernames in the cache. Reflects the actual current count, with any expired entries already removed. |
+| `aviso_ecpds_cache_hits_total` | counter | (none) | ECPDS destination cache hits (requests served from cache without an upstream call). |
+| `aviso_ecpds_cache_misses_total` | counter | (none) | ECPDS destination cache misses (requests not served from cache). Includes coalesced waiters that did not trigger an upstream call themselves; `aviso_ecpds_fetch_total` is the right metric for "actual upstream calls". |
+| `aviso_ecpds_cache_size` | gauge | (none) | Number of usernames in the ECPDS destination cache, sampled from moka after eviction passes. Expired entries are pruned by moka asynchronously, so this gauge can briefly include not-yet-pruned expired entries until the next pending-tasks run. |
 | `aviso_ecpds_access_decisions_total` | counter | `outcome` | Access decisions. `outcome` ∈ {`allow`, `deny_destination`, `deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}. |
-| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check that touched the upstream). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_4xx`, `http_5xx`, `invalid_response`, `unreachable`}. |
+| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check whose request actually ran the upstream call; coalesced waiters do not contribute). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_4xx`, `http_5xx`, `invalid_response`, `unreachable`}. |
 
 Process-level metrics (CPU, memory, open FDs) are automatically collected on Linux.
 

@@ -111,49 +111,79 @@ impl AppMetrics {
         .expect("metric must register");
 
         #[cfg(feature = "ecpds")]
-        let ecpds = EcpdsMetrics {
-            cache_hits_total: register_int_counter_with_registry!(
-                opts!(
-                    "aviso_ecpds_cache_hits_total",
-                    "ECPDS destination cache hits"
-                ),
-                registry
-            )
-            .expect("metric must register"),
-            cache_misses_total: register_int_counter_with_registry!(
-                opts!(
-                    "aviso_ecpds_cache_misses_total",
-                    "ECPDS destination cache misses (request not served from cache; an upstream fetch ran for this caller or a concurrent caller via single-flight)"
-                ),
-                registry
-            )
-            .expect("metric must register"),
-            cache_size: register_int_gauge_with_registry!(
-                opts!(
-                    "aviso_ecpds_cache_size",
-                    "Number of usernames currently held in the ECPDS destination cache"
-                ),
-                registry
-            )
-            .expect("metric must register"),
-            access_decisions_total: register_int_counter_vec_with_registry!(
-                opts!(
-                    "aviso_ecpds_access_decisions_total",
-                    "ECPDS access check outcomes"
-                ),
-                &["outcome"],
-                registry
-            )
-            .expect("metric must register"),
-            fetch_total: register_int_counter_vec_with_registry!(
-                opts!(
-                    "aviso_ecpds_fetch_total",
-                    "ECPDS upstream fetch outcomes (recorded once per access check that touched the upstream)"
-                ),
-                &["outcome"],
-                registry
-            )
-            .expect("metric must register"),
+        let ecpds = {
+            let metrics = EcpdsMetrics {
+                cache_hits_total: register_int_counter_with_registry!(
+                    opts!(
+                        "aviso_ecpds_cache_hits_total",
+                        "ECPDS destination cache hits"
+                    ),
+                    registry
+                )
+                .expect("metric must register"),
+                cache_misses_total: register_int_counter_with_registry!(
+                    opts!(
+                        "aviso_ecpds_cache_misses_total",
+                        "ECPDS destination cache misses (request not served from cache; an upstream fetch ran for this caller or a concurrent caller via single-flight)"
+                    ),
+                    registry
+                )
+                .expect("metric must register"),
+                cache_size: register_int_gauge_with_registry!(
+                    opts!(
+                        "aviso_ecpds_cache_size",
+                        "Number of usernames held in the ECPDS destination cache (sampled from moka after eviction passes; may include not-yet-pruned expired entries until the next pending-tasks run)"
+                    ),
+                    registry
+                )
+                .expect("metric must register"),
+                access_decisions_total: register_int_counter_vec_with_registry!(
+                    opts!(
+                        "aviso_ecpds_access_decisions_total",
+                        "ECPDS access check outcomes"
+                    ),
+                    &["outcome"],
+                    registry
+                )
+                .expect("metric must register"),
+                fetch_total: register_int_counter_vec_with_registry!(
+                    opts!(
+                        "aviso_ecpds_fetch_total",
+                        "ECPDS upstream fetch outcomes (recorded once per access check that touched the upstream)"
+                    ),
+                    &["outcome"],
+                    registry
+                )
+                .expect("metric must register"),
+            };
+            // Pre-initialise every label value of the labelled counters
+            // so the corresponding Prometheus series exist at zero from
+            // process startup. Without this, alert rules of the form
+            // `rate(metric{outcome="error"}[5m]) > 0` silently fail to
+            // fire on the first occurrence because the series did not
+            // exist when the rule started evaluating.
+            for outcome in [
+                "allow",
+                "deny_destination",
+                "deny_match_key_missing",
+                "unavailable",
+                "admin_bypass",
+                "error",
+            ] {
+                let _ = metrics.access_decisions_total.with_label_values(&[outcome]);
+            }
+            for outcome in [
+                "success",
+                "http_401",
+                "http_403",
+                "http_4xx",
+                "http_5xx",
+                "invalid_response",
+                "unreachable",
+            ] {
+                let _ = metrics.fetch_total.with_label_values(&[outcome]);
+            }
+            metrics
         };
 
         Self {
