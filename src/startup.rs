@@ -15,6 +15,8 @@ use tracing::{error, info};
 use tracing_actix_web::TracingLogger;
 
 use crate::auth::middleware::AuthMiddleware;
+#[cfg(feature = "ecpds")]
+use crate::configuration::validate_ecpds_settings;
 use crate::configuration::{AuthSettings, validate_metrics_settings};
 use crate::metrics::AppMetrics;
 use crate::openapi::ApiDoc;
@@ -23,8 +25,6 @@ use crate::routes::home::homepage;
 use crate::routes::replay::replay;
 use crate::routes::schema::{get_event_schema, get_notification_schema};
 use crate::routes::watch::watch;
-#[cfg(feature = "ecpds")]
-use crate::configuration::validate_ecpds_settings;
 use crate::{
     configuration::{
         Settings, validate_auth_settings, validate_schema_storage_policy_support,

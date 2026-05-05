@@ -456,9 +456,11 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
     if ecpds_config.match_key.is_empty() {
         bail!("ecpds.match_key must not be empty");
     }
-    if ecpds_config.match_key.chars().any(|c| {
-        c.is_whitespace() || c == '/' || c == '\0'
-    }) {
+    if ecpds_config
+        .match_key
+        .chars()
+        .any(|c| c.is_whitespace() || c == '/' || c == '\0')
+    {
         bail!(
             "ecpds.match_key '{}' must be a single bare identifier name; \
              whitespace, '/' and NUL are not allowed",
@@ -1363,8 +1365,7 @@ mod tests {
         let err = validate_stream_plugin_settings(&settings)
             .expect_err("empty plugins list must be rejected");
         assert!(
-            err.to_string()
-                .contains("auth.plugins must not be empty"),
+            err.to_string().contains("auth.plugins must not be empty"),
             "got: {err}"
         );
     }
@@ -1426,7 +1427,10 @@ mod tests {
         let err = validate_stream_plugin_settings(&settings)
             .expect_err("ecpds plugin must be rejected when ecpds feature is off");
         let msg = err.to_string();
-        assert!(msg.contains("requires the 'ecpds' Cargo feature"), "got: {msg}");
+        assert!(
+            msg.contains("requires the 'ecpds' Cargo feature"),
+            "got: {msg}"
+        );
         assert!(msg.contains("--features ecpds"), "got: {msg}");
     }
 
@@ -1806,7 +1810,10 @@ mod tests {
         use aviso_validators::ValidationRules;
         use std::collections::HashMap;
 
-        fn ecpds_protected_schema(match_key: &str, match_required: bool) -> HashMap<String, EventSchema> {
+        fn ecpds_protected_schema(
+            match_key: &str,
+            match_required: bool,
+        ) -> HashMap<String, EventSchema> {
             let mut identifier = HashMap::new();
             identifier.insert(
                 match_key.to_string(),
@@ -1843,7 +1850,8 @@ mod tests {
             match_key: &str,
             match_required: bool,
         ) -> Settings {
-            let mut s = basic_settings_with_schema(ecpds_protected_schema(match_key, match_required));
+            let mut s =
+                basic_settings_with_schema(ecpds_protected_schema(match_key, match_required));
             s.ecpds = Some(ecpds);
             s
         }
@@ -1855,10 +1863,10 @@ mod tests {
                 target_field: "name".to_string(),
                 match_key: "destination".to_string(),
                 cache_ttl_seconds: 300,
-            max_entries: 10_000,
-            request_timeout_seconds: 30,
-            connect_timeout_seconds: 5,
-            partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
+                max_entries: 10_000,
+                request_timeout_seconds: 30,
+                connect_timeout_seconds: 5,
+                partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
                 servers: vec!["http://localhost".to_string()],
             }
         }
@@ -1871,8 +1879,7 @@ mod tests {
 
         #[test]
         fn rejects_when_plugin_referenced_but_no_ecpds_section() {
-            let mut s =
-                basic_settings_with_schema(ecpds_protected_schema("destination", true));
+            let mut s = basic_settings_with_schema(ecpds_protected_schema("destination", true));
             s.ecpds = None;
             let err = validate_ecpds_settings(&s).expect_err("must fail");
             assert!(
@@ -1885,9 +1892,8 @@ mod tests {
         fn rejects_invalid_server_url() {
             let mut cfg = good_ecpds_config();
             cfg.servers = vec!["not a url".to_string()];
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(err.to_string().contains("not a valid URL"), "got: {err}");
         }
 
@@ -1895,19 +1901,20 @@ mod tests {
         fn rejects_unsupported_scheme() {
             let mut cfg = good_ecpds_config();
             cfg.servers = vec!["ftp://example.com".to_string()];
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
-            assert!(err.to_string().contains("unsupported scheme 'ftp'"), "got: {err}");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string().contains("unsupported scheme 'ftp'"),
+                "got: {err}"
+            );
         }
 
         #[test]
         fn rejects_server_url_with_query_string() {
             let mut cfg = good_ecpds_config();
             cfg.servers = vec!["http://example.com/?already=set".to_string()];
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string().contains("must not contain a query string"),
                 "got: {err}"
@@ -1918,9 +1925,8 @@ mod tests {
         fn rejects_server_url_with_fragment() {
             let mut cfg = good_ecpds_config();
             cfg.servers = vec!["http://example.com/#frag".to_string()];
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string().contains("must not contain a URL fragment"),
                 "got: {err}"
@@ -1941,9 +1947,8 @@ mod tests {
         fn rejects_zero_cache_ttl() {
             let mut cfg = good_ecpds_config();
             cfg.cache_ttl_seconds = 0;
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string()
                     .contains("cache_ttl_seconds must be greater than zero"),
@@ -1955,9 +1960,8 @@ mod tests {
         fn rejects_zero_max_entries() {
             let mut cfg = good_ecpds_config();
             cfg.max_entries = 0;
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string()
                     .contains("max_entries must be greater than zero"),
@@ -1969,9 +1973,8 @@ mod tests {
         fn rejects_zero_request_timeout() {
             let mut cfg = good_ecpds_config();
             cfg.request_timeout_seconds = 0;
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string()
                     .contains("request_timeout_seconds must be greater than zero"),
@@ -1983,9 +1986,8 @@ mod tests {
         fn rejects_zero_connect_timeout() {
             let mut cfg = good_ecpds_config();
             cfg.connect_timeout_seconds = 0;
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string()
                     .contains("connect_timeout_seconds must be greater than zero"),
@@ -1997,9 +1999,8 @@ mod tests {
         fn rejects_empty_target_field() {
             let mut cfg = good_ecpds_config();
             cfg.target_field = String::new();
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string().contains("target_field must not be empty"),
                 "got: {err}"
@@ -2010,9 +2011,8 @@ mod tests {
         fn rejects_match_key_with_whitespace() {
             let mut cfg = good_ecpds_config();
             cfg.match_key = "dest ination".to_string();
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string()
                     .contains("must be a single bare identifier name"),
@@ -2023,9 +2023,8 @@ mod tests {
         #[test]
         fn rejects_match_key_not_in_key_order() {
             let cfg = good_ecpds_config();
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "other_key", true))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "other_key", true))
+                .expect_err("must fail");
             assert!(
                 err.to_string().contains("not found in key_order"),
                 "got: {err}"
@@ -2035,12 +2034,10 @@ mod tests {
         #[test]
         fn rejects_match_key_not_required_in_schema() {
             let cfg = good_ecpds_config();
-            let err =
-                validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", false))
-                    .expect_err("must fail");
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", false))
+                .expect_err("must fail");
             assert!(
-                err.to_string()
-                    .contains("must be required: true in schema"),
+                err.to_string().contains("must be required: true in schema"),
                 "got: {err}"
             );
         }

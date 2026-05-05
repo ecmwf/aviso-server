@@ -7,14 +7,13 @@
 // does it submit to any jurisdiction.
 
 use actix_web::{App, HttpResponse, HttpServer, dev::Server, web};
-#[cfg(feature = "ecpds")]
-use prometheus::{
-    IntCounter, IntGauge, register_int_counter_with_registry,
-    register_int_gauge_with_registry,
-};
 use prometheus::{
     Encoder, IntCounterVec, IntGaugeVec, Registry, TextEncoder, opts,
     register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
+};
+#[cfg(feature = "ecpds")]
+use prometheus::{
+    IntCounter, IntGauge, register_int_counter_with_registry, register_int_gauge_with_registry,
 };
 use std::collections::HashMap;
 use std::net::TcpListener;

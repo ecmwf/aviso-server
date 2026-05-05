@@ -689,7 +689,10 @@ fn start_sync_mock_ecpds_server() -> MockEcpds {
             }
 
             let (status, body) = if request_line.contains("id=ecpds-unavailable") {
-                ("500 Internal Server Error", r#"{"error":"mock unavailable"}"#)
+                (
+                    "500 Internal Server Error",
+                    r#"{"error":"mock unavailable"}"#,
+                )
             } else if request_line.contains("id=ecpds-user")
                 || request_line.contains("id=u%2Bs+er%26name")
                 || request_line.contains("id=u%2Bs%20er%26name")
@@ -779,10 +782,10 @@ fn ensure_test_global_config_initialized() {
                 target_field: "name".to_string(),
                 match_key: "destination".to_string(),
                 cache_ttl_seconds: 300,
-            max_entries: 10_000,
-            request_timeout_seconds: 30,
-            connect_timeout_seconds: 5,
-            partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
+                max_entries: 10_000,
+                request_timeout_seconds: 30,
+                connect_timeout_seconds: 5,
+                partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
                 servers: vec![MOCK_ECPDS.url.clone()],
             });
             if let Some(schema) = configuration.notification_schema.as_mut() {

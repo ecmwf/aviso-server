@@ -190,10 +190,7 @@ async fn watch_ecpds_returns_503_when_all_servers_fail() {
         .await
         .expect("watch request should complete");
 
-    assert_eq!(
-        response.status(),
-        reqwest::StatusCode::SERVICE_UNAVAILABLE
-    );
+    assert_eq!(response.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
 }
 
 #[tokio::test]

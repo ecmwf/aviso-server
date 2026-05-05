@@ -7,8 +7,8 @@
 // does it submit to any jurisdiction.
 
 use crate::helpers::{
-    spawn_streaming_test_app_with_auth, spawn_streaming_test_app_with_trusted_proxy_auth,
-    test_jwt, test_jwt_with_secret_and_exp,
+    spawn_streaming_test_app_with_auth, spawn_streaming_test_app_with_trusted_proxy_auth, test_jwt,
+    test_jwt_with_secret_and_exp,
 };
 use reqwest::header::WWW_AUTHENTICATE;
 use serde_json::json;

@@ -49,15 +49,16 @@ impl EcpdsChecker {
         username: &str,
         identifier: &HashMap<String, String>,
     ) -> Result<CacheOutcome, EcpdsError> {
-        let destination = identifier.get(&self.match_key).ok_or_else(|| {
-            EcpdsError::AccessDenied {
-                reason: DenyReason::MatchKeyMissing,
-                message: format!(
-                    "Required field '{}' not found in request identifiers",
-                    self.match_key
-                ),
-            }
-        })?;
+        let destination =
+            identifier
+                .get(&self.match_key)
+                .ok_or_else(|| EcpdsError::AccessDenied {
+                    reason: DenyReason::MatchKeyMissing,
+                    message: format!(
+                        "Required field '{}' not found in request identifiers",
+                        self.match_key
+                    ),
+                })?;
 
         let client = &self.client;
         let (destinations, outcome) = self
@@ -68,13 +69,11 @@ impl EcpdsChecker {
         match outcome {
             CacheOutcome::Hit => debug!(
                 event_name = "auth.ecpds.cache.hit",
-                username,
-                "ECPDS destination cache hit"
+                username, "ECPDS destination cache hit"
             ),
             CacheOutcome::Miss => debug!(
                 event_name = "auth.ecpds.cache.miss",
-                username,
-                "ECPDS destination cache miss"
+                username, "ECPDS destination cache miss"
             ),
         }
 
@@ -147,9 +146,7 @@ mod tests {
         let checker = EcpdsChecker::new(&config).expect("checker must build");
         checker.cache.set("john", vec!["CIP".to_string()]).await;
 
-        let result = checker
-            .check_access("john", &make_identifier("BAR"))
-            .await;
+        let result = checker.check_access("john", &make_identifier("BAR")).await;
         assert!(matches!(result, Err(EcpdsError::AccessDenied { .. })));
     }
 
@@ -168,9 +165,7 @@ mod tests {
         let config = make_checker_config();
         let checker = EcpdsChecker::new(&config).expect("checker must build");
 
-        let result = checker
-            .check_access("john", &make_identifier("CIP"))
-            .await;
+        let result = checker.check_access("john", &make_identifier("CIP")).await;
         assert!(matches!(result, Err(EcpdsError::ServiceUnavailable { .. })));
     }
 }

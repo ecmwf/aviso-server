@@ -55,7 +55,11 @@ impl FetchOutcome {
                 FetchOutcome::Success => 0,
             }
         }
-        if rank(other) > rank(self) { other } else { self }
+        if rank(other) > rank(self) {
+            other
+        } else {
+            self
+        }
     }
 }
 
@@ -227,8 +231,12 @@ impl EcpdsClient {
     /// re-parse them.
     pub fn new(config: &EcpdsConfig) -> Result<Self, EcpdsError> {
         let http = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(config.request_timeout_seconds))
-            .connect_timeout(std::time::Duration::from_secs(config.connect_timeout_seconds))
+            .timeout(std::time::Duration::from_secs(
+                config.request_timeout_seconds,
+            ))
+            .connect_timeout(std::time::Duration::from_secs(
+                config.connect_timeout_seconds,
+            ))
             .build()
             .map_err(EcpdsError::HttpClientBuild)?;
 
@@ -390,13 +398,12 @@ impl EcpdsClient {
         server: &reqwest::Url,
         username: &str,
     ) -> Result<Vec<String>, EcpdsError> {
-        let url = Self::build_request_url(server, username).map_err(|message| {
-            EcpdsError::Http {
+        let url =
+            Self::build_request_url(server, username).map_err(|message| EcpdsError::Http {
                 server_index,
                 status: None,
                 message,
-            }
-        })?;
+            })?;
         let response = self
             .http
             .get(url)
@@ -419,10 +426,13 @@ impl EcpdsClient {
         }
 
         let ecpds_resp: EcpdsResponse =
-            response.json().await.map_err(|e| EcpdsError::InvalidResponse {
-                server_index,
-                message: e.to_string(),
-            })?;
+            response
+                .json()
+                .await
+                .map_err(|e| EcpdsError::InvalidResponse {
+                    server_index,
+                    message: e.to_string(),
+                })?;
 
         let total = ecpds_resp.destination_list.len();
         let destinations: Vec<String> = ecpds_resp
@@ -540,9 +550,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(
-                r#"{"destinationList":[{"name":"CIP"}],"success":"yes"}"#,
-            )
+            .with_body(r#"{"destinationList":[{"name":"CIP"}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -611,9 +619,7 @@ mod tests {
                 .match_query(mockito::Matcher::Any)
                 .with_status(200)
                 .with_header("content-type", "application/json")
-                .with_body(
-                    r#"{"destinationList":[{"name":"CIP"},{"name":"FOO"}],"success":"yes"}"#,
-                )
+                .with_body(r#"{"destinationList":[{"name":"CIP"},{"name":"FOO"}],"success":"yes"}"#)
                 .create_async()
                 .await;
         }
@@ -750,7 +756,10 @@ mod tests {
         let s = url.as_str();
         assert!(s.starts_with("http://example.com/ecpds/v1/destination/list?id="));
         assert!(s.contains("user%2Bname"), "got {s}");
-        assert!(s.contains("with+spaces") || s.contains("with%20spaces"), "got {s}");
+        assert!(
+            s.contains("with+spaces") || s.contains("with%20spaces"),
+            "got {s}"
+        );
         assert!(s.contains("%26extra%3Dinjected"), "got {s}");
         assert!(!s.contains("&extra=injected"), "got {s}");
     }

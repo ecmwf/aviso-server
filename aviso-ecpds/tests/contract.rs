@@ -1,5 +1,5 @@
-use aviso_ecpds::{EcpdsChecker, EcpdsError};
 use aviso_ecpds::config::{EcpdsConfig, PartialOutagePolicy};
+use aviso_ecpds::{EcpdsChecker, EcpdsError};
 use std::collections::HashMap;
 
 fn read_fixture(name: &str) -> String {
@@ -73,9 +73,7 @@ async fn empty_user_response_denies_all_destinations() {
 
     let checker = EcpdsChecker::new(&make_config(vec![server.url()])).unwrap();
     assert!(matches!(
-        checker
-            .check_access("alice", &make_identifier("CIP"))
-            .await,
+        checker.check_access("alice", &make_identifier("CIP")).await,
         Err(EcpdsError::AccessDenied { .. })
     ));
 }

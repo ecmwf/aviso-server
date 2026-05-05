@@ -79,9 +79,7 @@ impl DestinationCache {
 
         let inserted = self
             .cache
-            .try_get_with_by_ref(username, async move {
-                fetch().await.map(Arc::new)
-            })
+            .try_get_with_by_ref(username, async move { fetch().await.map(Arc::new) })
             .await
             .map_err(|arc_err: Arc<EcpdsError>| match Arc::try_unwrap(arc_err) {
                 Ok(err) => err,
