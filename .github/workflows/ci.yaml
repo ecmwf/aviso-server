@@ -19,8 +19,11 @@ jobs:
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
-      - name: Check code formatting
+      - name: Check code formatting (root)
         run: cargo fmt -- --check
+
+      - name: Check code formatting (aviso-ecpds subcrate)
+        run: cargo fmt --manifest-path aviso-ecpds/Cargo.toml -- --check
 
       - name: Run tests (default features)
         env:
