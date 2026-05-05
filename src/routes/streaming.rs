@@ -248,9 +248,12 @@ pub async fn enforce_ecpds_auth(
             if let Some(m) = metrics.as_ref() {
                 match cache_outcome {
                     aviso_ecpds::cache::CacheOutcome::Hit => m.ecpds.cache_hits_total.inc(),
-                    aviso_ecpds::cache::CacheOutcome::Miss => {
+                    aviso_ecpds::cache::CacheOutcome::MissCoalesced => {
                         m.ecpds.cache_misses_total.inc();
-                        record_fetch(aviso_ecpds::client::FetchOutcome::Success.label());
+                    }
+                    aviso_ecpds::cache::CacheOutcome::MissFetched { fetch_outcome } => {
+                        m.ecpds.cache_misses_total.inc();
+                        record_fetch(fetch_outcome.label());
                     }
                 }
             }

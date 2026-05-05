@@ -265,10 +265,18 @@ impl EcpdsClient {
     /// destination list, then merge per the configured
     /// [`PartialOutagePolicy`].
     ///
-    /// Returns a sorted, deduplicated `Vec<String>` on success, or
-    /// [`EcpdsError::ServiceUnavailable { .. }`] when the policy's success
-    /// criterion is not met.
-    pub async fn fetch_user_destinations(&self, username: &str) -> Result<Vec<String>, EcpdsError> {
+    /// On success returns the union of destinations paired with the
+    /// merged [`FetchOutcome`]: [`FetchOutcome::Success`] when every
+    /// server responded cleanly, otherwise the worst per-server
+    /// failure outcome under `any_success` (so a one-healthy /
+    /// one-failing deployment surfaces the failure detail in metrics
+    /// rather than reporting a clean `success`). Returns
+    /// [`EcpdsError::ServiceUnavailable { .. }`] when the policy's
+    /// success criterion is not met.
+    pub async fn fetch_user_destinations(
+        &self,
+        username: &str,
+    ) -> Result<(Vec<String>, FetchOutcome), EcpdsError> {
         if self.servers.is_empty() {
             return Err(EcpdsError::ServiceUnavailable {
                 fetch_outcome: FetchOutcome::Unreachable,
@@ -304,38 +312,46 @@ impl EcpdsClient {
         }
 
         match self.partial_outage_policy {
-            PartialOutagePolicy::Strict => self.merge_strict(results),
-            PartialOutagePolicy::AnySuccess => self.merge_any_success(results),
+            PartialOutagePolicy::Strict => Self::merge_strict(results),
+            PartialOutagePolicy::AnySuccess => Self::merge_any_success(results),
         }
     }
 
     /// Strict policy: every configured server must respond successfully.
     /// The resulting destination list is the union of every server's
-    /// response. If any one server fails, the whole call fails with
-    /// the dominant failure outcome.
+    /// response. If any server fails, the whole call fails with the
+    /// worst failure outcome across all errors (using
+    /// [`FetchOutcome::pessimistic_max`]) so the merged
+    /// `aviso_ecpds_fetch_total` label reflects the most actionable
+    /// problem (e.g. a 401 rather than a coincident timeout).
     fn merge_strict(
-        &self,
         results: Vec<Result<Vec<String>, EcpdsError>>,
-    ) -> Result<Vec<String>, EcpdsError> {
+    ) -> Result<(Vec<String>, FetchOutcome), EcpdsError> {
         if results.is_empty() {
             return Err(EcpdsError::ServiceUnavailable {
                 fetch_outcome: FetchOutcome::Unreachable,
             });
         }
         let mut union: HashSet<String> = HashSet::new();
+        let mut worst_failure: Option<FetchOutcome> = None;
         for result in results {
             match result {
                 Ok(dests) => union.extend(dests),
                 Err(e) => {
-                    return Err(EcpdsError::ServiceUnavailable {
-                        fetch_outcome: e.fetch_outcome(),
+                    let outcome = e.fetch_outcome();
+                    worst_failure = Some(match worst_failure {
+                        None => outcome,
+                        Some(prev) => prev.pessimistic_max(outcome),
                     });
                 }
             }
         }
+        if let Some(fetch_outcome) = worst_failure {
+            return Err(EcpdsError::ServiceUnavailable { fetch_outcome });
+        }
         let mut destinations: Vec<String> = union.into_iter().collect();
         destinations.sort();
-        Ok(destinations)
+        Ok((destinations, FetchOutcome::Success))
     }
 
     /// AnySuccess policy: take the union of every server response that
@@ -343,10 +359,14 @@ impl EcpdsClient {
     /// when no server returned a usable response. Federated ECPDS
     /// deployments (servers covering different destination namespaces)
     /// should run with this policy.
+    ///
+    /// On partial success (some servers responded, others failed) the
+    /// merged outcome is the worst per-server failure rather than
+    /// `Success`, so a deployment running on degraded capacity does
+    /// not look healthy in `aviso_ecpds_fetch_total`.
     fn merge_any_success(
-        &self,
         results: Vec<Result<Vec<String>, EcpdsError>>,
-    ) -> Result<Vec<String>, EcpdsError> {
+    ) -> Result<(Vec<String>, FetchOutcome), EcpdsError> {
         let mut union: HashSet<String> = HashSet::new();
         let mut any_success = false;
         let mut worst_failure: Option<FetchOutcome> = None;
@@ -372,7 +392,8 @@ impl EcpdsClient {
         }
         let mut destinations: Vec<String> = union.into_iter().collect();
         destinations.sort();
-        Ok(destinations)
+        let merged_outcome = worst_failure.unwrap_or(FetchOutcome::Success);
+        Ok((destinations, merged_outcome))
     }
 
     /// Build a request URL by safely appending the destination-list path to
@@ -495,11 +516,12 @@ mod tests {
 
         let config = make_config(vec![server.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let result = client.fetch_user_destinations("testuser").await.unwrap();
+        let (result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
 
         mock.assert_async().await;
         assert!(result.contains(&"CIP".to_string()));
         assert!(result.contains(&"FOO".to_string()));
+        assert_eq!(outcome, FetchOutcome::Success);
     }
 
     #[tokio::test]
@@ -528,10 +550,11 @@ mod tests {
         let mut config = make_config(vec![server_a.url(), server_b.url()]);
         config.partial_outage_policy = PartialOutagePolicy::AnySuccess;
         let client = EcpdsClient::new(&config).expect("client must build");
-        let mut result = client.fetch_user_destinations("testuser").await.unwrap();
+        let (mut result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
         result.sort();
 
         assert_eq!(result, vec!["BAR", "CIP", "FOO"]);
+        assert_eq!(outcome, FetchOutcome::Success);
     }
 
     #[tokio::test]
@@ -557,8 +580,14 @@ mod tests {
         let mut config = make_config(vec!["http://localhost:1".to_string(), server.url()]);
         config.partial_outage_policy = PartialOutagePolicy::AnySuccess;
         let client = EcpdsClient::new(&config).expect("client must build");
-        let result = client.fetch_user_destinations("testuser").await.unwrap();
+        let (result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
         assert!(result.contains(&"CIP".to_string()));
+        assert_eq!(
+            outcome,
+            FetchOutcome::Unreachable,
+            "partial outage must surface the worst per-server failure outcome, \
+             not a synthetic Success that hides the down server from metrics"
+        );
     }
 
     #[tokio::test]
@@ -580,6 +609,34 @@ mod tests {
             .await
             .expect_err("strict policy must fail when any server is unreachable");
         assert!(matches!(err, EcpdsError::ServiceUnavailable { .. }));
+    }
+
+    #[tokio::test]
+    async fn strict_policy_picks_worst_failure_outcome_across_servers() {
+        let mut auth_server = mockito::Server::new_async().await;
+        auth_server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(401)
+            .with_body(r#"{"error":"unauthorized"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![
+            "http://127.0.0.1:1".to_string(),
+            auth_server.url(),
+        ]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("must fail");
+        assert_eq!(
+            err.fetch_outcome(),
+            FetchOutcome::Unauthorized,
+            "401 outranks Unreachable so on-call sees the credential problem, \
+             not the coincident dead server"
+        );
     }
 
     #[tokio::test]
@@ -605,9 +662,10 @@ mod tests {
 
         let config = make_config(vec![server_a.url(), server_b.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let mut result = client.fetch_user_destinations("testuser").await.unwrap();
+        let (mut result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
         result.sort();
         assert_eq!(result, vec!["BAR".to_string(), "CIP".to_string()]);
+        assert_eq!(outcome, FetchOutcome::Success);
     }
 
     #[tokio::test]
@@ -626,9 +684,10 @@ mod tests {
 
         let config = make_config(vec![server_a.url(), server_b.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let mut result = client.fetch_user_destinations("testuser").await.unwrap();
+        let (mut result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
         result.sort();
         assert_eq!(result, vec!["CIP".to_string(), "FOO".to_string()]);
+        assert_eq!(outcome, FetchOutcome::Success);
     }
 
     #[tokio::test]
@@ -723,7 +782,7 @@ mod tests {
 
         let config = make_config(vec![server.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let mut result = client.fetch_user_destinations("testuser").await.unwrap();
+        let (mut result, _outcome) = client.fetch_user_destinations("testuser").await.unwrap();
         result.sort();
         assert_eq!(result, vec!["CIP".to_string(), "FOO".to_string()]);
     }
@@ -743,7 +802,7 @@ mod tests {
         let mut config = make_config(vec![server.url()]);
         config.target_field = "id".to_string();
         let client = EcpdsClient::new(&config).expect("client must build");
-        let result = client.fetch_user_destinations("testuser").await.unwrap();
+        let (result, _outcome) = client.fetch_user_destinations("testuser").await.unwrap();
         assert!(result.contains(&"DEST1".to_string()));
         assert!(!result.contains(&"CIP".to_string()));
     }
@@ -809,7 +868,7 @@ mod tests {
 
         let config = make_config(vec![server.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let result = client
+        let (result, _outcome) = client
             .fetch_user_destinations("u+s er&name")
             .await
             .expect("should succeed");
@@ -832,7 +891,7 @@ mod tests {
 
         let config = make_config(vec![format!("{}/some-prefix/", server.url())]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let result = client
+        let (result, _outcome) = client
             .fetch_user_destinations("alice")
             .await
             .expect("should succeed");

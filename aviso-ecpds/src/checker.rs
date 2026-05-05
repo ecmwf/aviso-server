@@ -71,7 +71,7 @@ impl EcpdsChecker {
                 event_name = "auth.ecpds.cache.hit",
                 username, "ECPDS destination cache hit"
             ),
-            CacheOutcome::Miss => debug!(
+            CacheOutcome::MissCoalesced | CacheOutcome::MissFetched { .. } => debug!(
                 event_name = "auth.ecpds.cache.miss",
                 username, "ECPDS destination cache miss"
             ),
