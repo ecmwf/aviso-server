@@ -52,7 +52,11 @@ These assumptions are pinned by the captured-fixture tests under [`tests/fixture
 
 ## Why this crate is path-dep, not workspace-member
 
-`aviso-server` follows the same convention as `aviso-validators`: domain-specific support crates live as path-dependencies rather than workspace members so they can be enabled/disabled cleanly via parent-crate feature flags without affecting the workspace lockfile or the default build.
+`aviso-server` follows the same convention as `aviso-validators`: domain-specific support crates live as path-dependencies rather than workspace members. The trade-off:
+
+- Default builds (no `--features ecpds`) skip the entire dependency tree introduced by this crate (`moka`, `mockito`, the extra `reqwest` config); compile time and binary size on the default build do not pay for ECPDS.
+- The root `Cargo.lock` does record this crate and its transitive dependencies (it has to: `cargo` resolves the whole graph regardless of feature gates), so adding the path dep is not lockfile-free. The win is purely on the *compile* side: optional `dep:` plus the `ecpds` feature flag means `cargo build` and `cargo build --features ecpds` produce different artifacts from the same lockfile.
+- The subcrate keeps its own `Cargo.lock` so `cargo test --manifest-path aviso-ecpds/Cargo.toml` runs in isolation, which lets CI lint and test the subcrate without pulling in the whole server.
 
 ## Related documentation
 
