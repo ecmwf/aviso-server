@@ -66,6 +66,53 @@ auth:
   # trusted_proxy mode validates forwarded Bearer JWT using jwt_secret.
   # No extra trusted_proxy block is needed.
 
+# ECPDS destination authorization plugin (optional).
+#
+# Only honored when the binary is built with `--features ecpds`. Streams
+# can opt in to this check by adding `plugins: ["ecpds"]` under their
+# `auth` block (see the dissemination schema below).
+#
+# IMPORTANT: a build WITHOUT `--features ecpds` will refuse to start if
+# any schema references the ecpds plugin, so the `plugins: ["ecpds"]`
+# line and this whole section are commented out by default. Uncomment
+# both together when running a build with the feature enabled.
+#
+# See docs/src/configuration-reference.md#ecpds for every field, and
+# docs/src/authentication.md#ecpds-destination-authorization for the
+# operator-facing setup guide.
+#
+# ecpds:
+#   # Service-account credentials for the ECPDS HTTP API (Basic auth).
+#   username: "ecpds-service-account"
+#   password: "service-password"
+#   # ECPDS server base URLs (http or https; no query string, no fragment).
+#   # All servers are queried per request and merged per partial_outage_policy.
+#   servers:
+#     - "https://ecpds-primary.example.int"
+#     - "https://ecpds-secondary.example.int"
+#   # Identifier field whose value is treated as the destination to
+#   # authorise. Must appear in the schema's `topic.key_order` AND be
+#   # marked `required: true` in the schema's `identifier`.
+#   match_key: "destination"
+#   # JSON field of each ECPDS destination record matched against the
+#   # request's match_key value. Default: "name".
+#   target_field: "name"
+#   # Cache TTL per user (seconds). Default: 300.
+#   cache_ttl_seconds: 300
+#   # Maximum cache entries before LRU-style eviction. Default: 10000.
+#   max_entries: 10000
+#   # Per-request HTTP timeouts (seconds). Defaults: 30 / 5.
+#   request_timeout_seconds: 30
+#   connect_timeout_seconds: 5
+#   # How to merge per-server destination lists.
+#   # - strict (default): all servers must respond and agree, otherwise 503.
+#   #   Confidentiality-preserving; one ECPDS server going away takes the
+#   #   whole plugin to 503.
+#   # - any_success: succeed if any server replies; union the lists.
+#   #   Availability-preserving; a permissive surviving server can widen
+#   #   access. Divergence is logged at warn level.
+#   partial_outage_policy: strict
+
 metrics:
   # Enable Prometheus metrics on a separate internal port.
   enabled: false
@@ -156,6 +203,12 @@ notification_schema:
       key_order: ["destination", "target", "class", "expver", "domain", "date", "time", "stream", "step"]
     auth:
       required: true
+      # Uncomment the next line ONLY when running a build compiled with
+      # `--features ecpds` and after configuring the top-level `ecpds:`
+      # section above. Without that, startup will fail loudly. The plugin
+      # adds destination-level access control on watch/replay using the
+      # `destination` identifier field below as the match_key.
+      # plugins: ["ecpds"]
     identifier:
       class:
         type: StringHandler
@@ -198,3 +251,8 @@ notification_schema:
 # 5) mars with admin-user => read 200, write 200
 # 6) dissemination with reader-user => read 200, write 403 (admin-only writes)
 # 7) dissemination with admin-user => read 200, write 200
+#
+# When the optional ECPDS plugin is enabled (top-level ecpds: section
+# above is uncommented AND a stream has plugins: ["ecpds"]) the smoke
+# script can additionally verify allow/deny against your real ECPDS.
+# See docs/src/getting-started.md#optional-end-to-end-ecpds-plugin-smoke-test.
