@@ -10,18 +10,53 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 - The cache is **process-local**. Restarting Aviso clears it; replicas have independent caches.
 - The default `partial_outage_policy` is `strict`: a single ECPDS server going away takes the whole plugin down. This is intentional.
 
-## Symptom → first checks matrix
+## Symptom → first checks
 
-> **Field-name reading guide.** Where this matrix says `reason=DestinationNotInList`, the actual log line will look like `… reason=DestinationNotInList "ECPDS access denied"` because the field is rendered with Rust's `Debug` formatter from the typed `DenyReason` enum. Use the exact strings shown when grepping. Metric `outcome=…` labels are the snake_case strings on the right of the colon (`deny_destination`, `http_401`, etc.).
+> **Field-name reading guide.** Where this section says `reason=DestinationNotInList`, the actual log line will look like `… reason=DestinationNotInList "ECPDS access denied"` because the field is rendered with Rust's `Debug` formatter from the typed `DenyReason` enum. Use the exact strings shown when grepping. Metric `outcome=…` labels are the snake_case strings (`deny_destination`, `http_401`, etc.).
 
-| Symptom | First metric to check | First log to grep | Likely causes |
-|---|---|---|---|
-| 503 storm on watch/replay | `aviso_ecpds_fetch_total` rate by `outcome` | `event_name=auth.ecpds.fetch.failed` and `event_name=auth.ecpds.check.unavailable` | `outcome=unreachable` → ECPDS server down, network partition, DNS, or wrong `servers` URLs. `outcome=http_401`/`http_403` → service-account creds wrong or revoked. `outcome=http_5xx` → ECPDS itself is broken. `outcome=invalid_response` → ECPDS contract drift. `outcome=divergence` → strict policy and servers disagree. |
-| 403 storm on watch/replay | `aviso_ecpds_access_decisions_total{outcome="deny_destination"}` rate | `event_name=auth.ecpds.check.denied` with `reason=DestinationNotInList` | ECPDS revoked destinations for one or more users; or a client suddenly started passing the wrong `destination`. Cross-check with the same users hitting the ECPDS web UI directly. |
-| 403 with `reason=MatchKeyMissing` | `aviso_ecpds_access_decisions_total{outcome="deny_match_key_missing"}` rate | `event_name=auth.ecpds.check.denied` with `reason=MatchKeyMissing` | The schema's `match_key` field is required, but a client is omitting it. Validation should have prevented this — investigate config drift. |
-| Quiet/no allows | `aviso_ecpds_access_decisions_total{outcome="allow"}` rate | n/a | The plugin is not running. Either the binary was built without `--features ecpds` (startup would have errored if any schema referenced `["ecpds"]` though), the schema does not actually have `plugins: ["ecpds"]`, or `auth.required` is `false`. |
-| Cache thrashing / latency spike | `aviso_ecpds_cache_misses_total` rate vs `aviso_ecpds_cache_hits_total` rate; `aviso_ecpds_cache_size` | `event_name=auth.ecpds.cache.miss` rate | High miss rate with high cardinality of distinct usernames may indicate `cache_ttl_seconds` too short, `max_entries` too small, or genuinely many unique users. |
-| Tracing event `auth.ecpds.fetch.divergence` | `aviso_ecpds_fetch_total{outcome="divergence"}` | `event_name=auth.ecpds.fetch.divergence` | Servers report different destination lists for the same user. Likely a replication-lag issue at the ECPDS side. Strict policy turns this into a 503; AnySuccess takes the union. |
+### 503 storm on watch/replay
+
+- **First metric:** `aviso_ecpds_fetch_total` rate, broken down by `outcome`.
+- **First log:** `event_name=auth.ecpds.fetch.failed` and `event_name=auth.ecpds.check.unavailable`.
+- **Likely causes** (read off the dominant `outcome` label):
+  - `unreachable` — ECPDS server down, network partition, DNS, or wrong `servers` URLs in config.
+  - `http_401` / `http_403` — service-account credentials wrong or revoked.
+  - `http_5xx` — ECPDS itself is broken.
+  - `invalid_response` — ECPDS response shape no longer matches what the parser expects (contract drift).
+  - `divergence` — strict policy and servers disagree on the user's destination list.
+
+### 403 storm on watch/replay
+
+- **First metric:** `aviso_ecpds_access_decisions_total{outcome="deny_destination"}` rate.
+- **First log:** `event_name=auth.ecpds.check.denied` with `reason=DestinationNotInList`.
+- **Likely causes:** ECPDS revoked destinations for one or more users; or a client suddenly started passing the wrong `destination`. Cross-check by hitting the ECPDS web UI directly with the same user.
+
+### 403 with `reason=MatchKeyMissing`
+
+- **First metric:** `aviso_ecpds_access_decisions_total{outcome="deny_match_key_missing"}` rate.
+- **First log:** `event_name=auth.ecpds.check.denied` with `reason=MatchKeyMissing`.
+- **Likely cause:** the schema's `match_key` field is required, but a client is omitting it. Startup validation should have prevented this configuration in the first place — investigate config drift.
+
+### Quiet / no allows
+
+- **First metric:** `aviso_ecpds_access_decisions_total{outcome="allow"}` rate is zero.
+- **First log:** there isn't one — the plugin simply isn't running.
+- **Likely causes:**
+  - The binary was built without `--features ecpds`. Startup would have errored if any schema referenced `["ecpds"]`, so this is unlikely on a real deployment.
+  - The schema does not actually have `plugins: ["ecpds"]`.
+  - `auth.required` is `false` on the schema, so the plugin is unreachable.
+
+### Cache thrashing / latency spike
+
+- **First metric:** ratio of `aviso_ecpds_cache_misses_total` to `aviso_ecpds_cache_hits_total`, plus `aviso_ecpds_cache_size`.
+- **First log:** rate of `event_name=auth.ecpds.cache.miss`.
+- **Likely cause:** high miss rate with high cardinality of distinct usernames means `cache_ttl_seconds` is too short, `max_entries` is too small, or there are genuinely many unique users.
+
+### Tracing event `auth.ecpds.fetch.divergence`
+
+- **First metric:** `aviso_ecpds_fetch_total{outcome="divergence"}`.
+- **First log:** `event_name=auth.ecpds.fetch.divergence`.
+- **Likely cause:** servers report different destination lists for the same user. Almost always a replication-lag issue at the ECPDS side. Strict policy turns this into a 503; `AnySuccess` policy takes the union and continues with a warning.
 
 ## Tracing event reference
 
