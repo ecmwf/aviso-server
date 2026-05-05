@@ -961,13 +961,14 @@ def _ecpds_identifier(config: Config, destination: str) -> dict:
     return {config.ecpds_match_key: destination}
 
 
-def _ecpds_failure_hint_for_400() -> str:
+def _ecpds_failure_hint_for_400(config: Config) -> str:
     return (
         "got 400 from the schema validator before the request reached the ECPDS plugin. "
-        "The smoke test sends a minimal identifier ({match_key: destination}) and does not "
-        "populate any other fields. If your ECPDS_EVENT_TYPE schema has additional "
-        "required identifier fields, add a dedicated minimal ECPDS test schema as shown in "
-        "the Getting Started doc instead of pointing the smoke test at your production schema."
+        f"The smoke test sends a minimal identifier ({{{config.ecpds_match_key!r}: <destination>}}) "
+        "and does not populate any other fields. If your ECPDS_EVENT_TYPE schema has "
+        "additional required identifier fields, add a dedicated minimal ECPDS test schema "
+        "as shown in the Getting Started doc instead of pointing the smoke test at your "
+        "production schema."
     )
 
 
@@ -1013,7 +1014,7 @@ def test_ecpds_allowed_destination_returns_200(config: Config) -> None:
 
     status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
     if status == 400:
-        raise SmokeFailure(_ecpds_failure_hint_for_400() + f" response: {truncate_text(response)}")
+        raise SmokeFailure(_ecpds_failure_hint_for_400(config) + f" response: {truncate_text(response)}")
     if status != 200:
         raise SmokeFailure(
             f"expected 200 for allowed user + allowed destination, got {status}; "
@@ -1038,7 +1039,7 @@ def test_ecpds_denied_destination_returns_403(config: Config) -> None:
 
     status, response = _ecpds_post_status(config, "/api/v1/watch", body, headers)
     if status == 400:
-        raise SmokeFailure(_ecpds_failure_hint_for_400() + f" response: {truncate_text(response)}")
+        raise SmokeFailure(_ecpds_failure_hint_for_400(config) + f" response: {truncate_text(response)}")
     if status != 403:
         raise SmokeFailure(
             f"expected 403 for allowed user + DENIED destination, got {status}; "
