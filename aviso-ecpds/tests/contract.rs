@@ -1,3 +1,4 @@
+use aviso_ecpds::client::FetchOutcome;
 use aviso_ecpds::config::{EcpdsConfig, PartialOutagePolicy};
 use aviso_ecpds::{EcpdsChecker, EcpdsError};
 use std::collections::HashMap;
@@ -103,7 +104,7 @@ async fn empty_user_response_denies_all_destinations() {
 }
 
 #[tokio::test]
-async fn success_no_fixture_currently_treated_as_empty_list() {
+async fn success_field_not_yes_surfaces_as_service_unavailable() {
     let mut server = mockito::Server::new_async().await;
     let _mock = server
         .mock("GET", "/ecpds/v1/destination/list")
@@ -117,11 +118,18 @@ async fn success_no_fixture_currently_treated_as_empty_list() {
     let checker = EcpdsChecker::new(&make_config(vec![server.url()])).unwrap();
     let access = checker.check_access("alice", &make_identifier("CIP")).await;
     assert!(
-        matches!(access.result, Err(EcpdsError::AccessDenied { .. })),
-        "Current ECPDS contract assumption: success != \"yes\" responses are parsed \
-         as their literal destinationList. If this changes (e.g. ECPDS team confirms \
-         that success: \"no\" should be a server-side failure rather than an empty \
-         allow-list), update the parser AND this test together."
+        matches!(
+            access.result,
+            Err(EcpdsError::ServiceUnavailable {
+                fetch_outcome: FetchOutcome::InvalidResponse,
+            })
+        ),
+        "ECPDS responses with success != \"yes\" indicate a server-side failure \
+         and must surface as ServiceUnavailable / InvalidResponse, not as a \
+         silent allow/deny based on whatever destinationList happened to contain. \
+         Treating them as a normal empty list would hide the upstream outage from \
+         aviso_ecpds_fetch_total. Got: {:?}",
+        access.result
     );
 }
 

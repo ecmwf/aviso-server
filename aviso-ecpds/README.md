@@ -30,8 +30,8 @@ ECPDS has no public REST API documentation as of this writing. The contract this
 
 - `GET <server>/ecpds/v1/destination/list?id=<username>` with HTTP Basic Auth (service account credentials).
 - 200 response body parsed as `{"destinationList": [<record>, ...], "success": "<string>"}`.
+- The `success` field MUST equal exactly `"yes"`. Any other value (including `"no"`, `"YES"`, `"true"`, etc.) is treated as an upstream-reported failure and surfaces as `FetchOutcome::InvalidResponse`. This stops a server saying "I failed, here is an empty list" from silently masking the outage in `aviso_ecpds_fetch_total` and from contributing an empty allow-list to the merged decision.
 - Each record is treated as a JSON object. Records with `"active": true` AND a string-valued `target_field` (default `"name"`) contribute their `target_field` value to the user's allow-list. Records where `active` is `false`, missing, or not a boolean are silently skipped (safe default: deny). Records that lack the configured `target_field` are silently skipped. Both skip cases are logged at info as `auth.ecpds.fetch.skipped_inactive` / `auth.ecpds.fetch.skipped_record`.
-- The `success` field is currently ignored. Only `destinationList` content is consulted. (See `tests/contract.rs::success_no_fixture_currently_treated_as_empty_list` for the explicit semantics.)
 - 4xx/5xx responses are surfaced as `EcpdsError::Http { status, .. }`; the merge layer maps them to `FetchOutcome::Unauthorized`/`Forbidden`/`ClientError`/`ServerError` so SREs can distinguish "creds wrong" from "ECPDS down".
 
 These assumptions are pinned by the captured-fixture tests under [`tests/fixtures/`](tests/fixtures/) plus the integration tests in [`tests/contract.rs`](tests/contract.rs). **If a real ECPDS environment ever produces a response shape that breaks those tests, the contract has changed and this crate needs an update.** That is the single failing test to look for.
@@ -42,7 +42,7 @@ These assumptions are pinned by the captured-fixture tests under [`tests/fixture
 |---------|---------|
 | `populated_user.json` | Three destinations (one inactive); `name` field present on each. |
 | `empty_user.json` | Empty `destinationList` with `success: "yes"` denies all destinations. |
-| `success_no.json` | `success: "no"` is currently treated as the literal (empty) `destinationList`, NOT as a server-side failure. |
+| `success_no.json` | `success: "no"` is treated as a server-side failure: the parser returns `FetchOutcome::InvalidResponse` so on-call sees the upstream-reported outage in metrics instead of a silent empty allow-list. |
 | `record_missing_target_field.json` | Records lacking `target_field` are silently skipped, not surfaced as destinations. |
 
 ## Cargo features
@@ -56,7 +56,7 @@ These assumptions are pinned by the captured-fixture tests under [`tests/fixture
 
 - Default builds (no `--features ecpds`) skip the entire dependency tree introduced by this crate (`moka`, `mockito`, the extra `reqwest` config); compile time and binary size on the default build do not pay for ECPDS.
 - The root `Cargo.lock` does record this crate and its transitive dependencies (it has to: `cargo` resolves the whole graph regardless of feature gates), so adding the path dep is not lockfile-free. The win is purely on the *compile* side: optional `dep:` plus the `ecpds` feature flag means `cargo build` and `cargo build --features ecpds` produce different artifacts from the same lockfile.
-- The subcrate keeps its own `Cargo.lock` so `cargo test --manifest-path aviso-ecpds/Cargo.toml` runs in isolation, which lets CI lint and test the subcrate without pulling in the whole server.
+- The subcrate has its own `Cargo.toml`, so `cargo {build,test,clippy} --manifest-path aviso-ecpds/Cargo.toml` resolves only this crate's dependency graph and runs only this crate's tests, without pulling in `aviso-server`. Following the standard Rust convention for libraries, the subcrate does not commit its own `Cargo.lock`; CI re-resolves dependencies fresh on each isolated subcrate run, which is what `.github/workflows/ci.yaml` does in the dedicated subcrate test/clippy/fmt steps.
 
 ## Related documentation
 

@@ -209,7 +209,6 @@ impl EcpdsError {
 struct EcpdsResponse {
     #[serde(rename = "destinationList")]
     destination_list: Vec<serde_json::Value>,
-    #[allow(dead_code)]
     success: String,
 }
 
@@ -463,6 +462,17 @@ impl EcpdsClient {
                     server_index,
                     message: e.to_string(),
                 })?;
+
+        if ecpds_resp.success != "yes" {
+            return Err(EcpdsError::InvalidResponse {
+                server_index,
+                message: format!(
+                    "ECPDS reported success={:?} (expected \"yes\"); \
+                     treating as upstream failure",
+                    ecpds_resp.success
+                ),
+            });
+        }
 
         let total = ecpds_resp.destination_list.len();
         let mut skipped_inactive = 0usize;
@@ -985,6 +995,67 @@ mod tests {
 
         mock.assert_async().await;
         assert!(result.contains("OK"));
+    }
+
+    #[tokio::test]
+    async fn fetch_sends_http_basic_auth_with_configured_credentials() {
+        let mut server = mockito::Server::new_async().await;
+        let mock = server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .match_header(
+                "authorization",
+                mockito::Matcher::Exact("Basic dGVzdHVzZXI6dGVzdHBhc3M=".to_string()),
+            )
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"destinationList":[{"name":"OK","active":true}],"success":"yes"}"#)
+            .expect(1)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let (result, outcome) = client
+            .fetch_user_destinations("alice")
+            .await
+            .expect("fetch must succeed when Basic auth header is sent");
+
+        mock.assert_async().await;
+        assert_eq!(outcome, FetchOutcome::Success);
+        assert!(
+            result.contains("OK"),
+            "mock only matches when the Authorization header is exactly \
+             'Basic dGVzdHVzZXI6dGVzdHBhc3M=' (base64 of 'testuser:testpass'); \
+             a successful response proves the service-account creds reached ECPDS"
+        );
+    }
+
+    #[tokio::test]
+    async fn fetch_treats_success_field_not_yes_as_invalid_response() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(r#"{"destinationList":[],"success":"no"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("alice")
+            .await
+            .expect_err("ECPDS reporting success != yes must surface as a fetch failure");
+        assert_eq!(
+            err.fetch_outcome(),
+            FetchOutcome::InvalidResponse,
+            "success={{!=yes}} indicates an upstream-reported failure; treating it \
+             as a normal empty allow-list would hide the outage from \
+             aviso_ecpds_fetch_total"
+        );
     }
 
     #[tokio::test]
