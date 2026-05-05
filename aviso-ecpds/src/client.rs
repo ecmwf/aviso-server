@@ -106,7 +106,7 @@ pub enum EcpdsError {
     /// not succeed. The `fetch_outcome` carries the dominant cause
     /// (e.g. all servers were unreachable, returned 401, etc.). Maps
     /// to HTTP 503 at the route layer.
-    #[error("ECPDS service is unaccessible ({fetch_outcome:?})")]
+    #[error("ECPDS service is inaccessible ({fetch_outcome:?})")]
     ServiceUnavailable {
         /// Dominant cause across all servers, used by the route layer
         /// to label `aviso_ecpds_fetch_total{outcome=...}`.

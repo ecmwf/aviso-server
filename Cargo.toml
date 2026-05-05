@@ -54,7 +54,7 @@ tokio-util = "0.7"
 geo = "0.32"
 geo-types = "0.7"
 prometheus = { version = "0.13", features = ["process"] }
-aviso-ecpds = { path = "aviso-ecpds", optional = true }
+aviso-ecpds = { version = "0.1.0", path = "aviso-ecpds", optional = true }
 
 [features]
 default = []

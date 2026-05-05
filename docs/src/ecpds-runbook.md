@@ -22,7 +22,7 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 ### 503 storm on watch/replay
 
-- **What you see:** sustained HTTP 503 responses on `/api/v1/watch` and `/api/v1/replay`. From a user's perspective: "I cannot start a watch; Aviso says ECPDS is unaccessible."
+- **What you see:** sustained HTTP 503 responses on `/api/v1/watch` and `/api/v1/replay`. From a user's perspective: "I cannot start a watch; Aviso says ECPDS is inaccessible."
 - **Why it happens:** the ECPDS plugin tried to fetch destination lists from your ECPDS servers and could not reach a verdict, so it failed safely with 503 rather than guess.
 - **First metric:** `aviso_ecpds_fetch_total` rate, broken down by `outcome`.
 - **First log:** `event_name=auth.ecpds.fetch.failed` and `event_name=auth.ecpds.check.unavailable`.

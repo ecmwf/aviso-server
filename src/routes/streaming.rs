@@ -120,7 +120,7 @@ fn ecpds_service_unavailable_response() -> HttpResponse {
     HttpResponse::ServiceUnavailable().json(serde_json::json!({
         "code": "SERVICE_UNAVAILABLE",
         "error": "service_unavailable",
-        "message": "ECPDS service is unaccessible"
+        "message": "ECPDS service is inaccessible"
     }))
 }
 

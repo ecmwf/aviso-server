@@ -2,8 +2,8 @@ use crate::client::{EcpdsError, FetchOutcome};
 use moka::future::Cache;
 use std::future::Future;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 /// Whether a [`DestinationCache::try_get_or_fetch`] call was satisfied
