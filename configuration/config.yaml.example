@@ -85,7 +85,14 @@ auth:
 #   # Service-account credentials for the ECPDS HTTP API (Basic auth).
 #   username: "ecpds-service-account"
 #   password: "service-password"
-#   # ECPDS server base URLs (http or https; no query string, no fragment).
+#   # ECPDS server base URLs. Use https:// for any reachable host: the
+#   # plugin authenticates with HTTP Basic Auth, so plain http to a real
+#   # host would put the service-account password and per-user
+#   # destination lookups on the wire without TLS. Plain http:// is
+#   # accepted only for loopback ({127.0.0.1, [::1], localhost}) so the
+#   # mockito-based test fixtures can keep working; a typo from
+#   # https:// to http:// on a non-loopback host fails at startup.
+#   # No query string, no fragment.
 #   # All servers are queried per request and merged per partial_outage_policy.
 #   servers:
 #     - "https://ecpds-primary.example.int"

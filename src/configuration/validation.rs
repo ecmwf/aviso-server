@@ -428,10 +428,32 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
             anyhow::anyhow!("ecpds.servers[{i}] '{server}' is not a valid URL: {e}")
         })?;
         match parsed.scheme() {
-            "http" | "https" => {}
+            "https" => {}
+            "http" => {
+                // The plugin authenticates to ECPDS with HTTP Basic Auth
+                // (service-account credentials). Sending those over plain
+                // HTTP to anything other than the local host would put the
+                // password and the per-user destination lookups on the
+                // wire without TLS. Restrict http:// to loopback so the
+                // mockito-based test fixtures keep working but a typo
+                // from `https://` to `http://` on a real deployment fails
+                // closed at startup.
+                let host = parsed.host_str().unwrap_or("");
+                let is_loopback = matches!(host, "127.0.0.1" | "[::1]" | "localhost");
+                if !is_loopback {
+                    bail!(
+                        "ecpds.servers[{i}] '{server}' uses plain http:// to a non-loopback host. \
+                         The ECPDS plugin authenticates with HTTP Basic Auth (service-account \
+                         credentials), so plain http would send those credentials and per-user \
+                         destination lookups over the network without TLS. Use https:// for any \
+                         reachable host; http:// is accepted only for loopback ({{127.0.0.1, \
+                         [::1], localhost}}) for local testing."
+                    );
+                }
+            }
             other => bail!(
                 "ecpds.servers[{i}] '{server}' has unsupported scheme '{other}'; \
-                 only 'http' and 'https' are accepted"
+                 only 'http' (loopback only) and 'https' are accepted"
             ),
         }
         if parsed.query().is_some() {
@@ -1919,7 +1941,7 @@ mod tests {
         #[test]
         fn rejects_server_url_with_query_string() {
             let mut cfg = good_ecpds_config();
-            cfg.servers = vec!["http://example.com/?already=set".to_string()];
+            cfg.servers = vec!["https://example.com/?already=set".to_string()];
             let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
                 .expect_err("must fail");
             assert!(
@@ -1931,7 +1953,7 @@ mod tests {
         #[test]
         fn rejects_server_url_with_fragment() {
             let mut cfg = good_ecpds_config();
-            cfg.servers = vec!["http://example.com/#frag".to_string()];
+            cfg.servers = vec!["https://example.com/#frag".to_string()];
             let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
                 .expect_err("must fail");
             assert!(
@@ -1941,13 +1963,38 @@ mod tests {
         }
 
         #[test]
-        fn accepts_https_and_http_schemes() {
-            for url in ["http://a.example", "https://b.example"] {
+        fn accepts_https_to_any_host_and_http_to_loopback() {
+            for url in [
+                "https://b.example",
+                "http://127.0.0.1",
+                "http://127.0.0.1:8080",
+                "http://localhost",
+                "http://localhost:8080",
+                "http://[::1]",
+            ] {
                 let mut cfg = good_ecpds_config();
                 cfg.servers = vec![url.to_string()];
                 validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
                     .unwrap_or_else(|e| panic!("should accept {url}: {e}"));
             }
+        }
+
+        #[test]
+        fn rejects_plain_http_to_non_loopback_host() {
+            // The plugin uses HTTP Basic Auth (service-account credentials)
+            // to talk to ECPDS, so plain http to a real host would put the
+            // password on the wire without TLS. This test pins the
+            // fail-closed behaviour: a typo from https:// to http:// on a
+            // production deployment must abort startup.
+            let mut cfg = good_ecpds_config();
+            cfg.servers = vec!["http://ecpds.example.int".to_string()];
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("uses plain http:// to a non-loopback host"),
+                "got: {err}"
+            );
         }
 
         #[test]

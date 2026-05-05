@@ -114,9 +114,14 @@ pub struct EcpdsConfig {
     /// [`PartialOutagePolicy::Strict`].
     #[serde(default = "default_partial_outage_policy")]
     pub partial_outage_policy: PartialOutagePolicy,
-    /// List of ECPDS server base URLs (each `http://...` or
-    /// `https://...`, no query string, no fragment; trailing slashes
-    /// are normalised).
+    /// List of ECPDS server base URLs. Each must parse with no query
+    /// string and no fragment; trailing slashes are normalised.
+    /// `https://` is required for any reachable host because the
+    /// plugin authenticates with HTTP Basic Auth (see `username` /
+    /// `password`). Plain `http://` is accepted only for loopback
+    /// (`127.0.0.1`, `[::1]`, `localhost`) so test fixtures can
+    /// keep working; the parent crate's startup validator rejects
+    /// `http://` to non-loopback hosts.
     pub servers: Vec<String>,
 }
 
