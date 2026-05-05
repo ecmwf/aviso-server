@@ -228,44 +228,43 @@ pub async fn enforce_ecpds_auth(
         "Starting ECPDS destination access check"
     );
 
-    let result = checker
+    let access = checker
         .check_access(&user.username, canonicalized_params)
         .await;
 
     if let Some(m) = metrics.as_ref() {
         m.ecpds.cache_size.set(checker.cache_entry_count() as i64);
-    }
-
-    let record_fetch = |outcome_label: &str| {
-        if let Some(m) = metrics.as_ref() {
-            m.ecpds
-                .fetch_total
-                .with_label_values(&[outcome_label])
-                .inc();
-        }
-    };
-
-    match result {
-        Ok(cache_outcome) => {
-            if let Some(m) = metrics.as_ref() {
-                match cache_outcome {
-                    aviso_ecpds::cache::CacheOutcome::Hit => m.ecpds.cache_hits_total.inc(),
-                    aviso_ecpds::cache::CacheOutcome::MissCoalesced => {
-                        m.ecpds.cache_misses_total.inc();
-                    }
-                    aviso_ecpds::cache::CacheOutcome::MissFetched { fetch_outcome } => {
-                        m.ecpds.cache_misses_total.inc();
-                        record_fetch(fetch_outcome.label());
-                    }
+        // Cache and fetch counters are recorded once per cache lookup,
+        // independently of whether the request was allowed, denied, or
+        // failed to reach a verdict. fetch_total is incremented only on
+        // MissFetched so concurrent waiters that coalesced onto a single
+        // upstream call (success or failure) do not over-report.
+        if let Some(cache_outcome) = access.cache_outcome {
+            match cache_outcome {
+                aviso_ecpds::cache::CacheOutcome::Hit => m.ecpds.cache_hits_total.inc(),
+                aviso_ecpds::cache::CacheOutcome::MissCoalesced => {
+                    m.ecpds.cache_misses_total.inc();
+                }
+                aviso_ecpds::cache::CacheOutcome::MissFetched { fetch_outcome } => {
+                    m.ecpds.cache_misses_total.inc();
+                    m.ecpds
+                        .fetch_total
+                        .with_label_values(&[fetch_outcome.label()])
+                        .inc();
                 }
             }
+        }
+    }
+
+    match access.result {
+        Ok(()) => {
             tracing::info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_name = "auth.ecpds.check.allowed",
                 event_type = %event_type,
                 username = %user.username,
-                cache_outcome = ?cache_outcome,
+                cache_outcome = ?access.cache_outcome,
                 "ECPDS access allowed"
             );
             record_decision("allow");
@@ -279,6 +278,7 @@ pub async fn enforce_ecpds_auth(
                 event_type = %event_type,
                 username = %user.username,
                 reason = ?reason,
+                cache_outcome = ?access.cache_outcome,
                 "ECPDS access denied"
             );
             record_decision(reason.label());
@@ -292,14 +292,13 @@ pub async fn enforce_ecpds_auth(
                 event_type = %event_type,
                 username = %user.username,
                 fetch_outcome = ?fetch_outcome,
+                cache_outcome = ?access.cache_outcome,
                 "ECPDS service unavailable"
             );
             record_decision("unavailable");
-            record_fetch(fetch_outcome.label());
             Err(ecpds_service_unavailable_response())
         }
         Err(e) => {
-            let outcome = e.fetch_outcome();
             tracing::error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
@@ -307,10 +306,10 @@ pub async fn enforce_ecpds_auth(
                 event_type = %event_type,
                 username = %user.username,
                 error = %e,
+                cache_outcome = ?access.cache_outcome,
                 "Unexpected ECPDS error"
             );
             record_decision("error");
-            record_fetch(outcome.label());
             Err(HttpResponse::InternalServerError().json(serde_json::json!({
                 "code": "INTERNAL_ERROR",
                 "error": "internal_error",

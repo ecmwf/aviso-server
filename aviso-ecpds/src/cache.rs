@@ -81,49 +81,66 @@ impl DestinationCache {
     /// [`FetchOutcome`] for the fetch attempt. Only the destination
     /// list is cached; the outcome is reported back to the caller
     /// that ran the fetch via [`CacheOutcome::MissFetched`].
+    ///
+    /// Returns `(CacheOutcome, Result<...>)` regardless of whether
+    /// the fetch succeeded so the route layer can record cache and
+    /// fetch metrics on every code path (allow, deny, unavailable).
+    /// Without this, denied requests after a cache miss never
+    /// contribute to `aviso_ecpds_cache_misses_total`, and concurrent
+    /// waiters on a failing fetch all increment
+    /// `aviso_ecpds_fetch_total` even though only one upstream call
+    /// happened.
     pub async fn try_get_or_fetch<F, Fut>(
         &self,
         username: &str,
         fetch: F,
-    ) -> Result<(Arc<Vec<String>>, CacheOutcome), EcpdsError>
+    ) -> (CacheOutcome, Result<Arc<Vec<String>>, EcpdsError>)
     where
         F: FnOnce() -> Fut,
         Fut: Future<Output = Result<(Vec<String>, FetchOutcome), EcpdsError>>,
     {
         if let Some(cached) = self.cache.get(username).await {
-            return Ok((cached, CacheOutcome::Hit));
+            return (CacheOutcome::Hit, Ok(cached));
         }
 
         let fetched = Arc::new(AtomicBool::new(false));
         let fetched_in_closure = fetched.clone();
         let outcome_slot: Arc<Mutex<Option<FetchOutcome>>> = Arc::new(Mutex::new(None));
         let outcome_writer = outcome_slot.clone();
-        let inserted = self
+        let result = self
             .cache
             .try_get_with_by_ref(username, async move {
                 fetched_in_closure.store(true, Ordering::SeqCst);
-                let (destinations, outcome) = fetch().await?;
-                *outcome_writer.lock().expect("outcome slot poisoned") = Some(outcome);
-                Ok::<Arc<Vec<String>>, EcpdsError>(Arc::new(destinations))
+                match fetch().await {
+                    Ok((destinations, outcome)) => {
+                        *outcome_writer.lock().expect("outcome slot poisoned") = Some(outcome);
+                        Ok::<Arc<Vec<String>>, EcpdsError>(Arc::new(destinations))
+                    }
+                    Err(e) => {
+                        *outcome_writer.lock().expect("outcome slot poisoned") =
+                            Some(e.fetch_outcome());
+                        Err(e)
+                    }
+                }
             })
             .await
             .map_err(|arc_err: Arc<EcpdsError>| match Arc::try_unwrap(arc_err) {
                 Ok(err) => err,
                 Err(shared) => clone_ecpds_error(&shared),
-            })?;
+            });
 
         let cache_outcome = if fetched.load(Ordering::SeqCst) {
             let outcome = outcome_slot
                 .lock()
                 .expect("outcome slot poisoned")
-                .expect("self-fetch path always writes the outcome before returning Ok");
+                .expect("self-fetch path always writes the outcome before returning");
             CacheOutcome::MissFetched {
                 fetch_outcome: outcome,
             }
         } else {
             CacheOutcome::MissCoalesced
         };
-        Ok((inserted, cache_outcome))
+        (cache_outcome, result)
     }
 
     /// Number of entries currently held by the cache.
@@ -245,14 +262,14 @@ mod tests {
         cache.set("john", vec!["CIP".to_string()]).await;
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        let (result, outcome) = cache
+        let (outcome, result) = cache
             .try_get_or_fetch("john", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
                 async { Ok((vec!["BAD".to_string()], FetchOutcome::Success)) }
             })
-            .await
-            .expect("must succeed");
-        assert_eq!(result.as_ref(), &vec!["CIP".to_string()]);
+            .await;
+        let value = result.expect("must succeed");
+        assert_eq!(value.as_ref(), &vec!["CIP".to_string()]);
         assert_eq!(outcome, CacheOutcome::Hit);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
@@ -262,14 +279,14 @@ mod tests {
         let cache = DestinationCache::new(300, 1000);
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        let (result, outcome) = cache
+        let (outcome, result) = cache
             .try_get_or_fetch("alice", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
                 async { Ok((vec!["CIP".to_string()], FetchOutcome::Success)) }
             })
-            .await
-            .expect("must succeed");
-        assert_eq!(result.as_ref(), &vec!["CIP".to_string()]);
+            .await;
+        let value = result.expect("must succeed");
+        assert_eq!(value.as_ref(), &vec!["CIP".to_string()]);
         assert_eq!(
             outcome,
             CacheOutcome::MissFetched {
@@ -278,14 +295,14 @@ mod tests {
         );
         assert_eq!(calls.load(Ordering::SeqCst), 1);
         let calls_clone = calls.clone();
-        let (result2, outcome2) = cache
+        let (outcome2, result2) = cache
             .try_get_or_fetch("alice", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
                 async { Ok((vec!["IGNORED".to_string()], FetchOutcome::Success)) }
             })
-            .await
-            .expect("must succeed");
-        assert_eq!(result2.as_ref(), &vec!["CIP".to_string()]);
+            .await;
+        let value2 = result2.expect("must succeed");
+        assert_eq!(value2.as_ref(), &vec!["CIP".to_string()]);
         assert_eq!(outcome2, CacheOutcome::Hit);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
@@ -293,12 +310,11 @@ mod tests {
     #[tokio::test]
     async fn try_get_or_fetch_propagates_partial_failure_outcome_on_self_fetch() {
         let cache = DestinationCache::new(300, 1000);
-        let (_result, outcome) = cache
+        let (outcome, _result) = cache
             .try_get_or_fetch("bob", || async {
                 Ok((vec!["CIP".to_string()], FetchOutcome::Unreachable))
             })
-            .await
-            .expect("must succeed");
+            .await;
         assert_eq!(
             outcome,
             CacheOutcome::MissFetched {
@@ -333,8 +349,9 @@ mod tests {
         let mut self_fetch_count = 0;
         let mut coalesced_count = 0;
         for handle in handles {
-            let (result, outcome) = handle.await.unwrap().expect("must succeed");
-            assert_eq!(result.as_ref(), &vec!["CIP".to_string()]);
+            let (outcome, result) = handle.await.unwrap();
+            let value = result.expect("must succeed");
+            assert_eq!(value.as_ref(), &vec!["CIP".to_string()]);
             match outcome {
                 CacheOutcome::Hit => unreachable!("cache started empty"),
                 CacheOutcome::MissFetched { .. } => self_fetch_count += 1,
@@ -357,11 +374,75 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn concurrent_error_fan_out_only_self_fetcher_reports_missfetched() {
+        let cache = Arc::new(DestinationCache::new(300, 1000));
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+        for _ in 0..10 {
+            let cache = cache.clone();
+            let calls = calls.clone();
+            handles.push(tokio::spawn(async move {
+                cache
+                    .try_get_or_fetch("stampede-fail", move || {
+                        let calls = calls.clone();
+                        async move {
+                            calls.fetch_add(1, Ordering::SeqCst);
+                            tokio::time::sleep(Duration::from_millis(50)).await;
+                            Err(EcpdsError::ServiceUnavailable {
+                                fetch_outcome: FetchOutcome::Unauthorized,
+                            })
+                        }
+                    })
+                    .await
+            }));
+        }
+        let mut self_fetch_count = 0;
+        let mut coalesced_count = 0;
+        for handle in handles {
+            let (outcome, result) = handle.await.unwrap();
+            assert!(
+                matches!(result, Err(EcpdsError::ServiceUnavailable { .. })),
+                "all waiters must observe ServiceUnavailable, never AccessDenied"
+            );
+            match outcome {
+                CacheOutcome::Hit => unreachable!("cache started empty"),
+                CacheOutcome::MissFetched { fetch_outcome } => {
+                    self_fetch_count += 1;
+                    assert_eq!(
+                        fetch_outcome,
+                        FetchOutcome::Unauthorized,
+                        "self-fetcher's MissFetched must carry the underlying \
+                         FetchOutcome from the failure (extracted from the error) \
+                         so the route layer can label aviso_ecpds_fetch_total \
+                         with the real outcome (e.g. http_401), not synthetic Success"
+                    );
+                }
+                CacheOutcome::MissCoalesced => coalesced_count += 1,
+            }
+        }
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "fetch must run exactly once even when it fails"
+        );
+        assert_eq!(
+            self_fetch_count, 1,
+            "exactly one waiter must report MissFetched on the failure path"
+        );
+        assert_eq!(
+            coalesced_count, 9,
+            "the other nine must report MissCoalesced (so the route layer does \
+             NOT increment aviso_ecpds_fetch_total for them, which would otherwise \
+             over-report N upstream calls per stampede when only one happened)"
+        );
+    }
+
+    #[tokio::test]
     async fn errors_are_not_cached() {
         let cache = DestinationCache::new(300, 1000);
         let calls = Arc::new(AtomicUsize::new(0));
         let calls_clone = calls.clone();
-        let err = cache
+        let (_outcome, err_result) = cache
             .try_get_or_fetch("doomed", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
                 async {
@@ -370,17 +451,17 @@ mod tests {
                     })
                 }
             })
-            .await
-            .expect_err("must error");
+            .await;
+        let err = err_result.expect_err("must error");
         assert!(matches!(err, EcpdsError::ServiceUnavailable { .. }));
         let calls_clone = calls.clone();
-        let _ok = cache
+        let (_outcome2, ok_result) = cache
             .try_get_or_fetch("doomed", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
                 async { Ok((vec!["CIP".to_string()], FetchOutcome::Success)) }
             })
-            .await
-            .expect("must succeed");
+            .await;
+        let _ok = ok_result.expect("must succeed");
         assert_eq!(
             calls.load(Ordering::SeqCst),
             2,
@@ -412,7 +493,7 @@ mod tests {
             }));
         }
         for handle in handles {
-            let result = handle.await.unwrap();
+            let (_outcome, result) = handle.await.unwrap();
             assert!(
                 matches!(result, Err(EcpdsError::ServiceUnavailable { .. })),
                 "all waiters must observe ServiceUnavailable, never AccessDenied"

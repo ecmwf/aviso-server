@@ -45,6 +45,7 @@ async fn populated_user_response_yields_known_destinations() {
         checker
             .check_access("alice", &make_identifier("CIP"))
             .await
+            .result
             .is_ok(),
         "active CIP must be allowed in populated_user fixture"
     );
@@ -52,12 +53,16 @@ async fn populated_user_response_yields_known_destinations() {
         checker
             .check_access("alice", &make_identifier("FOO"))
             .await
+            .result
             .is_ok(),
         "active FOO must be allowed in populated_user fixture"
     );
     assert!(
         matches!(
-            checker.check_access("alice", &make_identifier("BAR")).await,
+            checker
+                .check_access("alice", &make_identifier("BAR"))
+                .await
+                .result,
             Err(EcpdsError::AccessDenied { .. })
         ),
         "BAR is in the destinationList but with active=false; the contract \
@@ -67,7 +72,8 @@ async fn populated_user_response_yields_known_destinations() {
         matches!(
             checker
                 .check_access("alice", &make_identifier("UNKNOWN"))
-                .await,
+                .await
+                .result,
             Err(EcpdsError::AccessDenied { .. })
         ),
         "UNKNOWN must be denied (not present in any record)"
@@ -88,7 +94,10 @@ async fn empty_user_response_denies_all_destinations() {
 
     let checker = EcpdsChecker::new(&make_config(vec![server.url()])).unwrap();
     assert!(matches!(
-        checker.check_access("alice", &make_identifier("CIP")).await,
+        checker
+            .check_access("alice", &make_identifier("CIP"))
+            .await
+            .result,
         Err(EcpdsError::AccessDenied { .. })
     ));
 }
@@ -106,9 +115,9 @@ async fn success_no_fixture_currently_treated_as_empty_list() {
         .await;
 
     let checker = EcpdsChecker::new(&make_config(vec![server.url()])).unwrap();
-    let result = checker.check_access("alice", &make_identifier("CIP")).await;
+    let access = checker.check_access("alice", &make_identifier("CIP")).await;
     assert!(
-        matches!(result, Err(EcpdsError::AccessDenied { .. })),
+        matches!(access.result, Err(EcpdsError::AccessDenied { .. })),
         "Current ECPDS contract assumption: success != \"yes\" responses are parsed \
          as their literal destinationList. If this changes (e.g. ECPDS team confirms \
          that success: \"no\" should be a server-side failure rather than an empty \
@@ -133,6 +142,7 @@ async fn record_missing_target_field_is_silently_skipped() {
         checker
             .check_access("alice", &make_identifier("CIP"))
             .await
+            .result
             .is_ok(),
         "records with the target_field present must still produce allows"
     );
@@ -140,6 +150,7 @@ async fn record_missing_target_field_is_silently_skipped() {
         checker
             .check_access("alice", &make_identifier("FOO"))
             .await
+            .result
             .is_ok(),
         "records with the target_field present must still produce allows"
     );
@@ -147,7 +158,8 @@ async fn record_missing_target_field_is_silently_skipped() {
         matches!(
             checker
                 .check_access("alice", &make_identifier("no-name-field"))
-                .await,
+                .await
+                .result,
             Err(EcpdsError::AccessDenied { .. })
         ),
         "records missing target_field must be silently skipped, not surface as a destination"

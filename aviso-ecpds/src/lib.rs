@@ -17,8 +17,9 @@
 //! - [`config::PartialOutagePolicy`] — strict (default) vs any-success
 //!   merge across multiple ECPDS servers.
 //! - [`checker::EcpdsChecker`] — the single facade. `new` is fallible;
-//!   `check_access` returns [`cache::CacheOutcome`] alongside the
-//!   result so the route layer can label hit/miss metrics.
+//!   `check_access` returns [`checker::AccessCheckResult`] (cache
+//!   outcome plus authorisation result) so the route layer can label
+//!   hit/miss and fetch metrics on every code path.
 //! - [`client::EcpdsError`] / [`client::FetchOutcome`] /
 //!   [`client::DenyReason`] — domain error type and typed sub-reasons
 //!   with stable Prometheus label strings.
