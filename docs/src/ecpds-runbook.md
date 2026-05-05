@@ -5,10 +5,19 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 ## At a glance
 
 - The plugin is **read-only** (`watch`, `replay`). The `notify` endpoint is never gated by ECPDS.
-- The plugin **fails closed**. Any internal problem returns `503 Service Unavailable`. The plugin will never accidentally allow a request.
-- The plugin **does not retry**. A `503` is the signal to investigate ECPDS, not Aviso.
+- The plugin **fails closed**: it will never accidentally allow a request. The status code distinguishes where the problem is. **`503 Service Unavailable`** means the ECPDS check could not reach a verdict (an upstream / partial-outage problem); investigate ECPDS and the network. **`500 Internal Server Error`** means the plugin itself hit a server-side bug or a misconfiguration on Aviso's side (missing `AuthSettings`, no checker registered, an unexpected plugin error); investigate Aviso. The full mapping is in the response codes table below.
+- The plugin **does not retry**. A `503` is the signal to investigate ECPDS; a `500` is the signal to investigate Aviso.
 - The cache lives in process memory. Restarting Aviso clears it. Replicas have independent caches.
 - The default `partial_outage_policy` is `strict`: every configured ECPDS server must respond successfully or the call fails with 503. A single ECPDS server going away takes the whole plugin down. This is intentional. The destination list itself is the **union** of every server's response under both policies; the choice is purely about how tolerant we are of per-server failures.
+
+### Response codes the plugin emits
+
+| HTTP | Where the problem is | Tracing event | Trigger |
+|------|----------------------|---------------|---------|
+| `200` | Allowed | `auth.ecpds.check.allowed` | Destination is in the user's ECPDS allow-list. |
+| `403` | Authorisation | `auth.ecpds.check.denied` | Destination is not in the user's allow-list (`reason=DestinationNotInList`), or the request omitted the configured `match_key` field (`reason=MatchKeyMissing`). |
+| `503` | Upstream / network | `auth.ecpds.check.unavailable` | The merged ECPDS fetch could not reach a verdict under the active `partial_outage_policy`. Investigate ECPDS, the network, and the service-account credentials. The `fetch_outcome` field on the event narrows it down further. |
+| `500` | Aviso (this binary) | `auth.ecpds.check.error` | A server-side bug or local misconfiguration: `AuthSettings` not registered as `app_data`, no `EcpdsChecker` in `app_data`, or an unexpected plugin error. Investigate Aviso, not ECPDS. |
 
 ## Symptom and first checks
 
