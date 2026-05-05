@@ -489,24 +489,22 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
         bail!("ecpds.connect_timeout_seconds must be greater than zero");
     }
 
+    // The plugin reads `match_key` from the request's canonicalized
+    // identifier params at runtime (`EcpdsChecker::check_access`
+    // does `identifier.get(&self.match_key)`), not from the topic
+    // routing key. Streams without an explicit `topic` block, or
+    // streams whose `topic.key_order` filters on a different field,
+    // still surface the request param to the plugin via the
+    // canonicalized params, so the plugin authorises correctly. We
+    // therefore validate that `match_key` exists in the schema's
+    // `identifier` and is `required: true` (so the value is
+    // guaranteed before the plugin runs), but we deliberately do
+    // NOT require it to appear in `topic.key_order`.
     if let Some(schema) = &settings.notification_schema {
         for stream_name in &ecpds_streams {
             let Some(event_schema) = schema.get(*stream_name) else {
                 continue;
             };
-            let key_order = event_schema
-                .topic
-                .as_ref()
-                .map(|t| t.key_order.as_slice())
-                .unwrap_or_default();
-            if !key_order.contains(&ecpds_config.match_key) {
-                bail!(
-                    "ecpds.match_key '{}' not found in key_order {:?} for stream '{}'",
-                    ecpds_config.match_key,
-                    key_order,
-                    stream_name
-                );
-            }
             match event_schema.identifier.get(&ecpds_config.match_key) {
                 None => bail!(
                     "ecpds.match_key '{}' has no identifier rule defined in schema '{}'",
@@ -2121,13 +2119,52 @@ mod tests {
         }
 
         #[test]
-        fn rejects_match_key_not_in_key_order() {
+        fn rejects_match_key_not_in_schema_identifier() {
             let cfg = good_ecpds_config();
             let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "other_key", true))
                 .expect_err("must fail");
             assert!(
-                err.to_string().contains("not found in key_order"),
+                err.to_string()
+                    .contains("has no identifier rule defined in schema"),
                 "got: {err}"
+            );
+        }
+
+        #[test]
+        fn accepts_match_key_outside_topic_key_order() {
+            // Explicit regression: streams whose `topic.key_order`
+            // filters on a different field (or whose schema has no
+            // `topic` block at all) must still validate when the
+            // request body's identifier carries `match_key`. The
+            // plugin reads from canonicalized identifier params at
+            // runtime, not from topic routing.
+            let cfg = good_ecpds_config();
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss")
+                && let Some(topic) = event.topic.as_mut()
+            {
+                topic.key_order = vec!["unrelated_field".to_string()];
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(cfg);
+            validate_ecpds_settings(&settings).expect(
+                "match_key absent from topic.key_order must NOT block startup; \
+                 the plugin reads it from the request body, not the topic",
+            );
+        }
+
+        #[test]
+        fn accepts_match_key_when_schema_has_no_topic_block() {
+            let cfg = good_ecpds_config();
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss") {
+                event.topic = None;
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(cfg);
+            validate_ecpds_settings(&settings).expect(
+                "schemas with no topic block must still pass when match_key \
+                 is in identifier and required",
             );
         }
 
