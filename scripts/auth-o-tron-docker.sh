@@ -13,7 +13,7 @@ set -euo pipefail
 #
 # Environment variables:
 #   AUTH_O_TRON_IMAGE_REPOSITORY=eccr.ecmwf.int/auth-o-tron/auth-o-tron
-#   AUTH_O_TRON_IMAGE_TAG=0.2.12
+#   AUTH_O_TRON_IMAGE_TAG=0.3.3
 #   AUTH_O_TRON_IMAGE=<repository:tag> (overrides repository/tag split)
 #   AUTH_O_TRON_PORT=8080
 #   AUTH_O_TRON_CONTAINER_NAME=auth-o-tron-local
