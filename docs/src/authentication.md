@@ -203,8 +203,8 @@ notification_schema:
       key_order: ["destination", "target", "class", "expver", "domain", "date", "time", "stream", "step"]
     identifier:
       destination:
-        - type: StringHandler
-          required: true              # MUST be required
+        type: StringHandler
+        required: true                # MUST be required
       # ... other fields ...
     auth:
       required: true                  # MUST be true

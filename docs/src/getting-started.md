@@ -254,8 +254,8 @@ If your build has `--features ecpds` enabled and your config has a working `ecpd
         key_order: ["destination"]
       identifier:
         destination:
-          - type: StringHandler
-            required: true
+          type: StringHandler
+          required: true
       auth:
         required: true
         plugins: ["ecpds"]
