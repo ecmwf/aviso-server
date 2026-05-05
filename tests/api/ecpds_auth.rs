@@ -392,11 +392,11 @@ async fn notify_on_ecpds_protected_stream_does_not_invoke_ecpds_for_non_admin_wr
 /// Asserts at the HTTP boundary that:
 ///
 /// * The watch request succeeds because at least one server responded.
-/// * The route layer queried BOTH configured servers (per-mock counters
-///   each incremented for the user). Without this, an accidental
-///   regression to single-server behaviour (or to any other `servers`
-///   subset) would still leave the success path green for users known
-///   to the first server.
+/// * The checker fan-out is exercised through the HTTP layer: per-mock
+///   counters on both configured servers each incremented for the user.
+///   Without this, an accidental regression to single-server behaviour
+///   (or to any other `servers` subset) would still leave the success
+///   path green for users known to the first server.
 ///
 /// Outcome-label propagation through `aviso_ecpds_fetch_total` is
 /// verified separately at the subcrate level
@@ -442,8 +442,8 @@ async fn watch_ecpds_any_success_partial_outage_succeeds_and_queries_both_server
         down.count_for(username) - down_before,
         1,
         "always-down server must also have received exactly one upstream call for \
-         {username}; if zero, the route is not actually fanning out across the \
-         configured `servers` and the partial-outage path is untested at the HTTP \
-         layer"
+         {username}; if zero, the checker fan-out is not being exercised through \
+         the HTTP layer (config drift on `servers` or wiring regression) and the \
+         partial-outage path is untested"
     );
 }

@@ -218,8 +218,9 @@ struct EcpdsResponse {
 /// Stateless aside from the prebuilt `reqwest::Client` and the parsed
 /// server URLs. Cloning the underlying `reqwest::Client` is cheap (it
 /// shares the connection pool internally), but this struct itself is
-/// not cloned in practice — one global instance lives behind the
-/// `OnceLock` in `aviso-server`'s configuration module.
+/// not cloned in practice. `aviso-server` builds one `EcpdsChecker`
+/// (which owns one `EcpdsClient`) per running process and shares it
+/// across request handlers via actix `app_data`.
 #[derive(Debug)]
 pub struct EcpdsClient {
     http: reqwest::Client,

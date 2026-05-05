@@ -45,8 +45,6 @@ pub struct Application {
     metrics_server: Option<Server>,
     shutdown: CancellationToken,
     backend: Arc<dyn NotificationBackend>, // backend reference for shutdown
-    #[cfg(feature = "ecpds")]
-    ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>>,
 }
 
 impl Application {
@@ -191,7 +189,7 @@ impl Application {
             Arc::new(configuration.auth.clone()),
             app_metrics,
             #[cfg(feature = "ecpds")]
-            ecpds_checker.clone(),
+            ecpds_checker,
         )?;
 
         // stop Actix when the cancellation token is triggered
@@ -249,8 +247,6 @@ impl Application {
             metrics_server,
             shutdown,
             backend: notification_backend,
-            #[cfg(feature = "ecpds")]
-            ecpds_checker,
         })
     }
 
