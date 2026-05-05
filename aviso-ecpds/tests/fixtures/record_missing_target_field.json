@@ -9,7 +9,8 @@
       "active": true
     },
     {
-      "name": "FOO"
+      "name": "FOO",
+      "active": true
     }
   ],
   "success": "yes"

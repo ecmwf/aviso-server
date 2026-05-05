@@ -46,7 +46,22 @@ async fn populated_user_response_yields_known_destinations() {
             .check_access("alice", &make_identifier("CIP"))
             .await
             .is_ok(),
-        "CIP must be allowed in populated_user fixture"
+        "active CIP must be allowed in populated_user fixture"
+    );
+    assert!(
+        checker
+            .check_access("alice", &make_identifier("FOO"))
+            .await
+            .is_ok(),
+        "active FOO must be allowed in populated_user fixture"
+    );
+    assert!(
+        matches!(
+            checker.check_access("alice", &make_identifier("BAR")).await,
+            Err(EcpdsError::AccessDenied { .. })
+        ),
+        "BAR is in the destinationList but with active=false; the contract \
+         requires inactive destinations to deny access"
     );
     assert!(
         matches!(
@@ -55,7 +70,7 @@ async fn populated_user_response_yields_known_destinations() {
                 .await,
             Err(EcpdsError::AccessDenied { .. })
         ),
-        "UNKNOWN must be denied"
+        "UNKNOWN must be denied (not present in any record)"
     );
 }
 

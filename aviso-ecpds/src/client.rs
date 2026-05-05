@@ -465,26 +465,46 @@ impl EcpdsClient {
                 })?;
 
         let total = ecpds_resp.destination_list.len();
+        let mut skipped_inactive = 0usize;
+        let mut skipped_missing_field = 0usize;
         let destinations: Vec<String> = ecpds_resp
             .destination_list
             .into_iter()
             .filter_map(|record| {
-                record
+                if record.get("active").and_then(|v| v.as_bool()) != Some(true) {
+                    skipped_inactive += 1;
+                    return None;
+                }
+                let extracted = record
                     .get(&self.target_field)
                     .and_then(|v| v.as_str())
-                    .map(String::from)
+                    .map(String::from);
+                if extracted.is_none() {
+                    skipped_missing_field += 1;
+                }
+                extracted
             })
             .collect();
 
-        let skipped = total - destinations.len();
-        if skipped > 0 {
+        if skipped_inactive > 0 {
+            info!(
+                event_name = "auth.ecpds.fetch.skipped_inactive",
+                server_index,
+                server = %server,
+                username,
+                skipped = skipped_inactive,
+                total,
+                "ECPDS records with active!=true were skipped"
+            );
+        }
+        if skipped_missing_field > 0 {
             info!(
                 event_name = "auth.ecpds.fetch.skipped_record",
                 server_index,
                 server = %server,
                 username,
                 target_field = %self.target_field,
-                skipped,
+                skipped = skipped_missing_field,
                 total,
                 "ECPDS records missing target_field were skipped"
             );
@@ -546,7 +566,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"CIP"},{"name":"FOO"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"CIP","active":true},{"name":"FOO","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -555,7 +575,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"FOO"},{"name":"BAR"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"FOO","active":true},{"name":"BAR","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -585,7 +605,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"CIP"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"CIP","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -610,7 +630,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"CIP"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"CIP","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -657,7 +677,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"CIP"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"CIP","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
         server_b
@@ -665,7 +685,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"BAR"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"BAR","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -686,7 +706,7 @@ mod tests {
                 .match_query(mockito::Matcher::Any)
                 .with_status(200)
                 .with_header("content-type", "application/json")
-                .with_body(r#"{"destinationList":[{"name":"CIP"},{"name":"FOO"}],"success":"yes"}"#)
+                .with_body(r#"{"destinationList":[{"name":"CIP","active":true},{"name":"FOO","active":true}],"success":"yes"}"#)
                 .create_async()
                 .await;
         }
@@ -818,6 +838,37 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn parsing_skips_inactive_records_so_inactive_destinations_deny_access() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(200)
+            .with_header("content-type", "application/json")
+            .with_body(
+                r#"{"destinationList":[{"name":"CIP","active":true},{"name":"INACTIVE","active":false},{"name":"NO_FIELD"}],"success":"yes"}"#,
+            )
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let (result, _outcome) = client.fetch_user_destinations("testuser").await.unwrap();
+        assert!(
+            result.contains(&"CIP".to_string()),
+            "active CIP must be in the allow-list"
+        );
+        assert!(
+            !result.contains(&"INACTIVE".to_string()),
+            "active=false must be filtered out (real-ECPDS contract)"
+        );
+        assert!(
+            !result.contains(&"NO_FIELD".to_string()),
+            "missing active field is treated as inactive (safe default)"
+        );
+    }
+
+    #[tokio::test]
     async fn parsing_tolerates_records_missing_target_field() {
         let mut server = mockito::Server::new_async().await;
         server
@@ -826,7 +877,7 @@ mod tests {
             .with_status(200)
             .with_header("content-type", "application/json")
             .with_body(
-                r#"{"destinationList":[{"name":"CIP"},{"id":"no-name"},{"name":"FOO"}],"success":"yes"}"#,
+                r#"{"destinationList":[{"name":"CIP","active":true},{"id":"no-name","active":true},{"name":"FOO","active":true}],"success":"yes"}"#,
             )
             .create_async()
             .await;
@@ -846,7 +897,7 @@ mod tests {
             .match_query(mockito::Matcher::Any)
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"id":"DEST1","name":"CIP"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"id":"DEST1","name":"CIP","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -913,7 +964,7 @@ mod tests {
             ))
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"OK"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"OK","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 
@@ -936,7 +987,7 @@ mod tests {
             .match_query(mockito::Matcher::UrlEncoded("id".into(), "alice".into()))
             .with_status(200)
             .with_header("content-type", "application/json")
-            .with_body(r#"{"destinationList":[{"name":"OK"}],"success":"yes"}"#)
+            .with_body(r#"{"destinationList":[{"name":"OK","active":true}],"success":"yes"}"#)
             .create_async()
             .await;
 

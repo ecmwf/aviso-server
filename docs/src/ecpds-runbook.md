@@ -86,7 +86,8 @@ Every event uses the codebase's standard structured shape (`service_name`, `serv
 | `auth.ecpds.cache.miss` | debug | The destination list was not in cache; a fetch was triggered. |
 | `auth.ecpds.fetch.succeeded` | debug | A fetch to one ECPDS server succeeded. |
 | `auth.ecpds.fetch.failed` | warn | A fetch to one ECPDS server failed. See `error` field. |
-| `auth.ecpds.fetch.skipped_record` | info | One or more ECPDS records returned by a single server were missing the configured `target_field` and got dropped. Carries `server_index`, `server`, `username`, `target_field`, `skipped`, `total` so on-call can pinpoint which ECPDS server is producing the malformed records. |
+| `auth.ecpds.fetch.skipped_inactive` | info | One or more ECPDS records returned by a single server had `active != true` (false, missing, or not a boolean) and got dropped from the user's allow-list. Carries `server_index`, `server`, `username`, `skipped`, `total`. |
+| `auth.ecpds.fetch.skipped_record` | info | One or more ECPDS records returned by a single server were active but missing the configured `target_field` and got dropped. Carries `server_index`, `server`, `username`, `target_field`, `skipped`, `total` so on-call can pinpoint which ECPDS server is producing the malformed records. |
 
 ### Common fields
 

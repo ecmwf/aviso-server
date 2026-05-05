@@ -30,9 +30,9 @@ ECPDS has no public REST API documentation as of this writing. The contract this
 
 - `GET <server>/ecpds/v1/destination/list?id=<username>` with HTTP Basic Auth (service account credentials).
 - 200 response body parsed as `{"destinationList": [<record>, ...], "success": "<string>"}`.
-- Each record is treated as a JSON object; the configured `target_field` (default `"name"`) is extracted as a UTF-8 string. Records that lack the field are silently skipped.
+- Each record is treated as a JSON object. Records with `"active": true` AND a string-valued `target_field` (default `"name"`) contribute their `target_field` value to the user's allow-list. Records where `active` is `false`, missing, or not a boolean are silently skipped (safe default: deny). Records that lack the configured `target_field` are silently skipped. Both skip cases are logged at info as `auth.ecpds.fetch.skipped_inactive` / `auth.ecpds.fetch.skipped_record`.
 - The `success` field is currently ignored. Only `destinationList` content is consulted. (See `tests/contract.rs::success_no_fixture_currently_treated_as_empty_list` for the explicit semantics.)
-- 4xx/5xx responses are surfaced as `EcpdsError::Http { status, .. }`; the merge layer maps them to `FetchOutcome::Unauthorized`/`Forbidden`/`ServerError` so SREs can distinguish "creds wrong" from "ECPDS down".
+- 4xx/5xx responses are surfaced as `EcpdsError::Http { status, .. }`; the merge layer maps them to `FetchOutcome::Unauthorized`/`Forbidden`/`ClientError`/`ServerError` so SREs can distinguish "creds wrong" from "ECPDS down".
 
 These assumptions are pinned by the captured-fixture tests under [`tests/fixtures/`](tests/fixtures/) plus the integration tests in [`tests/contract.rs`](tests/contract.rs). **If a real ECPDS environment ever produces a response shape that breaks those tests, the contract has changed and this crate needs an update.** That is the single failing test to look for.
 
