@@ -149,7 +149,7 @@ impl AppMetrics {
                 fetch_total: register_int_counter_vec_with_registry!(
                     opts!(
                         "aviso_ecpds_fetch_total",
-                        "ECPDS upstream fetch outcomes (recorded once per access check that touched the upstream)"
+                        "ECPDS upstream fetch outcomes; incremented exactly once per upstream call (the request whose check actually ran the fetch). Coalesced waiters that joined an in-flight fetch are NOT counted, so this counter measures actual upstream call volume rather than per-request fetch attempts."
                     ),
                     &["outcome"],
                     registry
