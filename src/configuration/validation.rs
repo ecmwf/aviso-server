@@ -2141,5 +2141,58 @@ mod tests {
                 "got: {err}"
             );
         }
+
+        #[test]
+        fn build_ecpds_checker_returns_none_when_no_stream_opts_in() {
+            let cfg = good_ecpds_config();
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss")
+                && let Some(auth) = event.auth.as_mut()
+            {
+                auth.plugins = None;
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(cfg);
+            let result = settings
+                .build_ecpds_checker()
+                .expect("must succeed when no stream opts in");
+            assert!(
+                result.is_none(),
+                "an ecpds: block referenced by no stream must not produce a \
+                 checker; otherwise a stale block with a malformed server URL \
+                 would break startup for a deployment that doesn't actually \
+                 authorise anything through ECPDS"
+            );
+        }
+
+        #[test]
+        fn build_ecpds_checker_returns_some_when_stream_opts_in() {
+            let cfg = good_ecpds_config();
+            let settings = settings_with_ecpds(cfg, "destination", true);
+            let result = settings
+                .build_ecpds_checker()
+                .expect("must succeed for a well-formed config");
+            assert!(result.is_some(), "configured + opted-in must build checker");
+        }
+
+        #[test]
+        fn build_ecpds_checker_swallows_invalid_server_url_when_unused() {
+            let mut bad = good_ecpds_config();
+            bad.servers = vec!["this is not a url".to_string()];
+            let mut schema = ecpds_protected_schema("destination", true);
+            if let Some(event) = schema.get_mut("diss")
+                && let Some(auth) = event.auth.as_mut()
+            {
+                auth.plugins = None;
+            }
+            let mut settings = basic_settings_with_schema(schema);
+            settings.ecpds = Some(bad);
+            let result = settings.build_ecpds_checker();
+            assert!(
+                matches!(result, Ok(None)),
+                "with an unused ecpds: block, build_ecpds_checker must not \
+                 call EcpdsChecker::new and must not surface InvalidServerUrl"
+            );
+        }
     }
 }
