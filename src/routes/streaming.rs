@@ -188,7 +188,7 @@ pub async fn enforce_ecpds_auth(
     };
 
     if user.is_admin(&auth_settings.admin_roles) {
-        tracing::debug!(
+        tracing::info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_name = "auth.ecpds.admin.bypass",

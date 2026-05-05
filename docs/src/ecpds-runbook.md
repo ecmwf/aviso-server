@@ -80,7 +80,7 @@ Every event uses the codebase's standard structured shape (`service_name`, `serv
 | `auth.ecpds.check.denied` | warn | The plugin denied the request. See `reason` field. |
 | `auth.ecpds.check.unavailable` | warn | The plugin failed to reach a verdict. See `fetch_outcome` field. |
 | `auth.ecpds.check.error` | error | An unexpected error in the plugin. See `error_kind` or `error` field. |
-| `auth.ecpds.admin.bypass` | debug | An admin user skipped the ECPDS check. |
+| `auth.ecpds.admin.bypass` | info | An admin user skipped the ECPDS check. |
 | `auth.ecpds.cache.hit` | debug | The destination list came from cache. |
 | `auth.ecpds.cache.miss` | debug | The destination list was not in cache; a fetch was triggered. |
 | `auth.ecpds.fetch.succeeded` | debug | A fetch to one ECPDS server succeeded. |
