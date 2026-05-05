@@ -1014,12 +1014,27 @@ def test_ecpds_denied_destination_returns_403(config: Config) -> None:
 
 
 def test_ecpds_notify_unaffected(config: Config) -> None:
-    """NOTIFY on an ECPDS-protected stream must succeed (200) for the
-    admin user. The plugin is read-only, so it must not gate writes.
-    A 503 here would mean it incorrectly tried to consult ECPDS on a
-    write. A 403/401 would mean admin auth is broken (a config issue
-    with AUTH_ADMIN_USER/AUTH_ADMIN_PASS, not the plugin). Either
-    way, anything other than 2xx is a failure."""
+    """NOTIFY on an ECPDS-protected stream as an admin must succeed (2xx).
+
+    Limitation: this case uses admin credentials, and admins explicitly
+    bypass the ECPDS check, so a hypothetical regression that wired the
+    plugin into the notify path would still leave this case green
+    (the admin bypass would short-circuit before any ECPDS call). It
+    therefore confirms that admin auth is wired up and that the notify
+    handler does not unconditionally 503, but it does NOT prove non-admin
+    writes are ungated.
+
+    The non-admin proof lives in the integration test
+    `notify_on_ecpds_protected_stream_does_not_invoke_ecpds_for_non_admin_writer`,
+    which can configure a producer-role writer against a writable
+    ECPDS-protected stream. That setup is hard to reproduce in a smoke
+    test against an unknown auth-o-tron user database, so we keep this
+    case scoped to the admin path and rely on the integration test for
+    the non-admin guarantee.
+
+    A 503 here would mean the plugin incorrectly ran on a write. A
+    401/403 would mean AUTH_ADMIN_USER/AUTH_ADMIN_PASS need to match
+    your auth-o-tron config. Anything other than 2xx is a failure."""
     skip = _ecpds_skip_reason(config)
     if skip:
         print(f"[INFO] skipping ECPDS smoke test ({skip})")
