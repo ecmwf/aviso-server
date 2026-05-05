@@ -73,6 +73,7 @@ fn default_partial_outage_policy() -> PartialOutagePolicy {
 /// - `partial_outage_policy = Strict`: see [`PartialOutagePolicy`]
 ///   for the failure-tolerance trade-off between Strict and AnySuccess.
 #[derive(Deserialize, Serialize, Clone)]
+#[serde(deny_unknown_fields)]
 pub struct EcpdsConfig {
     /// Service-account username for HTTP Basic Auth to ECPDS.
     pub username: String,
@@ -196,5 +197,24 @@ mod tests {
         assert_eq!(config.servers.len(), 2);
         assert_eq!(config.servers[0], "http://server1.example.com");
         assert_eq!(config.servers[1], "http://server2.example.com");
+    }
+
+    #[test]
+    fn unknown_fields_are_rejected() {
+        let json = r#"{
+            "username": "testuser",
+            "password": "testpass",
+            "match_key": "destination",
+            "servers": ["http://server1.example.com"],
+            "cache_ttl_secondz": 600
+        }"#;
+
+        let err = serde_json::from_str::<EcpdsConfig>(json)
+            .expect_err("a typoed field name must fail to deserialize");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("cache_ttl_secondz") || msg.contains("unknown field"),
+            "error must point at the offending field name; got: {msg}"
+        );
     }
 }
