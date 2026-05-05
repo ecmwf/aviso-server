@@ -447,11 +447,20 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
     if ecpds_config.username.trim().is_empty() {
         bail!("ecpds.username must not be empty or whitespace");
     }
+    if ecpds_config.username != ecpds_config.username.trim() {
+        bail!("ecpds.username must not have leading or trailing whitespace");
+    }
     if ecpds_config.password.trim().is_empty() {
         bail!("ecpds.password must not be empty or whitespace");
     }
+    if ecpds_config.password != ecpds_config.password.trim() {
+        bail!("ecpds.password must not have leading or trailing whitespace");
+    }
     if ecpds_config.target_field.trim().is_empty() {
         bail!("ecpds.target_field must not be empty or whitespace");
+    }
+    if ecpds_config.target_field != ecpds_config.target_field.trim() {
+        bail!("ecpds.target_field must not have leading or trailing whitespace");
     }
     if ecpds_config.match_key.trim().is_empty() {
         bail!("ecpds.match_key must not be empty or whitespace");
@@ -2055,6 +2064,45 @@ mod tests {
             assert!(
                 err.to_string()
                     .contains("ecpds.match_key must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_padded_username() {
+            let mut cfg = good_ecpds_config();
+            cfg.username = "  user  ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.username must not have leading or trailing whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_padded_password() {
+            let mut cfg = good_ecpds_config();
+            cfg.password = "pw\n".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.password must not have leading or trailing whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_padded_target_field() {
+            let mut cfg = good_ecpds_config();
+            cfg.target_field = " name ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.target_field must not have leading or trailing whitespace"),
                 "got: {err}"
             );
         }
