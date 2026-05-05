@@ -86,8 +86,12 @@ pub struct EcpdsConfig {
     #[serde(default = "default_target_field")]
     pub target_field: String,
     /// Identifier field whose value is treated as the destination to
-    /// authorise. Must appear in the schema's `topic.key_order` and
-    /// be marked `required: true` in the schema's `identifier`.
+    /// authorise. Must be present in the schema's `identifier` and
+    /// marked `required: true` there so the value is guaranteed before
+    /// the plugin runs. The plugin reads it from the request's
+    /// canonicalized identifier params at runtime, not from topic
+    /// routing, so the field does NOT need to appear in
+    /// `topic.key_order`.
     pub match_key: String,
     /// How long to cache a user's destination list before re-fetching
     /// (seconds). Default 300.

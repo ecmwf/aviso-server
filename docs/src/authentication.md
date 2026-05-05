@@ -215,8 +215,7 @@ notification_schema:
 
 The plugin requires (and startup validation enforces):
 
-- `match_key` (default `"destination"`) is present in the schema's `topic.key_order`.
-- The same field is marked `required: true` in the schema's `identifier`. Without this, an operator could deploy a schema where the destination value is optional and a client could bypass the check by simply omitting the field.
+- `match_key` (default `"destination"`) is present in the schema's `identifier` and marked `required: true` there. Without this, an operator could deploy a schema where the destination value is optional and a client could bypass the check by simply omitting the field. The plugin reads `match_key` from the request's canonicalized identifier params at runtime, so the field does NOT have to appear in `topic.key_order`.
 - `auth.required` is `true`. The plugin runs after standard stream auth, so plugins on a stream where `auth.required` is `false` would never execute.
 
 ### How it works at runtime
@@ -240,8 +239,9 @@ When more than one ECPDS server is configured, the user's effective destination 
 
 | Code | HTTP Status | When |
 |------|-------------|------|
-| `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. |
-| `SERVICE_UNAVAILABLE` | `503` | The lookup failed under the active `partial_outage_policy`. The cause is in the structured tracing event `auth.ecpds.check.unavailable` and on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_4xx`, `http_5xx`, `invalid_response`). |
+| `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. Tracing event: `auth.ecpds.check.denied` (with `reason` ∈ {`DestinationNotInList`, `MatchKeyMissing`}). |
+| `SERVICE_UNAVAILABLE` | `503` | Upstream / network problem: the lookup failed under the active `partial_outage_policy`. Tracing event: `auth.ecpds.check.unavailable`. The cause is on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_4xx`, `http_5xx`, `invalid_response`). Investigate ECPDS, the network, and the service-account credentials. |
+| `INTERNAL_ERROR` | `500` | Aviso-side server error: missing `AuthSettings` in `app_data`, no checker registered, or an unexpected plugin error. Tracing event: `auth.ecpds.check.error` (with `error_kind` for the misconfiguration cases). Investigate Aviso, not ECPDS. |
 
 ### Caching
 

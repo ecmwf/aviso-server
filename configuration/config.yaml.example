@@ -91,8 +91,11 @@ auth:
 #     - "https://ecpds-primary.example.int"
 #     - "https://ecpds-secondary.example.int"
 #   # Identifier field whose value is treated as the destination to
-#   # authorise. Must appear in the schema's `topic.key_order` AND be
-#   # marked `required: true` in the schema's `identifier`.
+#   # authorise. Must be present in the schema's `identifier` with
+#   # `required: true` so the value is guaranteed before the plugin
+#   # runs. The plugin reads it from the request's canonicalized
+#   # identifier params, NOT from topic routing, so the field does
+#   # NOT need to appear in `topic.key_order`.
 #   match_key: "destination"
 #   # JSON field of each ECPDS destination record matched against the
 #   # request's match_key value. Default: "name".
