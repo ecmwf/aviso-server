@@ -86,11 +86,11 @@ Every event uses the codebase's standard structured shape (`service_name`, `serv
 | `auth.ecpds.cache.miss` | debug | The destination list was not in cache; a fetch was triggered. |
 | `auth.ecpds.fetch.succeeded` | debug | A fetch to one ECPDS server succeeded. |
 | `auth.ecpds.fetch.failed` | warn | A fetch to one ECPDS server failed. See `error` field. |
-| `auth.ecpds.fetch.skipped_record` | info | One or more ECPDS records were missing the configured `target_field` and got dropped. |
+| `auth.ecpds.fetch.skipped_record` | info | One or more ECPDS records returned by a single server were missing the configured `target_field` and got dropped. Carries `server_index`, `server`, `username`, `target_field`, `skipped`, `total` so on-call can pinpoint which ECPDS server is producing the malformed records. |
 
 ### Common fields
 
-Most events carry `event_type` (the schema name) and `username` (the JWT subject). Per-server events also carry `server_index` (zero-based) and `server` (the parsed URL).
+Most events carry `event_type` (the schema name) and `username` (the JWT subject). Per-server events (`auth.ecpds.fetch.succeeded`, `.failed`, and `.skipped_record`) also carry `server_index` (zero-based) and `server` (the parsed URL).
 
 ### Field value reference
 
@@ -112,7 +112,7 @@ Some events carry a typed enum field. The values you will see in logs are listed
 
 ## How to confirm "config error vs. upstream outage"
 
-1. **Is the ECPDS plugin even running?** Check `/metrics` for `aviso_ecpds_*` series. If they are absent, the binary is not built with `--features ecpds`, or the `ecpds` config block is missing.
+1. **Is the ECPDS plugin even compiled in?** Check `/metrics` for `aviso_ecpds_*` series. The unlabelled counters and gauge plus the pre-initialised label values on `aviso_ecpds_access_decisions_total` and `aviso_ecpds_fetch_total` register at process startup whenever the binary is built with `--features ecpds`, regardless of whether an `ecpds:` config block exists. If the series are absent, the binary does not have the feature, OR the metrics endpoint itself is disabled (`metrics.enabled: false` in your config). If the series exist but `aviso_ecpds_access_decisions_total{outcome="allow"}` plus `outcome="deny_*"` are all flat at zero under load, the plugin is compiled in but no stream actually opts in via `plugins: ["ecpds"]`.
 2. **Are the configured server URLs reachable from this Aviso host?** Run this from the same host as Aviso:
    ```bash
    curl -i -u "<service-username>:<service-password>" \

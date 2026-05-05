@@ -350,10 +350,13 @@ pub struct Settings {
     pub auth: AuthSettings,
     #[serde(default)]
     pub metrics: MetricsSettings,
-    // When ecmwf feature is enabled, deserialize EcpdsConfig
+    // When the `ecpds` feature is enabled, deserialize the typed EcpdsConfig.
     #[cfg(feature = "ecpds")]
     pub ecpds: Option<aviso_ecpds::config::EcpdsConfig>,
-    // When disabled, silently absorb any 'ecpds' YAML key as raw JSON (no error)
+    // When the `ecpds` feature is disabled, silently absorb any `ecpds` YAML
+    // key as raw JSON so loading a shared config file does not fail on a
+    // build that lacks the plugin. Plugin gating elsewhere ensures a stream
+    // referencing the plugin still fails closed at startup.
     #[cfg(not(feature = "ecpds"))]
     #[serde(default, rename = "ecpds")]
     pub ecpds: Option<serde_json::Value>,

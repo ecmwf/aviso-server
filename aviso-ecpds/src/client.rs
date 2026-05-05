@@ -480,6 +480,9 @@ impl EcpdsClient {
         if skipped > 0 {
             info!(
                 event_name = "auth.ecpds.fetch.skipped_record",
+                server_index,
+                server = %server,
+                username,
                 target_field = %self.target_field,
                 skipped,
                 total,
