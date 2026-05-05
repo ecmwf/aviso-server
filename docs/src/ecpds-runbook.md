@@ -12,16 +12,21 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 ## Symptom and first checks
 
-> **What "a storm of X" means here.** Throughout this section, "503 storm" or "403 storm" means: the **rate** of that response is far above the normal baseline, and **multiple users are affected** (not one bad request from one user). A single 503 is normally an isolated bug worth a ticket. A 503 storm is an active incident that needs triage right now. The rule of thumb is: if your dashboard shows the rate climbing fast or staying high for more than a minute or two, treat it as a storm. The first metric and first log lines below are how you confirm it.
+> **What "a storm of X" means here.** Throughout this section, "503 storm" or "403 storm" means: the **rate** of that response is far above the normal baseline. The rule of thumb is, if your dashboard shows the rate climbing fast or staying high for more than a minute or two, treat it as a storm. The first metric and first log lines below are how you confirm it.
+>
+> **Metrics count requests, not users.** Every counter in this section increments per request. A single client retrying in a tight loop can inflate any of them, so the metric alone cannot tell you whether you are looking at one bad client or hundreds of unhappy users. To answer that, grep the relevant warn or error event in your logs and count distinct values of the `username` field. Every `auth.ecpds.check.*` and `auth.ecpds.fetch.*` warn/error event carries `username` as a structured field for exactly this purpose.
+>
+> **One useful tell.** Successful and `deny_destination` results are cached for the user; errors are not. So for `deny_destination`, retries by the same user keep adding to `aviso_ecpds_access_decisions_total{outcome="deny_destination"}` but stop adding to `aviso_ecpds_fetch_total` until the TTL expires. If `access_decisions_total` is climbing fast and `fetch_total` is flat, you are almost certainly seeing one or a few users retrying against a cached deny rather than a real population spike. For `unavailable` (503), errors are not cached, so retries do reach ECPDS and both counters move together.
 >
 > **Field-name reading guide.** When this section says `reason=DestinationNotInList`, the actual log line will look like `... reason=DestinationNotInList "ECPDS access denied"`. Use the exact strings shown when grepping. Metric `outcome=...` labels use snake_case (`deny_destination`, `http_401`, etc.).
 
 ### 503 storm on watch/replay
 
-- **What you see:** sustained HTTP 503 responses on `/api/v1/watch` and `/api/v1/replay`, hitting many users at once. From a user's perspective: "I cannot start a watch; Aviso says ECPDS is unaccessible."
+- **What you see:** sustained HTTP 503 responses on `/api/v1/watch` and `/api/v1/replay`. From a user's perspective: "I cannot start a watch; Aviso says ECPDS is unaccessible."
 - **Why it happens:** the ECPDS plugin tried to fetch destination lists from your ECPDS servers and could not reach a verdict, so it failed safely with 503 rather than guess.
 - **First metric:** `aviso_ecpds_fetch_total` rate, broken down by `outcome`.
 - **First log:** `event_name=auth.ecpds.fetch.failed` and `event_name=auth.ecpds.check.unavailable`.
+- **Confirm scope:** count distinct `username` values in `event_name=auth.ecpds.check.unavailable` log lines. Many distinct usernames means an ECPDS-side or network problem. One or two usernames means a single misbehaving client is moving the metric.
 - **Likely causes** (read off the dominant `outcome` label):
   - `unreachable`: ECPDS server down, network partition, DNS, or wrong `servers` URLs in config.
   - `http_401` or `http_403`: service-account credentials wrong or revoked.
@@ -31,11 +36,11 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 ### 403 storm on watch/replay
 
-- **What you see:** sustained HTTP 403 responses on `/api/v1/watch` and `/api/v1/replay` from many distinct users at once. From a user's perspective: "I used to be able to read this destination, now Aviso says I'm not allowed."
-- **Why it happens:** authentication is fine (otherwise it would be a 401), and Aviso did reach ECPDS (otherwise it would be a 503), but ECPDS replied that the user does not have the requested destination on their list. If many users are seeing this at once, the cause is upstream of Aviso, not in Aviso.
+- **What you see:** sustained HTTP 403 responses on `/api/v1/watch` and `/api/v1/replay`. From a user's perspective: "I used to be able to read this destination, now Aviso says I'm not allowed."
+- **Why it happens:** authentication is fine (otherwise it would be a 401), and Aviso did reach ECPDS (otherwise it would be a 503), but ECPDS replied that the user does not have the requested destination on their list.
 - **First metric:** `aviso_ecpds_access_decisions_total{outcome="deny_destination"}` rate.
 - **First log:** `event_name=auth.ecpds.check.denied` with `reason=DestinationNotInList`.
-- **Likely cause:** ECPDS revoked destinations for one or more users. Or a client suddenly started passing the wrong `destination`. Cross-check by hitting the ECPDS web UI directly with the same user.
+- **Confirm scope:** count distinct `username` values in those log lines. If you see many distinct users, the cause is upstream of Aviso (ECPDS revoked destinations for several users, or a client batch suddenly started passing the wrong `destination`). If you see one or two, focus on those clients. Cross-check by hitting the ECPDS web UI directly with the same user.
 
 ### 403 with `reason=MatchKeyMissing`
 
