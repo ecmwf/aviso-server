@@ -35,9 +35,9 @@ use tracing_actix_web::RequestId;
         (status = 200, description = "Historical replay stream established successfully", content_type = "text/event-stream"),
         (status = 400, description = "Invalid request parameters or missing from_id/from_date"),
         (status = 401, description = "Missing or invalid credentials (when stream requires auth)"),
-        (status = 403, description = "Valid credentials but insufficient roles for this stream"),
+        (status = 403, description = "Valid credentials but the user lacks role-based access for this stream, or, when the stream enables the ECPDS plugin, the requested destination is not in the user's ECPDS allow-list"),
         (status = 500, description = "Failed to establish replay stream"),
-        (status = 503, description = "Authentication service unavailable (direct mode)")
+        (status = 503, description = "Authentication service unavailable (direct mode), or, when the stream enables the ECPDS plugin, ECPDS could not be reached under the active partial_outage_policy")
     ),
     security(
         (),
