@@ -1,4 +1,7 @@
-use crate::helpers::{mock_ecpds, spawn_streaming_test_app_with_auth, test_jwt};
+use crate::helpers::{
+    mock_ecpds, mock_ecpds_always_down, spawn_streaming_test_app_with_auth,
+    spawn_streaming_test_app_with_auth_partial_outage, test_jwt,
+};
 use serde_json::json;
 
 fn ecpds_token(username: &str, roles: &[&str]) -> String {
@@ -379,5 +382,68 @@ async fn notify_on_ecpds_protected_stream_does_not_invoke_ecpds_for_non_admin_wr
     assert_eq!(
         after, before,
         "notify must NOT invoke the ECPDS plugin even for a non-admin writer"
+    );
+}
+
+/// Federated ECPDS deployment under `partial_outage_policy: any_success`:
+/// one healthy server (`MOCK_ECPDS`) returns the user's destinations,
+/// one consistently failing server (`MOCK_ECPDS_ALWAYS_DOWN`) returns 500.
+///
+/// Asserts at the HTTP boundary that:
+///
+/// * The watch request succeeds because at least one server responded.
+/// * The route layer queried BOTH configured servers (per-mock counters
+///   each incremented for the user). Without this, an accidental
+///   regression to single-server behaviour (or to any other `servers`
+///   subset) would still leave the success path green for users known
+///   to the first server.
+///
+/// Outcome-label propagation through `aviso_ecpds_fetch_total` is
+/// verified separately at the subcrate level
+/// (`any_success_policy_succeeds_when_one_server_is_down` asserts the
+/// merged `FetchOutcome` is the worst per-server failure, not synthetic
+/// `Success`); the HTTP layer reads that outcome out of
+/// `CacheOutcome::MissFetched { fetch_outcome }` via a single
+/// `record_fetch(fetch_outcome.label())` call already covered by the
+/// other watch tests.
+#[tokio::test]
+async fn watch_ecpds_any_success_partial_outage_succeeds_and_queries_both_servers() {
+    let app = spawn_streaming_test_app_with_auth_partial_outage().await;
+    let client = reqwest::Client::new();
+    let username = "ecpds-user-partial-outage";
+    let token = ecpds_token(username, &["reader"]);
+    let healthy = mock_ecpds();
+    let down = mock_ecpds_always_down();
+    let healthy_before = healthy.count_for(username);
+    let down_before = down.count_for(username);
+
+    let response = client
+        .post(format!("{}/api/v1/watch", app.address))
+        .header("Content-Type", "application/json")
+        .header("Authorization", format!("Bearer {token}"))
+        .json(&diss_ecpds_watch_body("CIP"))
+        .send()
+        .await
+        .expect("watch request should complete");
+
+    assert!(
+        response.status().is_success(),
+        "any_success policy with one healthy server must allow the request; got {}",
+        response.status()
+    );
+    drop(response);
+
+    assert_eq!(
+        healthy.count_for(username) - healthy_before,
+        1,
+        "healthy server must have received exactly one upstream call for {username}"
+    );
+    assert_eq!(
+        down.count_for(username) - down_before,
+        1,
+        "always-down server must also have received exactly one upstream call for \
+         {username}; if zero, the route is not actually fanning out across the \
+         configured `servers` and the partial-outage path is untested at the HTTP \
+         layer"
     );
 }

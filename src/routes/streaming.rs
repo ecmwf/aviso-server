@@ -200,7 +200,8 @@ pub async fn enforce_ecpds_auth(
         return Ok(());
     }
 
-    let Some(checker) = Settings::get_global_ecpds_checker().as_ref() else {
+    let Some(checker_data) = req.app_data::<web::Data<Arc<aviso_ecpds::checker::EcpdsChecker>>>()
+    else {
         tracing::error!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
@@ -216,6 +217,7 @@ pub async fn enforce_ecpds_auth(
             "message": "Server configuration error"
         })));
     };
+    let checker: &aviso_ecpds::checker::EcpdsChecker = checker_data.as_ref();
 
     tracing::debug!(
         service_name = SERVICE_NAME,

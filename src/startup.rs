@@ -45,6 +45,8 @@ pub struct Application {
     metrics_server: Option<Server>,
     shutdown: CancellationToken,
     backend: Arc<dyn NotificationBackend>, // backend reference for shutdown
+    #[cfg(feature = "ecpds")]
+    ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>>,
 }
 
 impl Application {
@@ -109,7 +111,7 @@ impl Application {
         }
 
         #[cfg(feature = "ecpds")]
-        {
+        let ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>> = {
             if let Err(e) = validate_ecpds_settings(&configuration) {
                 error!(
                     service_name = SERVICE_NAME,
@@ -120,17 +122,20 @@ impl Application {
                 );
                 return Err(std::io::Error::other(e));
             }
-            if let Err(e) = configuration.init_global_ecpds_checker() {
-                error!(
-                    service_name = SERVICE_NAME,
-                    service_version = SERVICE_VERSION,
-                    event_name = "startup.ecpds.checker_init.failed",
-                    error = %e,
-                    "ECPDS checker initialization failed"
-                );
-                return Err(std::io::Error::other(e));
+            match configuration.build_ecpds_checker() {
+                Ok(checker) => checker.map(Arc::new),
+                Err(e) => {
+                    error!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_name = "startup.ecpds.checker_init.failed",
+                        error = %e,
+                        "ECPDS checker initialization failed"
+                    );
+                    return Err(std::io::Error::other(e));
+                }
             }
-        }
+        };
 
         let address = format!(
             "{}:{}",
@@ -185,6 +190,8 @@ impl Application {
             shutdown.clone(),
             Arc::new(configuration.auth.clone()),
             app_metrics,
+            #[cfg(feature = "ecpds")]
+            ecpds_checker.clone(),
         )?;
 
         // stop Actix when the cancellation token is triggered
@@ -242,6 +249,8 @@ impl Application {
             metrics_server,
             shutdown,
             backend: notification_backend,
+            #[cfg(feature = "ecpds")]
+            ecpds_checker,
         })
     }
 
@@ -326,8 +335,11 @@ pub fn run(
     shutdown: CancellationToken,
     auth_settings: Arc<AuthSettings>,
     app_metrics: Option<AppMetrics>,
+    #[cfg(feature = "ecpds")] ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>>,
 ) -> Result<Server, std::io::Error> {
     let metrics_data = app_metrics.map(web::Data::new);
+    #[cfg(feature = "ecpds")]
+    let ecpds_data = ecpds_checker.map(web::Data::new);
     let server = HttpServer::new(move || {
         let mut app = App::new()
             .wrap(TracingLogger::default())
@@ -346,6 +358,11 @@ pub fn run(
 
         if let Some(ref metrics) = metrics_data {
             app = app.app_data(metrics.clone());
+        }
+
+        #[cfg(feature = "ecpds")]
+        if let Some(ref ecpds) = ecpds_data {
+            app = app.app_data(ecpds.clone());
         }
 
         app

@@ -16,9 +16,6 @@ static GLOBAL_LOGGING_SETTINGS: OnceLock<Option<LoggingSettings>> = OnceLock::ne
 static GLOBAL_APPLICATION_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::new();
 static GLOBAL_WATCH_SETTINGS: OnceLock<WatchEndpointSettings> = OnceLock::new();
 
-#[cfg(feature = "ecpds")]
-static GLOBAL_ECPDS_CHECKER: OnceLock<Option<aviso_ecpds::checker::EcpdsChecker>> = OnceLock::new();
-
 impl Settings {
     /// Stores read-mostly config in global immutable slots.
     ///
@@ -41,33 +38,33 @@ impl Settings {
         );
     }
 
-    /// Build and install the global ECPDS checker (if configured).
+    /// Build the per-application ECPDS checker (if configured).
     ///
-    /// Separate from [`Self::init_global_config`] so it can be invoked
-    /// **after** config validation and after metrics/auth are
-    /// constructed during `Application::build`. Idempotent: calling
-    /// twice is a no-op.
+    /// Returned to the caller (typically `Application::build`) so it
+    /// can be flowed into actix `app_data` and read by route handlers.
+    /// One instance per running Aviso process; tests may build their
+    /// own per-app instance to exercise distinct ECPDS configurations
+    /// (e.g. different `partial_outage_policy` or server lists) within
+    /// a single test binary.
     ///
     /// Returns an error if checker construction fails (e.g. invalid
     /// server URL or HTTP client builder error).
     #[cfg(feature = "ecpds")]
-    pub fn init_global_ecpds_checker(&self) -> Result<(), aviso_ecpds::EcpdsError> {
-        if GLOBAL_ECPDS_CHECKER.get().is_some() {
-            return Ok(());
-        }
+    pub fn build_ecpds_checker(
+        &self,
+    ) -> Result<Option<aviso_ecpds::checker::EcpdsChecker>, aviso_ecpds::EcpdsError> {
         let checker = match self.ecpds.as_ref() {
             Some(cfg) => Some(aviso_ecpds::checker::EcpdsChecker::new(cfg)?),
             None => None,
         };
-        let _ = GLOBAL_ECPDS_CHECKER.set(checker);
         tracing::info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_name = "configuration.ecpds.initialized",
             configured = self.ecpds.is_some(),
-            "ECPDS checker global initialized"
+            "ECPDS checker initialized"
         );
-        Ok(())
+        Ok(checker)
     }
 
     pub fn get_global_notification_schema() -> &'static Option<HashMap<String, EventSchema>> {
@@ -102,12 +99,5 @@ impl Settings {
             && GLOBAL_LOGGING_SETTINGS.get().is_some()
             && GLOBAL_APPLICATION_SETTINGS.get().is_some()
             && GLOBAL_WATCH_SETTINGS.get().is_some()
-    }
-
-    #[cfg(feature = "ecpds")]
-    pub fn get_global_ecpds_checker() -> &'static Option<aviso_ecpds::checker::EcpdsChecker> {
-        GLOBAL_ECPDS_CHECKER.get().expect(
-            "Global ECPDS checker not initialized. Call Settings::init_global_config() first.",
-        )
     }
 }

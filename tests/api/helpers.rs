@@ -61,10 +61,20 @@ static DEFAULT_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_AUTH_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static STREAMING_TRUSTED_PROXY_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
+#[cfg(feature = "ecpds")]
+static STREAMING_AUTH_ECPDS_PARTIAL_OUTAGE_SERVER: OnceCell<RunningServer> = OnceCell::const_new();
 static TEST_GLOBAL_CONFIG: OnceLock<()> = OnceLock::new();
 
 #[cfg(feature = "ecpds")]
 static MOCK_ECPDS: LazyLock<MockEcpds> = LazyLock::new(start_sync_mock_ecpds_server);
+
+/// Mock ECPDS server that always returns 500. Used to construct a
+/// federated config with one healthy and one consistently failing
+/// server so the partial-outage path can be exercised at the HTTP
+/// layer end to end.
+#[cfg(feature = "ecpds")]
+static MOCK_ECPDS_ALWAYS_DOWN: LazyLock<MockEcpds> =
+    LazyLock::new(start_sync_mock_ecpds_server_always_down);
 
 #[cfg(feature = "ecpds")]
 pub struct MockEcpds {
@@ -91,6 +101,12 @@ impl MockEcpds {
 pub fn mock_ecpds() -> &'static MockEcpds {
     LazyLock::force(&MOCK_ECPDS);
     &MOCK_ECPDS
+}
+
+#[cfg(feature = "ecpds")]
+pub fn mock_ecpds_always_down() -> &'static MockEcpds {
+    LazyLock::force(&MOCK_ECPDS_ALWAYS_DOWN);
+    &MOCK_ECPDS_ALWAYS_DOWN
 }
 
 /// Build a test JWT for the standard "localrealm" with the given
@@ -723,6 +739,64 @@ fn start_sync_mock_ecpds_server() -> MockEcpds {
 }
 
 #[cfg(feature = "ecpds")]
+fn start_sync_mock_ecpds_server_always_down() -> MockEcpds {
+    use std::io::{BufRead, BufReader, Write};
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let addr = listener.local_addr().unwrap();
+    let per_user: Arc<Mutex<HashMap<String, usize>>> = Arc::new(Mutex::new(HashMap::new()));
+    let per_user_thread = per_user.clone();
+
+    std::thread::spawn(move || {
+        for stream in listener.incoming().flatten() {
+            let write_stream = match stream.try_clone() {
+                Ok(s) => s,
+                Err(_) => continue,
+            };
+            let mut reader = BufReader::new(stream);
+            let mut request_line = String::new();
+            if reader.read_line(&mut request_line).is_err() {
+                continue;
+            }
+            loop {
+                let mut line = String::new();
+                match reader.read_line(&mut line) {
+                    Ok(0) => break,
+                    Ok(_) if line.trim().is_empty() => break,
+                    Err(_) => break,
+                    _ => {}
+                }
+            }
+            if let Some(query_start) = request_line.find("?id=") {
+                let after_id = &request_line[query_start + 4..];
+                let id_end = after_id
+                    .find([' ', '&', '\r', '\n'])
+                    .unwrap_or(after_id.len());
+                let raw_id = &after_id[..id_end];
+                let decoded_id = url_decode(raw_id);
+                let mut map = per_user_thread.lock().expect("counter lock");
+                *map.entry(decoded_id).or_insert(0) += 1;
+            }
+            let body = r#"{"error":"always-down"}"#;
+            let response = format!(
+                "HTTP/1.1 500 Internal Server Error\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let mut writer = write_stream;
+            let _ = writer.write_all(response.as_bytes());
+        }
+    });
+
+    MockEcpds {
+        url: format!("http://{}", addr),
+        per_user_count: per_user,
+    }
+}
+
+#[cfg(feature = "ecpds")]
 fn url_decode(s: &str) -> String {
     let mut out = String::with_capacity(s.len());
     let bytes = s.as_bytes();
@@ -796,28 +870,30 @@ fn ensure_test_global_config_initialized() {
         #[cfg(feature = "ecpds")]
         {
             LazyLock::force(&MOCK_ECPDS);
-            configuration.ecpds = Some(aviso_ecpds::config::EcpdsConfig {
-                username: "masteruser".to_string(),
-                password: "masterpass".to_string(),
-                target_field: "name".to_string(),
-                match_key: "destination".to_string(),
-                cache_ttl_seconds: 300,
-                max_entries: 10_000,
-                request_timeout_seconds: 30,
-                connect_timeout_seconds: 5,
-                partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
-                servers: vec![MOCK_ECPDS.url.clone()],
-            });
+            configuration.ecpds = Some(default_test_ecpds_config());
             if let Some(schema) = configuration.notification_schema.as_mut() {
                 ensure_ecpds_test_schemas(schema);
             }
         }
         Settings::init_global_config(&configuration);
-        #[cfg(feature = "ecpds")]
-        configuration
-            .init_global_ecpds_checker()
-            .expect("ECPDS checker init in tests must succeed");
     });
+}
+
+#[cfg(feature = "ecpds")]
+pub fn default_test_ecpds_config() -> aviso_ecpds::config::EcpdsConfig {
+    LazyLock::force(&MOCK_ECPDS);
+    aviso_ecpds::config::EcpdsConfig {
+        username: "masteruser".to_string(),
+        password: "masterpass".to_string(),
+        target_field: "name".to_string(),
+        match_key: "destination".to_string(),
+        cache_ttl_seconds: 300,
+        max_entries: 10_000,
+        request_timeout_seconds: 30,
+        connect_timeout_seconds: 5,
+        partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
+        servers: vec![MOCK_ECPDS.url.clone()],
+    }
 }
 
 async fn spawn_server(
@@ -887,6 +963,55 @@ pub async fn spawn_streaming_test_app_with_auth() -> TestApp {
                 timeout_ms: 5_000,
                 ..AuthSettings::default()
             };
+            #[cfg(feature = "ecpds")]
+            {
+                configuration.ecpds = Some(default_test_ecpds_config());
+                if let Some(schema) = configuration.notification_schema.as_mut() {
+                    ensure_ecpds_test_schemas(schema);
+                }
+            }
+            spawn_server(configuration, Some(auth_server_handle)).await
+        })
+        .await;
+
+    TestApp {
+        address: running.address.clone(),
+    }
+}
+
+/// Spawn a separate test app whose ECPDS config has TWO servers (one
+/// healthy `MOCK_ECPDS`, one consistently failing `MOCK_ECPDS_ALWAYS_DOWN`)
+/// and `partial_outage_policy: AnySuccess`. Used by the partial-outage
+/// HTTP-layer test to assert the route layer surfaces the worst per-server
+/// failure on `aviso_ecpds_fetch_total` even when the merged result is
+/// `Ok` (so on-call alerts can fire on a degraded but still-serving
+/// deployment).
+#[cfg(feature = "ecpds")]
+pub async fn spawn_streaming_test_app_with_auth_partial_outage() -> TestApp {
+    LazyLock::force(&MOCK_ECPDS);
+    LazyLock::force(&MOCK_ECPDS_ALWAYS_DOWN);
+    let running = STREAMING_AUTH_ECPDS_PARTIAL_OUTAGE_SERVER
+        .get_or_init(|| async {
+            let mut configuration = base_test_settings();
+            set_streaming_auth_test_notification_schema(&mut configuration);
+            let (auth_o_tron_url, auth_server_handle) = start_mock_auth_o_tron_server()
+                .await
+                .expect("mock auth-o-tron server must start");
+            configuration.auth = AuthSettings {
+                enabled: true,
+                auth_o_tron_url,
+                jwt_secret: "test-jwt-secret".to_string(),
+                admin_roles: HashMap::from([("localrealm".to_string(), vec!["admin".to_string()])]),
+                timeout_ms: 5_000,
+                ..AuthSettings::default()
+            };
+            let mut ecpds_cfg = default_test_ecpds_config();
+            ecpds_cfg.partial_outage_policy = aviso_ecpds::config::PartialOutagePolicy::AnySuccess;
+            ecpds_cfg.servers = vec![MOCK_ECPDS.url.clone(), MOCK_ECPDS_ALWAYS_DOWN.url.clone()];
+            configuration.ecpds = Some(ecpds_cfg);
+            if let Some(schema) = configuration.notification_schema.as_mut() {
+                ensure_ecpds_test_schemas(schema);
+            }
             spawn_server(configuration, Some(auth_server_handle)).await
         })
         .await;
