@@ -49,9 +49,9 @@ End-to-end ECPDS plugin tests (only run against a binary built with
         Schema name on the server that has plugins: ["ecpds"].
         IMPORTANT: this schema is assumed to have `match_key` as its
         ONLY required identifier field. The smoke test sends a minimal
-        request body and does not paper over additional required
-        fields — if your schema has more, add a dedicated minimal
-        ECPDS test schema instead of pointing this at your production
+        request body and does not populate other required fields. If
+        your schema has more, add a dedicated minimal ECPDS test
+        schema instead of pointing this at your production
         dissemination schema. See the Getting Started doc for an
         example test schema.
     ECPDS_MATCH_KEY=destination
@@ -1015,11 +1015,11 @@ def test_ecpds_denied_destination_returns_403(config: Config) -> None:
 
 def test_ecpds_notify_unaffected(config: Config) -> None:
     """NOTIFY on an ECPDS-protected stream must succeed (200) for the
-    admin user. The plugin is read-only, so it must not gate writes —
-    a 503 here would mean it incorrectly tried to consult ECPDS on a
-    write, and a 403/401 would mean admin auth is broken (a config
-    issue with `AUTH_ADMIN_USER`/`AUTH_ADMIN_PASS`, not the plugin).
-    Either way, anything other than 2xx is a failure."""
+    admin user. The plugin is read-only, so it must not gate writes.
+    A 503 here would mean it incorrectly tried to consult ECPDS on a
+    write. A 403/401 would mean admin auth is broken (a config issue
+    with AUTH_ADMIN_USER/AUTH_ADMIN_PASS, not the plugin). Either
+    way, anything other than 2xx is a failure."""
     skip = _ecpds_skip_reason(config)
     if skip:
         print(f"[INFO] skipping ECPDS smoke test ({skip})")

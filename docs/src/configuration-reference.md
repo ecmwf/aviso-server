@@ -52,7 +52,7 @@ When enabled:
 | `required` | `bool` | — | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
 | `read_roles` | `map<string, string[]>` | — | Realm-scoped roles for read access (watch/replay). When omitted, any authenticated user can read. Use `["*"]` as the role list to grant realm-wide access. |
 | `write_roles` | `map<string, string[]>` | — | Realm-scoped roles for write access (notify). When omitted, only users matching global `admin_roles` can write. Use `["*"]` as the role list to grant realm-wide access. |
-| `plugins` | `string[]` | — | Optional list of authorization plugins to run after role-based checks. Currently supported: `"ecpds"` (requires `--features ecpds` build). On a build without the required feature, startup fails with a clear error pointing at the offending stream — silent skip would widen access. Empty `plugins: []` is rejected; omit the field instead. Plugins only run when `auth.required` is `true`. |
+| `plugins` | `string[]` | (none) | Optional list of authorization plugins to run after role-based checks. Currently supported: `"ecpds"` (requires `--features ecpds` build). On a build without the required feature, startup fails with a clear error pointing at the offending stream. (Silent skip would widen access.) Empty `plugins: []` is rejected; omit the field instead. Plugins only run when `auth.required` is `true`. |
 
 See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
 
@@ -99,9 +99,9 @@ A binary built with `--features ecpds` always registers the following five metri
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `aviso_ecpds_cache_hits_total` | counter | — | ECPDS destination cache hits (requests served without an upstream call). |
-| `aviso_ecpds_cache_misses_total` | counter | — | ECPDS destination cache misses (requests that triggered an upstream fetch). |
-| `aviso_ecpds_cache_size` | gauge | — | Current number of distinct usernames in the cache. Read from moka's authoritative count after eviction. |
+| `aviso_ecpds_cache_hits_total` | counter | (none) | ECPDS destination cache hits (requests served without an upstream call). |
+| `aviso_ecpds_cache_misses_total` | counter | (none) | ECPDS destination cache misses (requests that triggered an upstream fetch). |
+| `aviso_ecpds_cache_size` | gauge | (none) | Current number of distinct usernames in the cache. Reflects the actual current count, with any expired entries already removed. |
 | `aviso_ecpds_access_decisions_total` | counter | `outcome` | Access decisions. `outcome` ∈ {`allow`, `deny_destination`, `deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}. |
 | `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check that touched the upstream). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_5xx`, `invalid_response`, `unreachable`, `divergence`}. |
 

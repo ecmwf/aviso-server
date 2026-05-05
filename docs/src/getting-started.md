@@ -231,7 +231,7 @@ The smoke script covers:
 - `mars` replay with dot-containing identifier values, integer and enum predicates
 - `dissemination` watch + `from_date` with dot-containing identifier values
 - read/write auth separation across public, role-restricted, and admin-only streams
-- (optional, off by default) ECPDS plugin allow/deny/notify-bypass — see below
+- (optional, off by default) ECPDS plugin allow/deny/notify-bypass (see below)
 
 ### Optional: end-to-end ECPDS plugin smoke test
 
@@ -239,10 +239,10 @@ If your build has `--features ecpds` enabled and your config has a working `ecpd
 
 **Prerequisites:**
 
-- The server must run with `auth.enabled: true` and `auth.mode: direct`. The smoke script sends HTTP Basic credentials, which Aviso forwards to auth-o-tron only in **direct mode**. Trusted-proxy mode would require an upstream proxy to mint a JWT — out of scope for the smoke script.
+- The server must run with `auth.enabled: true` and `auth.mode: direct`. The smoke script sends HTTP Basic credentials, which Aviso forwards to auth-o-tron only in **direct mode**. Trusted-proxy mode would require an upstream proxy to mint a JWT, which is out of scope for the smoke script.
 - Your auth-o-tron config must know two users: an admin user (defaults `admin-user` / `admin-pass`) for the NOTIFY-bypass case, and your ECPDS user (`ECPDS_ALLOWED_USER` / `ECPDS_ALLOWED_PASS`) for the watch cases.
 - You need a destination value the ECPDS user **is** entitled to and one they are **not** (the latter can be a deliberately-fake string).
-- **Add a minimal ECPDS test schema to your config**, with `match_key` (e.g. `destination`) as the *only* required identifier field. The smoke test sends a minimal request body and does not paper over additional required fields — so don't point it at a richer schema like your production `dissemination`. Add this dedicated test schema instead:
+- **Add a minimal ECPDS test schema to your config**, with `match_key` (e.g. `destination`) as the *only* required identifier field. The smoke test sends a minimal request body and does not populate any other required identifier fields. Don't point it at a richer schema like your production `dissemination`. Add this dedicated test schema instead:
 
   ```yaml
   notification_schema:
@@ -287,7 +287,7 @@ What the three ECPDS smoke cases verify:
 Troubleshooting:
 
 - All three skip with `[INFO] skipping ECPDS smoke test` → check `ECPDS_ENABLED=true` and that the required env vars are set.
-- The allow case fails with `400` and a "schema validator before the plugin" hint → your `ECPDS_EVENT_TYPE` schema has additional required identifier fields. Add the minimal test schema above (or simplify the schema you're pointing at). Schema-validation rejecting the request before ECPDS is the **correct** behaviour — that's why the smoke test fails loudly here rather than papering over it.
+- The allow case fails with `400` and a "schema validator before the plugin" hint: your `ECPDS_EVENT_TYPE` schema has additional required identifier fields. Add the minimal test schema above, or simplify the schema you're pointing at. The schema validator rejecting the request before ECPDS runs is the **correct** behaviour. The smoke test fails loudly here rather than papering over it.
 - The allow case fails with `503` → the issue is between Aviso and ECPDS rather than at the plugin layer; see the [ECPDS Plugin Runbook](./ecpds-runbook.md).
 - The notify-bypass case fails with `401`/`403` → your `AUTH_ADMIN_USER` / `AUTH_ADMIN_PASS` don't match your auth-o-tron config; that's an auth setup issue, not an ECPDS issue.
 

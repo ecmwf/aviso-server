@@ -247,11 +247,11 @@ The plugin emits `auth.ecpds.fetch.divergence` (`warn`) when servers disagree, i
 
 ### Caching
 
-Destination lists are cached per-user for `cache_ttl_seconds` (default 300). The cache is bounded at `max_entries` (default 10 000) with TinyLFU eviction. Successful results are cached; **errors are not** — a transient outage doesn't extend itself by being cached.
+Destination lists are cached per user for `cache_ttl_seconds` (default 300 seconds). The cache holds at most `max_entries` users (default 10 000); when full, the least-recently-used entries are dropped. Successful results are cached. **Errors are not cached.** A short ECPDS outage will not get extended by stale 503s sitting in the cache.
 
-The cache is **single-flight**: concurrent requests for the same uncached username produce exactly one upstream ECPDS call; the rest await its result. This protects ECPDS during SSE-reconnect storms.
+The cache is **single-flight**: when many requests for the same user arrive at the same time and the user is not yet cached, only one upstream call goes to ECPDS. The rest wait for that one call's result. This protects ECPDS when many SSE clients reconnect at once.
 
-The cache is **process-local**. Restarting Aviso clears it. Multiple replicas have independent caches.
+The cache lives in process memory. Restarting Aviso clears it. Multiple replicas have independent caches.
 
 ### What is not checked
 
