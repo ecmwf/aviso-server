@@ -1,5 +1,6 @@
 use crate::client::{EcpdsError, FetchOutcome};
 use moka::future::Cache;
+use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -57,7 +58,7 @@ pub enum CacheOutcome {
 /// edge case for unwindable runtime panics; the route handler's catch-
 /// all error path covers the resulting [`EcpdsError`] mapping.
 pub struct DestinationCache {
-    cache: Cache<String, Arc<Vec<String>>>,
+    cache: Cache<String, Arc<HashSet<String>>>,
 }
 
 impl DestinationCache {
@@ -94,10 +95,10 @@ impl DestinationCache {
         &self,
         username: &str,
         fetch: F,
-    ) -> (CacheOutcome, Result<Arc<Vec<String>>, EcpdsError>)
+    ) -> (CacheOutcome, Result<Arc<HashSet<String>>, EcpdsError>)
     where
         F: FnOnce() -> Fut,
-        Fut: Future<Output = Result<(Vec<String>, FetchOutcome), EcpdsError>>,
+        Fut: Future<Output = Result<(HashSet<String>, FetchOutcome), EcpdsError>>,
     {
         if let Some(cached) = self.cache.get(username).await {
             return (CacheOutcome::Hit, Ok(cached));
@@ -114,7 +115,7 @@ impl DestinationCache {
                 match fetch().await {
                     Ok((destinations, outcome)) => {
                         *outcome_writer.lock().expect("outcome slot poisoned") = Some(outcome);
-                        Ok::<Arc<Vec<String>>, EcpdsError>(Arc::new(destinations))
+                        Ok::<Arc<HashSet<String>>, EcpdsError>(Arc::new(destinations))
                     }
                     Err(e) => {
                         *outcome_writer.lock().expect("outcome slot poisoned") =
@@ -154,13 +155,12 @@ impl DestinationCache {
 
     #[cfg(test)]
     pub(crate) async fn set(&self, username: &str, destinations: Vec<String>) {
-        self.cache
-            .insert(username.to_string(), Arc::new(destinations))
-            .await;
+        let set: HashSet<String> = destinations.into_iter().collect();
+        self.cache.insert(username.to_string(), Arc::new(set)).await;
     }
 
     #[cfg(test)]
-    pub(crate) async fn get(&self, username: &str) -> Option<Vec<String>> {
+    pub(crate) async fn get(&self, username: &str) -> Option<HashSet<String>> {
         self.cache.get(username).await.map(|arc| (*arc).clone())
     }
 }
@@ -215,6 +215,10 @@ mod tests {
     use super::*;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
+    fn dest_set(items: &[&str]) -> HashSet<String> {
+        items.iter().map(|s| (*s).to_string()).collect()
+    }
+
     #[tokio::test]
     async fn cache_miss_returns_none() {
         let cache = DestinationCache::new(300, 1000);
@@ -228,7 +232,7 @@ mod tests {
             .set("john", vec!["CIP".to_string(), "FOO".to_string()])
             .await;
         let result = cache.get("john").await;
-        assert_eq!(result, Some(vec!["CIP".to_string(), "FOO".to_string()]));
+        assert_eq!(result, Some(dest_set(&["CIP", "FOO"])));
     }
 
     #[tokio::test]
@@ -244,7 +248,7 @@ mod tests {
         let cache = DestinationCache::new(300, 1000);
         cache.set("john", vec!["CIP".to_string()]).await;
         cache.set("john", vec!["FOO".to_string()]).await;
-        assert_eq!(cache.get("john").await, Some(vec!["FOO".to_string()]));
+        assert_eq!(cache.get("john").await, Some(dest_set(&["FOO"])));
     }
 
     #[tokio::test]
@@ -252,8 +256,8 @@ mod tests {
         let cache = DestinationCache::new(300, 1000);
         cache.set("alice", vec!["CIP".to_string()]).await;
         cache.set("bob", vec!["FOO".to_string()]).await;
-        assert_eq!(cache.get("alice").await, Some(vec!["CIP".to_string()]));
-        assert_eq!(cache.get("bob").await, Some(vec!["FOO".to_string()]));
+        assert_eq!(cache.get("alice").await, Some(dest_set(&["CIP"])));
+        assert_eq!(cache.get("bob").await, Some(dest_set(&["FOO"])));
     }
 
     #[tokio::test]
@@ -265,11 +269,11 @@ mod tests {
         let (outcome, result) = cache
             .try_get_or_fetch("john", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                async { Ok((vec!["BAD".to_string()], FetchOutcome::Success)) }
+                async { Ok((dest_set(&["BAD"]), FetchOutcome::Success)) }
             })
             .await;
         let value = result.expect("must succeed");
-        assert_eq!(value.as_ref(), &vec!["CIP".to_string()]);
+        assert_eq!(value.as_ref(), &dest_set(&["CIP"]));
         assert_eq!(outcome, CacheOutcome::Hit);
         assert_eq!(calls.load(Ordering::SeqCst), 0);
     }
@@ -282,11 +286,11 @@ mod tests {
         let (outcome, result) = cache
             .try_get_or_fetch("alice", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                async { Ok((vec!["CIP".to_string()], FetchOutcome::Success)) }
+                async { Ok((dest_set(&["CIP"]), FetchOutcome::Success)) }
             })
             .await;
         let value = result.expect("must succeed");
-        assert_eq!(value.as_ref(), &vec!["CIP".to_string()]);
+        assert_eq!(value.as_ref(), &dest_set(&["CIP"]));
         assert_eq!(
             outcome,
             CacheOutcome::MissFetched {
@@ -298,11 +302,11 @@ mod tests {
         let (outcome2, result2) = cache
             .try_get_or_fetch("alice", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                async { Ok((vec!["IGNORED".to_string()], FetchOutcome::Success)) }
+                async { Ok((dest_set(&["IGNORED"]), FetchOutcome::Success)) }
             })
             .await;
         let value2 = result2.expect("must succeed");
-        assert_eq!(value2.as_ref(), &vec!["CIP".to_string()]);
+        assert_eq!(value2.as_ref(), &dest_set(&["CIP"]));
         assert_eq!(outcome2, CacheOutcome::Hit);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
@@ -312,7 +316,7 @@ mod tests {
         let cache = DestinationCache::new(300, 1000);
         let (outcome, _result) = cache
             .try_get_or_fetch("bob", || async {
-                Ok((vec!["CIP".to_string()], FetchOutcome::Unreachable))
+                Ok((dest_set(&["CIP"]), FetchOutcome::Unreachable))
             })
             .await;
         assert_eq!(
@@ -340,7 +344,7 @@ mod tests {
                         async move {
                             calls.fetch_add(1, Ordering::SeqCst);
                             tokio::time::sleep(Duration::from_millis(50)).await;
-                            Ok((vec!["CIP".to_string()], FetchOutcome::Success))
+                            Ok((dest_set(&["CIP"]), FetchOutcome::Success))
                         }
                     })
                     .await
@@ -351,7 +355,7 @@ mod tests {
         for handle in handles {
             let (outcome, result) = handle.await.unwrap();
             let value = result.expect("must succeed");
-            assert_eq!(value.as_ref(), &vec!["CIP".to_string()]);
+            assert_eq!(value.as_ref(), &dest_set(&["CIP"]));
             match outcome {
                 CacheOutcome::Hit => unreachable!("cache started empty"),
                 CacheOutcome::MissFetched { .. } => self_fetch_count += 1,
@@ -458,7 +462,7 @@ mod tests {
         let (_outcome2, ok_result) = cache
             .try_get_or_fetch("doomed", move || {
                 calls_clone.fetch_add(1, Ordering::SeqCst);
-                async { Ok((vec!["CIP".to_string()], FetchOutcome::Success)) }
+                async { Ok((dest_set(&["CIP"]), FetchOutcome::Success)) }
             })
             .await;
         let _ok = ok_result.expect("must succeed");

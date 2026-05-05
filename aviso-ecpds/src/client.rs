@@ -285,7 +285,7 @@ impl EcpdsClient {
     pub async fn fetch_user_destinations(
         &self,
         username: &str,
-    ) -> Result<(Vec<String>, FetchOutcome), EcpdsError> {
+    ) -> Result<(HashSet<String>, FetchOutcome), EcpdsError> {
         if self.servers.is_empty() {
             return Err(EcpdsError::ServiceUnavailable {
                 fetch_outcome: FetchOutcome::Unreachable,
@@ -339,7 +339,7 @@ impl EcpdsClient {
     /// problem (e.g. a 401 rather than a coincident timeout).
     fn merge_strict(
         results: Vec<Result<Vec<String>, EcpdsError>>,
-    ) -> Result<(Vec<String>, FetchOutcome), EcpdsError> {
+    ) -> Result<(HashSet<String>, FetchOutcome), EcpdsError> {
         if results.is_empty() {
             return Err(EcpdsError::ServiceUnavailable {
                 fetch_outcome: FetchOutcome::Unreachable,
@@ -362,9 +362,7 @@ impl EcpdsClient {
         if let Some(fetch_outcome) = worst_failure {
             return Err(EcpdsError::ServiceUnavailable { fetch_outcome });
         }
-        let mut destinations: Vec<String> = union.into_iter().collect();
-        destinations.sort();
-        Ok((destinations, FetchOutcome::Success))
+        Ok((union, FetchOutcome::Success))
     }
 
     /// AnySuccess policy: take the union of every server response that
@@ -379,7 +377,7 @@ impl EcpdsClient {
     /// not look healthy in `aviso_ecpds_fetch_total`.
     fn merge_any_success(
         results: Vec<Result<Vec<String>, EcpdsError>>,
-    ) -> Result<(Vec<String>, FetchOutcome), EcpdsError> {
+    ) -> Result<(HashSet<String>, FetchOutcome), EcpdsError> {
         let mut union: HashSet<String> = HashSet::new();
         let mut any_success = false;
         let mut worst_failure: Option<FetchOutcome> = None;
@@ -403,10 +401,8 @@ impl EcpdsClient {
                 fetch_outcome: worst_failure.unwrap_or(FetchOutcome::Unreachable),
             });
         }
-        let mut destinations: Vec<String> = union.into_iter().collect();
-        destinations.sort();
         let merged_outcome = worst_failure.unwrap_or(FetchOutcome::Success);
-        Ok((destinations, merged_outcome))
+        Ok((union, merged_outcome))
     }
 
     /// Build a request URL by safely appending the destination-list path to
@@ -559,8 +555,8 @@ mod tests {
         let (result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
 
         mock.assert_async().await;
-        assert!(result.contains(&"CIP".to_string()));
-        assert!(result.contains(&"FOO".to_string()));
+        assert!(result.contains("CIP"));
+        assert!(result.contains("FOO"));
         assert_eq!(outcome, FetchOutcome::Success);
     }
 
@@ -590,10 +586,11 @@ mod tests {
         let mut config = make_config(vec![server_a.url(), server_b.url()]);
         config.partial_outage_policy = PartialOutagePolicy::AnySuccess;
         let client = EcpdsClient::new(&config).expect("client must build");
-        let (mut result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
-        result.sort();
+        let (result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
+        let mut sorted: Vec<String> = result.into_iter().collect();
+        sorted.sort();
 
-        assert_eq!(result, vec!["BAR", "CIP", "FOO"]);
+        assert_eq!(sorted, vec!["BAR", "CIP", "FOO"]);
         assert_eq!(outcome, FetchOutcome::Success);
     }
 
@@ -621,7 +618,7 @@ mod tests {
         config.partial_outage_policy = PartialOutagePolicy::AnySuccess;
         let client = EcpdsClient::new(&config).expect("client must build");
         let (result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
-        assert!(result.contains(&"CIP".to_string()));
+        assert!(result.contains("CIP"));
         assert_eq!(
             outcome,
             FetchOutcome::Unreachable,
@@ -699,9 +696,10 @@ mod tests {
 
         let config = make_config(vec![server_a.url(), server_b.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let (mut result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
-        result.sort();
-        assert_eq!(result, vec!["BAR".to_string(), "CIP".to_string()]);
+        let (result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
+        let mut sorted: Vec<String> = result.into_iter().collect();
+        sorted.sort();
+        assert_eq!(sorted, vec!["BAR".to_string(), "CIP".to_string()]);
         assert_eq!(outcome, FetchOutcome::Success);
     }
 
@@ -721,9 +719,10 @@ mod tests {
 
         let config = make_config(vec![server_a.url(), server_b.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let (mut result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
-        result.sort();
-        assert_eq!(result, vec!["CIP".to_string(), "FOO".to_string()]);
+        let (result, outcome) = client.fetch_user_destinations("testuser").await.unwrap();
+        let mut sorted: Vec<String> = result.into_iter().collect();
+        sorted.sort();
+        assert_eq!(sorted, vec!["CIP".to_string(), "FOO".to_string()]);
         assert_eq!(outcome, FetchOutcome::Success);
     }
 
@@ -863,15 +862,15 @@ mod tests {
         let client = EcpdsClient::new(&config).expect("client must build");
         let (result, _outcome) = client.fetch_user_destinations("testuser").await.unwrap();
         assert!(
-            result.contains(&"CIP".to_string()),
+            result.contains("CIP"),
             "active CIP must be in the allow-list"
         );
         assert!(
-            !result.contains(&"INACTIVE".to_string()),
+            !result.contains("INACTIVE"),
             "active=false must be filtered out (real-ECPDS contract)"
         );
         assert!(
-            !result.contains(&"NO_FIELD".to_string()),
+            !result.contains("NO_FIELD"),
             "missing active field is treated as inactive (safe default)"
         );
     }
@@ -892,9 +891,10 @@ mod tests {
 
         let config = make_config(vec![server.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
-        let (mut result, _outcome) = client.fetch_user_destinations("testuser").await.unwrap();
-        result.sort();
-        assert_eq!(result, vec!["CIP".to_string(), "FOO".to_string()]);
+        let (result, _outcome) = client.fetch_user_destinations("testuser").await.unwrap();
+        let mut sorted: Vec<String> = result.into_iter().collect();
+        sorted.sort();
+        assert_eq!(sorted, vec!["CIP".to_string(), "FOO".to_string()]);
     }
 
     #[tokio::test]
@@ -913,8 +913,8 @@ mod tests {
         config.target_field = "id".to_string();
         let client = EcpdsClient::new(&config).expect("client must build");
         let (result, _outcome) = client.fetch_user_destinations("testuser").await.unwrap();
-        assert!(result.contains(&"DEST1".to_string()));
-        assert!(!result.contains(&"CIP".to_string()));
+        assert!(result.contains("DEST1"));
+        assert!(!result.contains("CIP"));
     }
 
     #[test]
@@ -984,7 +984,7 @@ mod tests {
             .expect("should succeed");
 
         mock.assert_async().await;
-        assert!(result.contains(&"OK".to_string()));
+        assert!(result.contains("OK"));
     }
 
     #[tokio::test]
@@ -1007,6 +1007,6 @@ mod tests {
             .expect("should succeed");
 
         mock.assert_async().await;
-        assert!(result.contains(&"OK".to_string()));
+        assert!(result.contains("OK"));
     }
 }
