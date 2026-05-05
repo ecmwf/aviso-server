@@ -34,9 +34,12 @@ Environment:
         Must match the server's auth.mode setting. The smoke harness sends
         HTTP Basic credentials, which Aviso accepts only in direct mode;
         trusted_proxy mode requires Bearer JWTs minted by the upstream proxy.
-        Setting AUTH_MODE=trusted_proxy skips the ECPDS smoke cases with a
-        clear reason rather than producing a misleading 401 attributed to
-        the ECPDS plugin.
+        Setting AUTH_MODE=trusted_proxy skips ALL Basic-auth smoke cases
+        (the auth_mars_*, auth_dissemination_*, and ECPDS cases) with a
+        clear reason rather than producing 401 failures attributed to the
+        wrong layer. The two no-credential auth cases
+        (auth_public_stream_no_credentials and auth_mars_unauthenticated_rejected)
+        still run because they don't depend on Basic.
     AUTH_ADMIN_USER=admin-user
     AUTH_ADMIN_PASS=admin-pass
 
@@ -146,6 +149,22 @@ class Config:
         if not self.auth_enabled:
             return {}
         return {"Authorization": _basic_auth_header(username, password)}
+
+    def basic_auth_skip_reason(self) -> str | None:
+        """Return a skip reason string if a HTTP-Basic-credentialled
+        smoke case cannot run against the configured server, or None
+        if it can. Centralises the AUTH_ENABLED + AUTH_MODE gate so
+        every Basic-auth smoke case skips for the same reason.
+
+        The smoke harness only knows how to send HTTP Basic. Aviso
+        accepts Basic only in auth.mode: direct; trusted_proxy mode
+        requires Bearer JWTs minted by the upstream proxy. We do not
+        try to mint JWTs in the smoke script."""
+        if not self.auth_enabled:
+            return "AUTH_ENABLED=false"
+        if self.auth_mode != "direct":
+            return f"AUTH_MODE={self.auth_mode!r} is not 'direct'; smoke cases use HTTP Basic"
+        return None
 
 
 @dataclass(frozen=True)
@@ -766,8 +785,9 @@ def test_auth_mars_unauthenticated_rejected(config: Config) -> None:
 
 def test_auth_mars_reader_can_read(config: Config) -> None:
     """mars read_roles: localrealm: ["*"] — reader-user should be able to replay."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     stream_value = unique_token("auth-reader-read")
@@ -795,8 +815,9 @@ def test_auth_mars_reader_can_read(config: Config) -> None:
 
 def test_auth_mars_reader_cannot_write(config: Config) -> None:
     """mars write_roles: localrealm: ["producer"] — reader-user should get 403 on notify."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     status, _ = request_json(
@@ -824,8 +845,9 @@ def test_auth_mars_reader_cannot_write(config: Config) -> None:
 
 def test_auth_mars_producer_can_write(config: Config) -> None:
     """mars write_roles: localrealm: ["producer"] — producer-user should succeed."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     producer_headers = config.auth_headers_for("producer-user", "producer-pass")
     status, _ = request_json(
@@ -853,8 +875,9 @@ def test_auth_mars_producer_can_write(config: Config) -> None:
 
 def test_auth_dissemination_reader_can_read(config: Config) -> None:
     """dissemination has no read_roles — any authenticated user can replay."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     target_value = unique_token("auth-diss-reader")
@@ -884,8 +907,9 @@ def test_auth_dissemination_reader_can_read(config: Config) -> None:
 
 def test_auth_dissemination_reader_cannot_write(config: Config) -> None:
     """dissemination has no write_roles — only admins can write. reader-user should get 403."""
-    if not config.auth_enabled:
-        print("[INFO] skipping auth test because AUTH_ENABLED=false")
+    skip = config.basic_auth_skip_reason()
+    if skip:
+        print(f"[INFO] skipping auth test ({skip})")
         return
     reader_headers = config.auth_headers_for("reader-user", "reader-pass")
     status, _ = request_json(
@@ -916,18 +940,9 @@ def test_auth_dissemination_reader_cannot_write(config: Config) -> None:
 def _ecpds_skip_reason(config: Config) -> str | None:
     if not config.ecpds_enabled:
         return "ECPDS_ENABLED is not set"
-    if not config.auth_enabled:
-        return "ECPDS plugin requires AUTH_ENABLED=true"
-    if config.auth_mode != "direct":
-        # The ECPDS smoke cases authenticate end-users over HTTP Basic
-        # against the configured ECPDS_ALLOWED_USER/PASS. Aviso accepts
-        # Basic only in auth.mode: direct; in trusted_proxy mode the
-        # middleware (resolve_trusted_proxy_token in
-        # src/auth/middleware.rs) requires Bearer JWTs minted by the
-        # upstream proxy and a Basic request gets a 401 unrelated to
-        # the ECPDS plugin. Skip with a clear reason rather than
-        # producing a misleading 401 attributed to ECPDS.
-        return f"AUTH_MODE={config.auth_mode!r} is not 'direct'; smoke cases use HTTP Basic"
+    basic = config.basic_auth_skip_reason()
+    if basic:
+        return basic
     missing = [
         name
         for name, value in [
