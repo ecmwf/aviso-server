@@ -99,7 +99,7 @@ auth:
 #   target_field: "name"
 #   # Cache TTL per user (seconds). Default: 300.
 #   cache_ttl_seconds: 300
-#   # Maximum cache entries before LRU-style eviction. Default: 10000.
+#   # Maximum cache entries before moka TinyLFU eviction. Default: 10000.
 #   max_entries: 10000
 #   # Per-request HTTP timeouts (seconds). Defaults: 30 / 5.
 #   request_timeout_seconds: 30

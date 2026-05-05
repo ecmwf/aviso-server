@@ -245,7 +245,7 @@ When more than one ECPDS server is configured, the user's effective destination 
 
 ### Caching
 
-Destination lists are cached per user for `cache_ttl_seconds` (default 300 seconds). The cache holds at most `max_entries` users (default 10 000); when full, the least-recently-used entries are dropped. Successful results are cached. **Errors are not cached.** A short ECPDS outage will not get extended by stale 503s sitting in the cache.
+Destination lists are cached per user for `cache_ttl_seconds` (default 300 seconds). The cache holds at most `max_entries` users (default 10 000) and uses moka's TinyLFU eviction policy when full (TinyLFU mixes recency with admission frequency, so a one-shot scan does not flush the working set). Successful results are cached. **Errors are not cached.** A short ECPDS outage will not get extended by stale 503s sitting in the cache.
 
 The cache is **single-flight**: when many requests for the same user arrive at the same time and the user is not yet cached, only one upstream call goes to ECPDS. The rest wait for that one call's result. This protects ECPDS when many SSE clients reconnect at once.
 

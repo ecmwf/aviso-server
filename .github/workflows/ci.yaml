@@ -37,7 +37,10 @@ jobs:
           cargo test --features ecpds -- --test-threads=1
 
       - name: Run aviso-ecpds subcrate tests
+        env:
+          NO_PROXY: "127.0.0.1,localhost"
         run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test --manifest-path aviso-ecpds/Cargo.toml -- --test-threads=1
 
       - name: Clippy (default features)
@@ -45,3 +48,6 @@ jobs:
 
       - name: Clippy (--features ecpds)
         run: cargo clippy --features ecpds --all-targets -- -D warnings
+
+      - name: Clippy (aviso-ecpds subcrate)
+        run: cargo clippy --manifest-path aviso-ecpds/Cargo.toml --all-targets -- -D warnings
