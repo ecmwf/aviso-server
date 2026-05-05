@@ -444,17 +444,17 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
             bail!("ecpds.servers[{i}] '{server}' must not contain a URL fragment");
         }
     }
-    if ecpds_config.username.is_empty() {
-        bail!("ecpds.username must not be empty");
+    if ecpds_config.username.trim().is_empty() {
+        bail!("ecpds.username must not be empty or whitespace");
     }
-    if ecpds_config.password.is_empty() {
-        bail!("ecpds.password must not be empty");
+    if ecpds_config.password.trim().is_empty() {
+        bail!("ecpds.password must not be empty or whitespace");
     }
-    if ecpds_config.target_field.is_empty() {
-        bail!("ecpds.target_field must not be empty");
+    if ecpds_config.target_field.trim().is_empty() {
+        bail!("ecpds.target_field must not be empty or whitespace");
     }
-    if ecpds_config.match_key.is_empty() {
-        bail!("ecpds.match_key must not be empty");
+    if ecpds_config.match_key.trim().is_empty() {
+        bail!("ecpds.match_key must not be empty or whitespace");
     }
     if ecpds_config
         .match_key
@@ -2003,6 +2003,58 @@ mod tests {
                 .expect_err("must fail");
             assert!(
                 err.to_string().contains("target_field must not be empty"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_username() {
+            let mut cfg = good_ecpds_config();
+            cfg.username = "   ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.username must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_password() {
+            let mut cfg = good_ecpds_config();
+            cfg.password = "\t\n  ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.password must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_target_field() {
+            let mut cfg = good_ecpds_config();
+            cfg.target_field = "   ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.target_field must not be empty or whitespace"),
+                "got: {err}"
+            );
+        }
+
+        #[test]
+        fn rejects_whitespace_only_match_key() {
+            let mut cfg = good_ecpds_config();
+            cfg.match_key = "   ".to_string();
+            let err = validate_ecpds_settings(&settings_with_ecpds(cfg, "destination", true))
+                .expect_err("must fail");
+            assert!(
+                err.to_string()
+                    .contains("ecpds.match_key must not be empty or whitespace"),
                 "got: {err}"
             );
         }
