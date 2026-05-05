@@ -98,34 +98,33 @@ pub fn validate_auth_settings(auth: &AuthSettings) -> Result<()> {
     Ok(())
 }
 
-/// Plugin names this codebase recognizes for the per-stream
-/// `auth.plugins` list. Add new plugins here AND to
-/// [`plugin_required_feature`] if they are feature-gated.
-const KNOWN_PLUGINS: &[&str] = &["ecpds"];
-
-/// Returns the Cargo feature flag required by a known plugin, or `None`
-/// if the plugin is always available regardless of feature configuration.
-fn plugin_required_feature(name: &str) -> Option<&'static str> {
-    match name {
-        "ecpds" => Some("ecpds"),
-        _ => None,
-    }
+/// Single source of truth for every plugin name this codebase
+/// recognizes in the per-stream `auth.plugins` list. Adding a new
+/// plugin is one row.
+struct PluginMeta {
+    /// Plugin name as it appears in YAML (`auth.plugins: [<name>]`).
+    name: &'static str,
+    /// Cargo feature flag this plugin requires, or `None` if it is
+    /// always available.
+    required_feature: Option<&'static str>,
+    /// Whether the required Cargo feature is currently compiled into
+    /// this binary. `cfg!()` evaluates at compile time, so this is a
+    /// const-eligible expression.
+    compiled: bool,
 }
 
-/// Compile-time table of Cargo features this binary knows about, paired
-/// with whether each is currently enabled. Add a new row when a new
-/// feature-gated plugin is introduced.
-const COMPILED_FEATURES: &[(&str, bool)] = &[("ecpds", cfg!(feature = "ecpds"))];
+const PLUGINS: &[PluginMeta] = &[PluginMeta {
+    name: "ecpds",
+    required_feature: Some("ecpds"),
+    compiled: cfg!(feature = "ecpds"),
+}];
 
-/// Returns whether a given Cargo feature flag is currently compiled into
-/// this binary. Used by [`validate_stream_plugin_settings`] to fail-close
-/// when a stream references a plugin whose feature is off.
-fn feature_enabled(name: &str) -> bool {
-    COMPILED_FEATURES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(_, on)| *on)
-        .unwrap_or(false)
+fn known_plugin(name: &str) -> Option<&'static PluginMeta> {
+    PLUGINS.iter().find(|p| p.name == name)
+}
+
+fn known_plugin_names() -> Vec<&'static str> {
+    PLUGINS.iter().map(|p| p.name).collect()
 }
 
 /// Validates per-stream `auth.plugins` lists fail-closed.
@@ -163,14 +162,15 @@ pub fn validate_stream_plugin_settings(settings: &Settings) -> Result<()> {
         }
 
         for plugin in plugins {
-            if !KNOWN_PLUGINS.contains(&plugin.as_str()) {
+            let Some(meta) = known_plugin(plugin) else {
                 bail!(
                     "Schema '{event_type}' auth.plugins references unknown plugin '{plugin}'. \
-                     Known plugins: {KNOWN_PLUGINS:?}"
+                     Known plugins: {:?}",
+                    known_plugin_names()
                 );
-            }
-            if let Some(required_feature) = plugin_required_feature(plugin)
-                && !feature_enabled(required_feature)
+            };
+            if let Some(required_feature) = meta.required_feature
+                && !meta.compiled
             {
                 bail!(
                     "Schema '{event_type}' auth.plugins references plugin '{plugin}', \
