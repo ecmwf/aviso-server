@@ -12,10 +12,14 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 ## Symptom and first checks
 
+> **What "a storm of X" means here.** Throughout this section, "503 storm" or "403 storm" means: the **rate** of that response is far above the normal baseline, and **multiple users are affected** (not one bad request from one user). A single 503 is normally an isolated bug worth a ticket. A 503 storm is an active incident that needs triage right now. The rule of thumb is: if your dashboard shows the rate climbing fast or staying high for more than a minute or two, treat it as a storm. The first metric and first log lines below are how you confirm it.
+>
 > **Field-name reading guide.** When this section says `reason=DestinationNotInList`, the actual log line will look like `... reason=DestinationNotInList "ECPDS access denied"`. Use the exact strings shown when grepping. Metric `outcome=...` labels use snake_case (`deny_destination`, `http_401`, etc.).
 
 ### 503 storm on watch/replay
 
+- **What you see:** sustained HTTP 503 responses on `/api/v1/watch` and `/api/v1/replay`, hitting many users at once. From a user's perspective: "I cannot start a watch; Aviso says ECPDS is unaccessible."
+- **What this means in plain English:** the ECPDS plugin tried to fetch destination lists from your ECPDS servers and could not reach a verdict, so it failed safely with 503 rather than guess.
 - **First metric:** `aviso_ecpds_fetch_total` rate, broken down by `outcome`.
 - **First log:** `event_name=auth.ecpds.fetch.failed` and `event_name=auth.ecpds.check.unavailable`.
 - **Likely causes** (read off the dominant `outcome` label):
@@ -27,18 +31,24 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 ### 403 storm on watch/replay
 
+- **What you see:** sustained HTTP 403 responses on `/api/v1/watch` and `/api/v1/replay` from many distinct users at once. From a user's perspective: "I used to be able to read this destination, now Aviso says I'm not allowed."
+- **What this means in plain English:** authentication is fine (otherwise it would be a 401), and Aviso did reach ECPDS (otherwise it would be a 503), but ECPDS replied that the user does not have the requested destination on their list. If many users are seeing this at once, the cause is upstream of Aviso, not in Aviso.
 - **First metric:** `aviso_ecpds_access_decisions_total{outcome="deny_destination"}` rate.
 - **First log:** `event_name=auth.ecpds.check.denied` with `reason=DestinationNotInList`.
 - **Likely cause:** ECPDS revoked destinations for one or more users. Or a client suddenly started passing the wrong `destination`. Cross-check by hitting the ECPDS web UI directly with the same user.
 
 ### 403 with `reason=MatchKeyMissing`
 
+- **What you see:** any 403 on `/api/v1/watch` or `/api/v1/replay` whose log carries `reason=MatchKeyMissing`. Even one of these is suspicious; a stream of them means a misconfigured deployment is in production.
+- **What this means in plain English:** the request body did not include the configured match-key field (e.g. no `destination` value at all). The plugin can't check what isn't there, so it denies. Startup validation enforces that this field is `required: true` in the schema, so the only way to see this in practice is if the running config has drifted from what was validated.
 - **First metric:** `aviso_ecpds_access_decisions_total{outcome="deny_match_key_missing"}` rate.
 - **First log:** `event_name=auth.ecpds.check.denied` with `reason=MatchKeyMissing`.
 - **Likely cause:** the schema's `match_key` field is required, but a client is omitting it. Startup validation should have prevented this configuration in the first place. Investigate config drift.
 
 ### Quiet, no allows
 
+- **What you see:** ECPDS-protected reads are happening (you see `watch`/`replay` traffic in your access logs and they return 200), but the `aviso_ecpds_access_decisions_total{outcome="allow"}` counter stays flat at zero, and you never see `event_name=auth.ecpds.check.allowed` in logs.
+- **What this means in plain English:** the plugin is not running for those reads. Either the build doesn't include it, or the schema isn't wired up to use it.
 - **First metric:** `aviso_ecpds_access_decisions_total{outcome="allow"}` rate is zero.
 - **First log:** there isn't one. The plugin is not running.
 - **Likely causes:**
@@ -48,12 +58,16 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 ### Cache thrashing or latency spike
 
+- **What you see:** average and p99 latency on `/api/v1/watch` and `/api/v1/replay` are climbing, and the cache miss counter is rising significantly faster than the cache hit counter. From a user's perspective: "My watches and replays feel slower than usual."
+- **What this means in plain English:** "cache thrashing" means the cache is barely helping. Most requests are missing the cache and Aviso ends up making a fresh ECPDS call on every request. That call adds latency to every request and load to ECPDS. Possible reasons: cache TTL is too short and entries expire before they're reused; cache is too small and entries get evicted before reuse; or there are genuinely so many distinct usernames that no cache size would fit them all.
 - **First metric:** ratio of `aviso_ecpds_cache_misses_total` to `aviso_ecpds_cache_hits_total`, plus `aviso_ecpds_cache_size`.
 - **First log:** rate of `event_name=auth.ecpds.cache.miss`.
 - **Likely cause:** high miss rate with a high number of distinct usernames means `cache_ttl_seconds` is too short, `max_entries` is too small, or there are genuinely many unique users.
 
 ### Tracing event `auth.ecpds.fetch.divergence`
 
+- **What you see:** the `auth.ecpds.fetch.divergence` event firing in logs, or `aviso_ecpds_fetch_total{outcome="divergence"}` incrementing. Under the default `strict` policy, you will also see a 503 storm at the same time. Under `any_success`, the requests still succeed (with a warning) but the destination list is the union across reachable servers.
+- **What this means in plain English:** two or more configured ECPDS servers were asked the same question (what destinations does user X have?) and gave different answers. Almost always this is a replication delay between ECPDS replicas, not an Aviso bug.
 - **First metric:** `aviso_ecpds_fetch_total{outcome="divergence"}`.
 - **First log:** `event_name=auth.ecpds.fetch.divergence`.
 - **Likely cause:** servers report different destination lists for the same user. This is almost always a replication-lag issue at the ECPDS side. Strict policy turns this into a 503. The `any_success` policy takes the union and continues with a warning.
