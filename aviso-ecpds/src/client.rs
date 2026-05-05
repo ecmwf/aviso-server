@@ -21,6 +21,11 @@ pub enum FetchOutcome {
     /// At least one server returned HTTP 403: service-account has no
     /// permission to query the destination list.
     Forbidden,
+    /// At least one server returned an unexpected HTTP 4xx (most
+    /// commonly 404 for a misconfigured base URL or 429 for
+    /// throttling). Distinct from 5xx so on-call can tell client-side
+    /// configuration problems from upstream outages.
+    ClientError,
     /// At least one server returned HTTP 5xx: ECPDS itself is broken.
     ServerError,
     /// At least one server returned a body that did not parse against
@@ -38,6 +43,7 @@ impl FetchOutcome {
             Self::Success => "success",
             Self::Unauthorized => "http_401",
             Self::Forbidden => "http_403",
+            Self::ClientError => "http_4xx",
             Self::ServerError => "http_5xx",
             Self::InvalidResponse => "invalid_response",
             Self::Unreachable => "unreachable",
@@ -47,8 +53,9 @@ impl FetchOutcome {
     fn pessimistic_max(self, other: Self) -> Self {
         fn rank(o: FetchOutcome) -> u8 {
             match o {
-                FetchOutcome::Unauthorized => 5,
-                FetchOutcome::Forbidden => 4,
+                FetchOutcome::Unauthorized => 6,
+                FetchOutcome::Forbidden => 5,
+                FetchOutcome::ClientError => 4,
                 FetchOutcome::InvalidResponse => 3,
                 FetchOutcome::ServerError => 2,
                 FetchOutcome::Unreachable => 1,
@@ -174,6 +181,7 @@ impl EcpdsError {
             Self::Http { status, .. } => match status {
                 Some(401) => FetchOutcome::Unauthorized,
                 Some(403) => FetchOutcome::Forbidden,
+                Some(s) if (400..500).contains(s) => FetchOutcome::ClientError,
                 Some(s) if (500..600).contains(s) => FetchOutcome::ServerError,
                 Some(_) => FetchOutcome::ServerError,
                 None => FetchOutcome::Unreachable,
@@ -622,10 +630,7 @@ mod tests {
             .create_async()
             .await;
 
-        let config = make_config(vec![
-            "http://127.0.0.1:1".to_string(),
-            auth_server.url(),
-        ]);
+        let config = make_config(vec!["http://127.0.0.1:1".to_string(), auth_server.url()]);
         let client = EcpdsClient::new(&config).expect("client must build");
         let err = client
             .fetch_user_destinations("testuser")
@@ -731,6 +736,48 @@ mod tests {
             .expect_err("must fail");
         assert_eq!(err.fetch_outcome(), FetchOutcome::ServerError);
         assert_eq!(err.fetch_outcome().label(), "http_5xx");
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_http_404_as_client_error() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(404)
+            .with_body(r#"{"error":"not found"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("must fail");
+        assert_eq!(err.fetch_outcome(), FetchOutcome::ClientError);
+        assert_eq!(err.fetch_outcome().label(), "http_4xx");
+    }
+
+    #[tokio::test]
+    async fn fetch_classifies_http_429_as_client_error() {
+        let mut server = mockito::Server::new_async().await;
+        server
+            .mock("GET", "/ecpds/v1/destination/list")
+            .match_query(mockito::Matcher::Any)
+            .with_status(429)
+            .with_body(r#"{"error":"rate limited"}"#)
+            .create_async()
+            .await;
+
+        let config = make_config(vec![server.url()]);
+        let client = EcpdsClient::new(&config).expect("client must build");
+        let err = client
+            .fetch_user_destinations("testuser")
+            .await
+            .expect_err("must fail");
+        assert_eq!(err.fetch_outcome(), FetchOutcome::ClientError);
+        assert_eq!(err.fetch_outcome().label(), "http_4xx");
     }
 
     #[tokio::test]

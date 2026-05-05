@@ -241,7 +241,7 @@ When more than one ECPDS server is configured, the user's effective destination 
 | Code | HTTP Status | When |
 |------|-------------|------|
 | `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. |
-| `SERVICE_UNAVAILABLE` | `503` | The lookup failed under the active `partial_outage_policy`. The cause is in the structured tracing event `auth.ecpds.check.unavailable` and on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_5xx`, `invalid_response`). |
+| `SERVICE_UNAVAILABLE` | `503` | The lookup failed under the active `partial_outage_policy`. The cause is in the structured tracing event `auth.ecpds.check.unavailable` and on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_4xx`, `http_5xx`, `invalid_response`). |
 
 ### Caching
 

@@ -30,6 +30,7 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 - **Likely causes** (read off the dominant `outcome` label):
   - `unreachable`: ECPDS server down, network partition, DNS, or wrong `servers` URLs in config.
   - `http_401` or `http_403`: service-account credentials wrong or revoked.
+  - `http_4xx`: an unexpected client-side response, most often 404 (a misconfigured base URL pointing somewhere that isn't ECPDS) or 429 (the service-account is being rate-limited).
   - `http_5xx`: ECPDS itself is broken.
   - `invalid_response`: ECPDS response shape no longer matches what the parser expects (the contract has changed).
 

@@ -103,7 +103,7 @@ A binary built with `--features ecpds` always registers the following five metri
 | `aviso_ecpds_cache_misses_total` | counter | (none) | ECPDS destination cache misses (requests that triggered an upstream fetch). |
 | `aviso_ecpds_cache_size` | gauge | (none) | Current number of distinct usernames in the cache. Reflects the actual current count, with any expired entries already removed. |
 | `aviso_ecpds_access_decisions_total` | counter | `outcome` | Access decisions. `outcome` ∈ {`allow`, `deny_destination`, `deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}. |
-| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check that touched the upstream). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_5xx`, `invalid_response`, `unreachable`}. |
+| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check that touched the upstream). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_4xx`, `http_5xx`, `invalid_response`, `unreachable`}. |
 
 Process-level metrics (CPU, memory, open FDs) are automatically collected on Linux.
 
