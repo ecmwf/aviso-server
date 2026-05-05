@@ -975,24 +975,24 @@ def _ecpds_failure_hint_for_400(config: Config) -> str:
 def _ecpds_post_status(
     config: Config, path: str, body: dict, headers: dict[str, str]
 ) -> tuple[int, str]:
-    """POST and return (status, response_text), reading at most a small
-    chunk of any SSE body. Used by the ECPDS smoke cases which only
-    care about the HTTP status of the watch endpoint, not the stream
-    payload."""
+    """POST to a streaming endpoint and return (status, response_text)
+    WITHOUT consuming any payload on success. The ECPDS smoke cases
+    only care about the HTTP status of /watch (200 = ECPDS allowed the
+    request; 401/403/503 = it was rejected by auth or upstream). A
+    healthy /watch SSE stream may legitimately stay idle until an
+    event is published, so blocking on the first SSE chunk would time
+    out a perfectly working authorisation. On non-200 we still read
+    the (typically small) error body so the caller can surface it."""
     timeout = build_timeout(config, read=2.0)
     try:
         with httpx.Client(
             base_url=config.base_url, timeout=timeout, headers=headers
         ) as client:
             with client.stream("POST", path, json=body) as response:
-                first_chunk = ""
                 if response.status_code == 200:
-                    for chunk in response.iter_text():
-                        first_chunk = chunk
-                        break
-                else:
-                    first_chunk = response.read().decode("utf-8", errors="replace")
-                return response.status_code, first_chunk
+                    return response.status_code, ""
+                body_text = response.read().decode("utf-8", errors="replace")
+                return response.status_code, body_text
     except httpx.HTTPError as exc:
         raise SmokeFailure(f"request failed: {exc}") from exc
 
