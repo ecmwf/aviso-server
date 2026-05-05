@@ -30,6 +30,13 @@ Environment:
     AUTH_ENABLED=true|false (default: true)
         Must match the server's auth.enabled setting.
         When false, auth headers are omitted and auth-specific tests are skipped.
+    AUTH_MODE=direct|trusted_proxy (default: direct)
+        Must match the server's auth.mode setting. The smoke harness sends
+        HTTP Basic credentials, which Aviso accepts only in direct mode;
+        trusted_proxy mode requires Bearer JWTs minted by the upstream proxy.
+        Setting AUTH_MODE=trusted_proxy skips the ECPDS smoke cases with a
+        clear reason rather than producing a misleading 401 attributed to
+        the ECPDS plugin.
     AUTH_ADMIN_USER=admin-user
     AUTH_ADMIN_PASS=admin-pass
 
