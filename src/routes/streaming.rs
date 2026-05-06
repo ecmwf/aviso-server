@@ -58,11 +58,14 @@ pub fn enforce_stream_auth(
         return Ok(());
     }
 
+    let request_id = crate::middleware::request_id::request_id_from_request(req);
+
     let Some(user) = get_user(req) else {
         let auth_mode = auth_mode(req).unwrap_or(AuthMode::Direct);
         return Err(unauthorized_response(
             auth_mode,
             "Authentication is required for this stream",
+            &request_id,
         ));
     };
 
@@ -71,7 +74,8 @@ pub fn enforce_stream_auth(
         return Err(HttpResponse::InternalServerError().json(json!({
             "code": "INTERNAL_ERROR",
             "error": "internal_error",
-            "message": "Server configuration error"
+            "message": "Server configuration error",
+            "request_id": request_id,
         })));
     };
     let is_admin = user.is_admin(&auth_settings.admin_roles);
@@ -84,6 +88,7 @@ pub fn enforce_stream_auth(
             {
                 return Err(forbidden_response(
                     "User does not have required read role for this stream",
+                    &request_id,
                 ));
             }
             // No read_roles → any authenticated user can read.
@@ -92,12 +97,14 @@ pub fn enforce_stream_auth(
             Some(write_roles) if !is_admin && !user.has_any_role(write_roles) => {
                 return Err(forbidden_response(
                     "User does not have required write role for this stream",
+                    &request_id,
                 ));
             }
             Some(_) => {}
             None if !is_admin => {
                 return Err(forbidden_response(
                     "Only administrators can write to this stream",
+                    &request_id,
                 ));
             }
             None => {}
@@ -107,20 +114,22 @@ pub fn enforce_stream_auth(
     Ok(())
 }
 
-fn forbidden_response(message: &str) -> HttpResponse {
+fn forbidden_response(message: &str, request_id: &str) -> HttpResponse {
     HttpResponse::Forbidden().json(json!({
         "code": "FORBIDDEN",
         "error": "forbidden",
-        "message": message
+        "message": message,
+        "request_id": request_id,
     }))
 }
 
 #[cfg(feature = "ecpds")]
-fn ecpds_service_unavailable_response() -> HttpResponse {
+fn ecpds_service_unavailable_response(request_id: &str) -> HttpResponse {
     HttpResponse::ServiceUnavailable().json(serde_json::json!({
         "code": "SERVICE_UNAVAILABLE",
         "error": "service_unavailable",
-        "message": "ECPDS service is inaccessible"
+        "message": "ECPDS service is inaccessible",
+        "request_id": request_id,
     }))
 }
 
@@ -160,6 +169,7 @@ pub async fn enforce_ecpds_auth(
         return Ok(());
     };
 
+    let request_id = crate::middleware::request_id::request_id_from_request(req);
     let metrics = req.app_data::<web::Data<AppMetrics>>().cloned();
     let record_decision = |outcome: &str| {
         if let Some(m) = metrics.as_ref() {
@@ -184,7 +194,8 @@ pub async fn enforce_ecpds_auth(
         return Err(HttpResponse::InternalServerError().json(serde_json::json!({
             "code": "INTERNAL_ERROR",
             "error": "internal_error",
-            "message": "Server configuration error"
+            "message": "Server configuration error",
+            "request_id": request_id,
         })));
     };
 
@@ -216,7 +227,8 @@ pub async fn enforce_ecpds_auth(
         return Err(HttpResponse::InternalServerError().json(serde_json::json!({
             "code": "INTERNAL_ERROR",
             "error": "internal_error",
-            "message": "Server configuration error"
+            "message": "Server configuration error",
+            "request_id": request_id,
         })));
     };
     let checker: &aviso_ecpds::checker::EcpdsChecker = checker_data.as_ref();
@@ -290,7 +302,7 @@ pub async fn enforce_ecpds_auth(
                 "ECPDS access denied"
             );
             record_decision(reason.label());
-            Err(forbidden_response(&message))
+            Err(forbidden_response(&message, &request_id))
         }
         Err(aviso_ecpds::EcpdsError::ServiceUnavailable { fetch_outcome }) => {
             tracing::warn!(
@@ -304,7 +316,7 @@ pub async fn enforce_ecpds_auth(
                 "ECPDS service unavailable"
             );
             record_decision("unavailable");
-            Err(ecpds_service_unavailable_response())
+            Err(ecpds_service_unavailable_response(&request_id))
         }
         Err(e) => {
             tracing::error!(
@@ -321,7 +333,8 @@ pub async fn enforce_ecpds_auth(
             Err(HttpResponse::InternalServerError().json(serde_json::json!({
                 "code": "INTERNAL_ERROR",
                 "error": "internal_error",
-                "message": "ECPDS check failed unexpectedly"
+                "message": "ECPDS check failed unexpectedly",
+                "request_id": request_id,
             })))
         }
     }

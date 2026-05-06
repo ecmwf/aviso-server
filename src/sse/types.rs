@@ -52,24 +52,25 @@ pub fn format_sse_event(event_type: SseEventType, data: Value) -> String {
 }
 
 #[derive(Debug, Clone)]
-pub enum DeliveryKind {
+pub(crate) enum DeliveryKind {
     Live,
     Replay,
 }
 
 #[derive(Debug, Clone)]
-pub enum CloseReason {
+pub(crate) enum CloseReason {
     ServerShutdown,
     MaxDurationReached,
     EndOfStream,
 }
 
 #[derive(Debug, Clone)]
-pub enum ControlEvent {
+pub(crate) enum ControlEvent {
     ConnectionEstablished {
         topic: String,
         timestamp: DateTime<Utc>,
         connection_will_close_in_seconds: u64,
+        request_id: String,
     },
     ReplayStarted {
         topic: String,
@@ -77,6 +78,7 @@ pub enum ControlEvent {
         from_date: Option<DateTime<Utc>>,
         batch_size: usize,
         timestamp: DateTime<Utc>,
+        request_id: String,
     },
     ReplayCompleted {
         topic: String,
@@ -90,7 +92,7 @@ pub enum ControlEvent {
 }
 
 #[derive(Debug, Clone)]
-pub enum StreamFrame {
+pub(crate) enum StreamFrame {
     Notification {
         notification: NotificationMessage,
         kind: DeliveryKind,
@@ -103,10 +105,12 @@ pub enum StreamFrame {
     Error {
         topic: String,
         message: String,
+        request_id: String,
     },
     Close {
         topic: String,
         reason: CloseReason,
         timestamp: DateTime<Utc>,
+        request_id: String,
     },
 }

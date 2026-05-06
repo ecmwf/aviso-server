@@ -64,12 +64,13 @@ pub async fn notify(
     request_id: RequestId,
     metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
+    let request_id_str = request_id.to_string();
     // Parse and validate request structure
     let payload = match parse_and_validate_request(&body) {
         Ok(p) => p,
         Err(e) => {
             record_notification(&metrics, "unknown", "error");
-            return request_parse_error_response(RequestKind::Notification, e);
+            return request_parse_error_response(RequestKind::Notification, e, &request_id_str);
         }
     };
     if payload.identifier.contains_key("point") {
@@ -79,6 +80,7 @@ pub async fn notify(
             anyhow::anyhow!(
                 "identifier.point is only supported for watch/replay endpoints, not /notification"
             ),
+            &request_id_str,
         );
     }
 
@@ -106,11 +108,19 @@ pub async fn notify(
         Err(e) => match e.kind {
             NotificationErrorKind::Validation => {
                 record_notification(&metrics, "unknown", "error");
-                return request_validation_error_response(RequestKind::Notification, e.source);
+                return request_validation_error_response(
+                    RequestKind::Notification,
+                    e.source,
+                    &request_id_str,
+                );
             }
             NotificationErrorKind::Processing => {
                 record_notification(&metrics, "unknown", "error");
-                return processing_error_response(ProcessingKind::NotificationProcessing, e.source);
+                return processing_error_response(
+                    ProcessingKind::NotificationProcessing,
+                    e.source,
+                    &request_id_str,
+                );
             }
         },
     };
@@ -139,7 +149,7 @@ pub async fn notify(
     .await
     {
         record_notification(&metrics, event_type, "error");
-        return processing_error_response(ProcessingKind::NotificationStorage, e);
+        return processing_error_response(ProcessingKind::NotificationStorage, e, &request_id_str);
     }
 
     record_notification(&metrics, event_type, "success");
@@ -147,7 +157,7 @@ pub async fn notify(
     // Build success response
     let response = NotificationResponse {
         status: "success".to_string(),
-        request_id: request_id.to_string(),
+        request_id: request_id_str,
         processed_at: chrono::Utc::now().to_rfc3339(),
     };
 

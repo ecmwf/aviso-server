@@ -12,6 +12,7 @@ pub mod configuration;
 pub mod error;
 pub mod handlers;
 pub mod metrics;
+pub mod middleware;
 pub mod notification;
 pub mod notification_backend;
 pub mod openapi;

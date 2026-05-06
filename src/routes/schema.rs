@@ -19,6 +19,7 @@ use actix_web::{HttpResponse, web};
 use serde_json::json;
 use std::collections::HashMap;
 use tracing::info;
+use tracing_actix_web::RequestId;
 
 /// Get the notification schema configuration
 ///
@@ -108,8 +109,8 @@ pub async fn get_notification_schema() -> HttpResponse {
         ("event_type" = String, Path, description = "Event type identifier")
     ),
 )]
-#[tracing::instrument]
-pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
+#[tracing::instrument(skip(request_id), fields(request_id = %request_id))]
+pub async fn get_event_schema(path: web::Path<String>, request_id: RequestId) -> HttpResponse {
     let event_type = path.into_inner();
     let schema = Settings::get_global_notification_schema();
 
@@ -137,13 +138,15 @@ pub async fn get_event_schema(path: web::Path<String>) -> HttpResponse {
                 HttpResponse::NotFound().json(json!({
                     "status": "error",
                     "message": format!("Event type '{}' not found", event_type),
-                    "available_types": schema_map.keys().collect::<Vec<_>>()
+                    "available_types": schema_map.keys().collect::<Vec<_>>(),
+                    "request_id": request_id.to_string(),
                 }))
             }
         }
         None => HttpResponse::NotFound().json(json!({
             "status": "error",
-            "message": "No notification schema configured"
+            "message": "No notification schema configured",
+            "request_id": request_id.to_string(),
         })),
     }
 }

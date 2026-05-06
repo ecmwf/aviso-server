@@ -27,7 +27,7 @@ use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 /// Create a live notification stream from a backend subscription
-pub fn create_live_notification_stream(
+pub(crate) fn create_live_notification_stream(
     notification_stream: impl tokio_stream::Stream<Item = NotificationMessage> + Send + 'static,
     _concurrent_limit: usize,
 ) -> impl tokio_stream::Stream<Item = StreamFrame> {
@@ -45,13 +45,14 @@ pub fn create_live_notification_stream(
 /// - Subscribes to the notification topic for real-time events
 /// - Filters each notification using matches_notification_filters (param/polygon filtering)
 /// - Sends connection established and heartbeat events, supports graceful shutdown
-pub async fn create_watch_sse_stream(
+pub(crate) async fn create_watch_sse_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     sse_guard: Option<crate::metrics::SseConnectionGuard>,
+    request_id: String,
 ) -> Result<HttpResponse> {
     let app_settings = Settings::get_global_application_settings();
     let watch_config = Settings::get_global_watch_settings();
@@ -85,17 +86,20 @@ pub async fn create_watch_sse_stream(
             topic: topic.clone(),
             timestamp: chrono::Utc::now(),
             connection_will_close_in_seconds: connection_timeout.as_secs(),
+            request_id: request_id.clone(),
         }));
 
     // Create heartbeat stream
     let heartbeat_stream =
         create_heartbeat_stream(topic.clone(), watch_config.sse_heartbeat_interval_sec);
 
-    // Merge: initial event + live notifications, then merge with heartbeat
-    let merged_stream = TokioStreamExt::merge(
-        FuturesStreamExt::chain(initial_stream, notification_sse_stream),
-        heartbeat_stream,
-    );
+    // Order matters: chain the initial control event BEFORE merging live with
+    // heartbeat. tokio_stream::merge polls round-robin and the heartbeat
+    // interval's first tick fires immediately, so without this pinning a
+    // heartbeat can race the connection_established frame and the request_id
+    // would not be in the first event.
+    let live_with_heartbeat = TokioStreamExt::merge(notification_sse_stream, heartbeat_stream);
+    let merged_stream = FuturesStreamExt::chain(initial_stream, live_with_heartbeat);
 
     // Apply lifecycle and convert typed frames to SSE bytes.
     let stream_with_lifecycle = apply_stream_lifecycle(
@@ -103,10 +107,12 @@ pub async fn create_watch_sse_stream(
         topic.clone(),
         shutdown.get_ref().clone(),
         Some(connection_timeout),
+        request_id.clone(),
     );
     let base_url = app_settings.base_url.clone();
+    let request_id_for_bytes = request_id.clone();
     let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
-        frame_to_sse_bytes(frame, &base_url)
+        frame_to_sse_bytes(frame, &base_url, &request_id_for_bytes)
     });
 
     tracing::info!(
@@ -116,6 +122,7 @@ pub async fn create_watch_sse_stream(
         topic = %decode_subject_for_display(&topic),
         timeout_seconds = connection_timeout.as_secs(),
         concurrent_limit = watch_config.concurrent_notification_processing,
+        request_id = %request_id,
         "SSE stream created with graceful-shutdown support and filtering"
     );
 

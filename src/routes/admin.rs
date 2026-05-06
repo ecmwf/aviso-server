@@ -12,6 +12,7 @@ use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpResponse, Result as ActixResult, web};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use tracing_actix_web::RequestId;
 use utoipa::ToSchema;
 
 #[derive(Deserialize, ToSchema)]
@@ -23,6 +24,9 @@ pub struct WipeStreamRequest {
 pub struct WipeResponse {
     pub success: bool,
     pub message: String,
+    /// Per-request UUID for log correlation. Same value as the
+    /// `X-Request-ID` HTTP response header.
+    pub request_id: String,
 }
 
 #[derive(Serialize, ToSchema)]
@@ -30,6 +34,9 @@ pub struct DeleteNotificationResponse {
     pub success: bool,
     pub message: String,
     pub notification_id: String,
+    /// Per-request UUID for log correlation. Same value as the
+    /// `X-Request-ID` HTTP response header.
+    pub request_id: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,12 +110,15 @@ fn resolve_stream_key_alias(stream_or_event_type: &str) -> String {
 pub async fn wipe_stream(
     backend: web::Data<Arc<dyn NotificationBackend>>,
     req: web::Json<WipeStreamRequest>,
+    request_id: RequestId,
 ) -> ActixResult<HttpResponse> {
+    let request_id_str = request_id.to_string();
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
         event_name = "admin.stream.wipe.requested",
         stream_name = %req.stream_name,
+        request_id = %request_id_str,
         "Received request to wipe stream"
     );
 
@@ -119,11 +129,13 @@ pub async fn wipe_stream(
                 service_version = SERVICE_VERSION,
                 event_name = "admin.stream.wipe.succeeded",
                 stream_name = %req.stream_name,
+                request_id = %request_id_str,
                 "Successfully wiped stream"
             );
             Ok(HttpResponse::Ok().json(WipeResponse {
                 success: true,
                 message: format!("Successfully wiped stream: {}", req.stream_name),
+                request_id: request_id_str,
             }))
         }
         Err(e) => {
@@ -133,11 +145,13 @@ pub async fn wipe_stream(
                 event_name = "admin.stream.wipe.failed",
                 stream_name = %req.stream_name,
                 error = %e,
+                request_id = %request_id_str,
                 "Failed to wipe stream"
             );
             Ok(HttpResponse::InternalServerError().json(WipeResponse {
                 success: false,
                 message: format!("Failed to wipe stream: {}", e),
+                request_id: request_id_str,
             }))
         }
     }
@@ -163,11 +177,14 @@ pub async fn wipe_stream(
 
 pub async fn wipe_all(
     backend: web::Data<Arc<dyn NotificationBackend>>,
+    request_id: RequestId,
 ) -> ActixResult<HttpResponse> {
+    let request_id_str = request_id.to_string();
     tracing::warn!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
         event_name = "admin.all.wipe.requested",
+        request_id = %request_id_str,
         "Received request to wipe ALL data - this will remove everything!"
     );
 
@@ -177,11 +194,13 @@ pub async fn wipe_all(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_name = "admin.all.wipe.succeeded",
+                request_id = %request_id_str,
                 "Successfully wiped ALL data from backend"
             );
             Ok(HttpResponse::Ok().json(WipeResponse {
                 success: true,
                 message: "Successfully wiped all data".to_string(),
+                request_id: request_id_str,
             }))
         }
         Err(e) => {
@@ -190,11 +209,13 @@ pub async fn wipe_all(
                 service_version = SERVICE_VERSION,
                 event_name = "admin.all.wipe.failed",
                 error = %e,
+                request_id = %request_id_str,
                 "Failed to wipe all data"
             );
             Ok(HttpResponse::InternalServerError().json(WipeResponse {
                 success: false,
                 message: format!("Failed to wipe all data: {}", e),
+                request_id: request_id_str,
             }))
         }
     }
@@ -225,7 +246,9 @@ pub async fn wipe_all(
 pub async fn delete_notification(
     backend: web::Data<Arc<dyn NotificationBackend>>,
     path: web::Path<String>,
+    request_id: RequestId,
 ) -> ActixResult<HttpResponse> {
+    let request_id_str = request_id.to_string();
     let raw_id = path.into_inner();
     let parsed = match parse_notification_id(&raw_id) {
         Ok(parsed) => parsed,
@@ -235,12 +258,14 @@ pub async fn delete_notification(
                 service_version = SERVICE_VERSION,
                 event_name = "admin.notification.delete.invalid_id",
                 notification_id = %raw_id,
+                request_id = %request_id_str,
                 "Invalid notification ID format"
             );
             return Ok(HttpResponse::BadRequest().json(DeleteNotificationResponse {
                 success: false,
                 message: message.to_string(),
                 notification_id: raw_id,
+                request_id: request_id_str,
             }));
         }
     };
@@ -258,12 +283,14 @@ pub async fn delete_notification(
                 notification_id = %raw_id,
                 stream_key = %resolved_stream_key,
                 sequence = parsed.sequence,
+                request_id = %request_id_str,
                 "Deleted notification"
             );
             Ok(HttpResponse::Ok().json(DeleteNotificationResponse {
                 success: true,
                 message: "Notification deleted".to_string(),
                 notification_id: raw_id,
+                request_id: request_id_str,
             }))
         }
         Ok(DeleteMessageResult::NotFound) => {
@@ -274,12 +301,14 @@ pub async fn delete_notification(
                 notification_id = %raw_id,
                 stream_key = %resolved_stream_key,
                 sequence = parsed.sequence,
+                request_id = %request_id_str,
                 "Notification not found"
             );
             Ok(HttpResponse::NotFound().json(DeleteNotificationResponse {
                 success: false,
                 message: "Notification not found".to_string(),
                 notification_id: raw_id,
+                request_id: request_id_str,
             }))
         }
         Err(error) => {
@@ -291,6 +320,7 @@ pub async fn delete_notification(
                 stream_key = %resolved_stream_key,
                 sequence = parsed.sequence,
                 error = %error,
+                request_id = %request_id_str,
                 "Failed to delete notification"
             );
             Ok(
@@ -298,6 +328,7 @@ pub async fn delete_notification(
                     success: false,
                     message: format!("Failed to delete notification: {error}"),
                     notification_id: raw_id,
+                    request_id: request_id_str,
                 }),
             )
         }

@@ -5,6 +5,77 @@ including start points, spatial filtering, identifier constraints, and SSE lifec
 
 ---
 
+## Request ID Correlation
+
+Every HTTP response carries an `X-Request-ID` header with a per-request UUID.
+The same UUID is also embedded in the JSON `data:` payload of certain SSE
+events so that a client which only sees the body (not headers) can still
+quote it back when reporting a problem.
+
+A note on terminology before the tables: SSE has two related but distinct
+labels for an event. The `event:` line is the SSE-level type that an
+`EventSource.addEventListener(name, handler)` call dispatches on. The
+`data.type` field (when present) is an aviso-level discriminator inside the
+JSON body, used for the cases where we reuse a single `event:` name for
+several control events. A wire example:
+
+```text
+event: live-notification
+data: {"type":"connection_established","topic":"...","timestamp":"...","connection_will_close_in_seconds":3600,"request_id":"<uuid>"}
+```
+
+The `event:` line above is `live-notification` (so an EventSource client
+listens for `live-notification`); the `data.type` value is
+`connection_established` (so the client distinguishes it from a normal
+notification, which has no `type` field).
+
+In-stream events that include `request_id`:
+
+| SSE `event:` | `data.type` (when present) | Frequency | Purpose |
+|---|---|---|---|
+| `live-notification` | `connection_established` | Once at the start of a live-only watch | First-event correlation |
+| `replay-control` | `replay_started` | Once at the start of any stream that begins with replay | First-event correlation |
+| `error` | (none; uses `error` field as discriminator) | Rare, on mid-stream backend or CloudEvent-creation failure | Failure-event correlation |
+| `connection-closing` | (none; uses `reason` field as discriminator) | Once on graceful close | Final-event correlation |
+
+In-stream events that intentionally do **not** include `request_id`:
+
+| SSE `event:` | `data.type` (when present) | Frequency | Why |
+|---|---|---|---|
+| `live-notification` | (none; CloudEvent body) | Per message | Repeating the same UUID on every notification would inflate the wire for no extra value (correlation is already covered by the first event and the response header) |
+| `replay` | (none; CloudEvent body) | Per message | Same |
+| `heartbeat` | (none) | Every few seconds | Same |
+| `replay-control` | `replay_completed`, `notification_replay_limit_reached` | Replay phase boundaries | The first `replay-control` event (`replay_started`) already carries the UUID; repeating it is noise |
+
+The first event of any stream is guaranteed to carry the `request_id` (a
+`live-notification` event with `data.type = "connection_established"` for
+live-only watches, or a `replay-control` event with `data.type =
+"replay_started"` for any stream that begins with replay).
+
+## Reconnecting after disconnect
+
+If a stream drops (network blip, client restart, connection_closing with
+reason `max_duration_reached`, etc.), the recommended reconnect protocol is:
+
+1. Remember the `sequence` field of the last `live-notification` or `replay`
+   event you successfully processed. The sequence is in the CloudEvent
+   payload of every notification.
+2. Issue a fresh `POST /api/v1/watch` (or `/api/v1/replay`) with `from_id`
+   set to that sequence value plus 1.
+
+That gives you exact at-least-once continuation without losing or
+duplicating notifications.
+
+Aviso does **not** use the SSE `id:` field or the `Last-Event-ID` request
+header. Both are part of the browser EventSource auto-reconnect mechanism;
+aviso supports a richer `from_id` + `from_date` reconnect contract via the
+POST request body, and we deliberately keep one explicit reconnect mechanism
+rather than expose two overlapping ones.
+
+If you need time-based catch-up rather than sequence-based, use `from_date`
+instead of `from_id` (see [Start Point for Historical
+Events](#start-point-for-historical-events) below for accepted formats).
+
 ## SSE Stream Lifecycle
 
 Every streaming response (watch or replay) goes through a typed lifecycle:

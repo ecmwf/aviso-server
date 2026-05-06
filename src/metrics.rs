@@ -6,6 +6,7 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
+use crate::middleware::request_id::RequestIdHeader;
 use actix_web::{App, HttpResponse, HttpServer, dev::Server, web};
 use prometheus::{
     Encoder, IntCounterVec, IntGaugeVec, Registry, TextEncoder, opts,
@@ -18,6 +19,7 @@ use prometheus::{
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
+use tracing_actix_web::TracingLogger;
 
 /// Feature-gated ECPDS authorization plugin metrics.
 ///
@@ -304,6 +306,11 @@ where
 }
 
 /// Spawn a lightweight metrics-only HTTP server on the given listener.
+///
+/// Wraps the same `TracingLogger` + `RequestIdHeader` pair the main server
+/// uses, so a `/metrics` scrape (or an ad-hoc `curl -i /metrics` during
+/// incident response) carries the same `X-Request-ID` correlation id as
+/// every other aviso response.
 pub fn run_metrics_server(
     listener: TcpListener,
     registry: Registry,
@@ -311,6 +318,8 @@ pub fn run_metrics_server(
     let registry = web::Data::new(registry);
     let server = HttpServer::new(move || {
         App::new()
+            .wrap(RequestIdHeader)
+            .wrap(TracingLogger::default())
             .app_data(registry.clone())
             .route("/metrics", web::get().to(metrics_handler))
     })
@@ -566,5 +575,44 @@ mod tests {
         assert!(output.contains("aviso_ecpds_access_decisions_total"));
         assert!(output.contains(r#"outcome="allow""#));
         assert!(output.contains(r#"outcome="deny_destination""#));
+    }
+
+    // The metrics-only server must wrap the same middleware stack
+    // (TracingLogger + RequestIdHeader) as the main server, so an operator
+    // running `curl -i /metrics` during incident response receives an
+    // X-Request-ID matching the one in server logs. Without these wraps the
+    // header is silently absent, which the original PR description glossed
+    // over.
+    #[actix_web::test]
+    async fn metrics_response_carries_x_request_id_header() {
+        use actix_web::test::{TestRequest, call_service, init_service};
+
+        let registry = Registry::new();
+        let registry_data = web::Data::new(registry);
+        let app = init_service(
+            App::new()
+                .wrap(RequestIdHeader)
+                .wrap(TracingLogger::default())
+                .app_data(registry_data)
+                .route("/metrics", web::get().to(metrics_handler)),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::get().uri("/metrics").to_request()).await;
+        assert_eq!(res.status(), actix_web::http::StatusCode::OK);
+
+        let value = res
+            .headers()
+            .get("x-request-id")
+            .expect("metrics response should carry X-Request-ID")
+            .to_str()
+            .expect("header should be ascii");
+        let uuid_re =
+            regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+                .expect("valid uuid regex");
+        assert!(
+            uuid_re.is_match(value),
+            "metrics X-Request-ID should be a canonical UUID, got: {value}"
+        );
     }
 }

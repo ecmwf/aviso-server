@@ -16,7 +16,7 @@ use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::streaming::{StreamOperation, enforce_stream_auth, record_start_at_span_fields};
-use crate::sse::create_replay_only_stream;
+use crate::sse::replay::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpRequest, HttpResponse, web};
 use std::sync::Arc;
@@ -63,10 +63,11 @@ pub async fn replay(
     request_id: RequestId,
     metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
+    let request_id_str = request_id.to_string();
     // Parse and validate request structure
     let notification_request = match parse_and_validate_request(&body) {
         Ok(req) => req,
-        Err(e) => return request_parse_error_response(RequestKind::Replay, e),
+        Err(e) => return request_parse_error_response(RequestKind::Replay, e, &request_id_str),
     };
 
     // Enforce schema-level auth before replay setup to fail fast.
@@ -84,7 +85,9 @@ pub async fn replay(
         ValidationConfig::for_replay(),
     ) {
         Ok(ctx) => ctx,
-        Err(e) => return request_validation_error_response(RequestKind::Replay, e),
+        Err(e) => {
+            return request_validation_error_response(RequestKind::Replay, e, &request_id_str);
+        }
     };
 
     tracing::Span::current().record("event_type", &context.event_type);
@@ -122,6 +125,7 @@ pub async fn replay(
         filtering_params,
         filtering_constraints,
         sse_guard,
+        request_id_str.clone(),
     )
     .await
     {
@@ -139,6 +143,6 @@ pub async fn replay(
             );
             response
         }
-        Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),
+        Err(e) => sse_error_response(e, &context.topic, &request_id_str),
     }
 }

@@ -293,8 +293,17 @@ Troubleshooting:
 
 ---
 
+## Reporting a Problem
+
+Every aviso response carries an `X-Request-ID` HTTP header and (for error
+responses) a `request_id` field in the JSON body. Streaming responses also
+include the same UUID in the first SSE event. When something goes wrong,
+include this id in the bug report so the operator can find the matching
+server logs in seconds. See [API Errors](./api-errors.md#how-to-report-a-problem)
+for details.
+
 ## What's Next
 
-- [Practical Examples](./practical-examples/overview.md) — constraint filtering, spatial filtering, admin operations
-- [Streaming Semantics](./streaming-semantics.md) — full rules for watch/replay behavior
-- [Configuration Reference](./configuration-reference.md) — all config fields and defaults
+- [Practical Examples](./practical-examples/overview.md): constraint filtering, spatial filtering, admin operations
+- [Streaming Semantics](./streaming-semantics.md): full rules for watch/replay behavior, request id correlation, and reconnect protocol
+- [Configuration Reference](./configuration-reference.md): all config fields and defaults
