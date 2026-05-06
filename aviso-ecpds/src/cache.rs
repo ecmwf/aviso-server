@@ -35,6 +35,20 @@ pub enum CacheOutcome {
     },
 }
 
+impl CacheOutcome {
+    /// Stable lower-snake-case label string for this outcome. Used as
+    /// the value of the `cache_outcome` field in `auth.ecpds.check.*`
+    /// tracing events so log filters and dashboards have a fixed
+    /// vocabulary independent of the enum's `Debug` formatting.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Hit => "hit",
+            Self::MissCoalesced => "miss_coalesced",
+            Self::MissFetched { .. } => "miss_fetched",
+        }
+    }
+}
+
 /// Per-username cache of authorised ECPDS destination lists.
 ///
 /// Backed by [`moka::future::Cache`], which provides:
@@ -217,6 +231,30 @@ mod tests {
 
     fn dest_set(items: &[&str]) -> HashSet<String> {
         items.iter().map(|s| (*s).to_string()).collect()
+    }
+
+    #[test]
+    fn cache_outcome_label_is_stable_lowercase_snake_case() {
+        assert_eq!(CacheOutcome::Hit.label(), "hit");
+        assert_eq!(CacheOutcome::MissCoalesced.label(), "miss_coalesced");
+        assert_eq!(
+            CacheOutcome::MissFetched {
+                fetch_outcome: FetchOutcome::Success
+            }
+            .label(),
+            "miss_fetched",
+            "the inner fetch_outcome is logged separately on the unavailable \
+             event and via aviso_ecpds_fetch_total; the cache_outcome label \
+             only carries the variant name so log filters are stable"
+        );
+        assert_eq!(
+            CacheOutcome::MissFetched {
+                fetch_outcome: FetchOutcome::Unauthorized
+            }
+            .label(),
+            "miss_fetched",
+            "MissFetched label must not vary with the inner fetch_outcome"
+        );
     }
 
     #[tokio::test]

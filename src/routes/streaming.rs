@@ -234,6 +234,12 @@ pub async fn enforce_ecpds_auth(
         .check_access(&user.username, canonicalized_params)
         .await;
 
+    let cache_outcome_label = access
+        .cache_outcome
+        .as_ref()
+        .map(|c| c.label())
+        .unwrap_or("none");
+
     if let Some(m) = metrics.as_ref() {
         m.ecpds.cache_size.set(checker.cache_entry_count() as i64);
         // Cache and fetch counters are recorded once per cache lookup,
@@ -266,7 +272,7 @@ pub async fn enforce_ecpds_auth(
                 event_name = "auth.ecpds.check.allowed",
                 event_type = %event_type,
                 username = %user.username,
-                cache_outcome = ?access.cache_outcome,
+                cache_outcome = cache_outcome_label,
                 "ECPDS access allowed"
             );
             record_decision("allow");
@@ -280,7 +286,7 @@ pub async fn enforce_ecpds_auth(
                 event_type = %event_type,
                 username = %user.username,
                 reason = ?reason,
-                cache_outcome = ?access.cache_outcome,
+                cache_outcome = cache_outcome_label,
                 "ECPDS access denied"
             );
             record_decision(reason.label());
@@ -294,7 +300,7 @@ pub async fn enforce_ecpds_auth(
                 event_type = %event_type,
                 username = %user.username,
                 fetch_outcome = ?fetch_outcome,
-                cache_outcome = ?access.cache_outcome,
+                cache_outcome = cache_outcome_label,
                 "ECPDS service unavailable"
             );
             record_decision("unavailable");
@@ -308,7 +314,7 @@ pub async fn enforce_ecpds_auth(
                 event_type = %event_type,
                 username = %user.username,
                 error = %e,
-                cache_outcome = ?access.cache_outcome,
+                cache_outcome = cache_outcome_label,
                 "Unexpected ECPDS error"
             );
             record_decision("error");

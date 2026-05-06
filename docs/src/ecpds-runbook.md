@@ -115,10 +115,11 @@ Some events carry a typed enum field. The values you will see in logs are listed
   - `ServerError`: an ECPDS server returned 5xx.
   - `InvalidResponse`: an ECPDS server returned a body the parser could not read.
   - `Unreachable`: network or timeout failure.
-- `cache_outcome` (on `auth.ecpds.check.allowed`):
-  - `Hit`: served from cache.
-  - `MissCoalesced`: the cache was empty for this key but a concurrent caller's fetch was in flight; this request waited on it.
-  - `MissFetched { fetch_outcome: ... }`: this request ran the upstream fetch itself; the inner `fetch_outcome` carries the merged per-server result (`Success` when every server responded cleanly, otherwise the worst per-server failure under `any_success`).
+- `cache_outcome` (on every `auth.ecpds.check.*` event: `.allowed`, `.denied`, `.unavailable`, `.error`):
+  - `hit`: served from cache.
+  - `miss_coalesced`: the cache was empty for this key but a concurrent caller's fetch was in flight; this request waited on it.
+  - `miss_fetched`: this request ran the upstream fetch itself. The merged per-server result of that fetch is recorded as the `outcome` label on the `aviso_ecpds_fetch_total` metric, and on the `auth.ecpds.check.unavailable` event also as `fetch_outcome` (see above). It is intentionally NOT inlined into `cache_outcome` so log filters keyed on `cache_outcome:miss_fetched` stay stable as new `FetchOutcome` variants are added.
+  - `none`: cache lookup was deliberately skipped because the request fell at the `MatchKeyMissing` deny path before any cache call ran. Only appears on `auth.ecpds.check.denied` events alongside `reason=MatchKeyMissing`.
 
 ## How to confirm "config error vs. upstream outage"
 
