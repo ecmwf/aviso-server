@@ -38,7 +38,7 @@ use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 /// - Fetches batch_size and batch_delay_ms from global configuration
 /// - Performs paginated fetch of notifications from the backend
 /// - Applies request-level filtering (including optional spatial filtering)
-pub fn create_historical_replay_stream(
+pub(crate) fn create_historical_replay_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     start_at: StartAt,

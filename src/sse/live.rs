@@ -27,7 +27,7 @@ use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
 /// Create a live notification stream from a backend subscription
-pub fn create_live_notification_stream(
+pub(crate) fn create_live_notification_stream(
     notification_stream: impl tokio_stream::Stream<Item = NotificationMessage> + Send + 'static,
     _concurrent_limit: usize,
 ) -> impl tokio_stream::Stream<Item = StreamFrame> {

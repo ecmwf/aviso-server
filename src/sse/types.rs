@@ -52,20 +52,20 @@ pub fn format_sse_event(event_type: SseEventType, data: Value) -> String {
 }
 
 #[derive(Debug, Clone)]
-pub enum DeliveryKind {
+pub(crate) enum DeliveryKind {
     Live,
     Replay,
 }
 
 #[derive(Debug, Clone)]
-pub enum CloseReason {
+pub(crate) enum CloseReason {
     ServerShutdown,
     MaxDurationReached,
     EndOfStream,
 }
 
 #[derive(Debug, Clone)]
-pub enum ControlEvent {
+pub(crate) enum ControlEvent {
     ConnectionEstablished {
         topic: String,
         timestamp: DateTime<Utc>,
@@ -92,7 +92,7 @@ pub enum ControlEvent {
 }
 
 #[derive(Debug, Clone)]
-pub enum StreamFrame {
+pub(crate) enum StreamFrame {
     Notification {
         notification: NotificationMessage,
         kind: DeliveryKind,

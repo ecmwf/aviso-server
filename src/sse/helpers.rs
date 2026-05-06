@@ -96,7 +96,7 @@ pub fn notification_to_sse_event(
 /// event-stream text payloads sent to clients. `request_id` is propagated
 /// only for the per-message CloudEvent-failure error path; control events
 /// and lifecycle frames carry their own copy inside the variant.
-pub fn frame_to_sse_bytes(
+pub(crate) fn frame_to_sse_bytes(
     frame: StreamFrame,
     base_url: &str,
     request_id: &str,
@@ -224,7 +224,7 @@ pub fn frame_to_sse_bytes(
 }
 
 /// Create a heartbeat stream for SSE connections
-pub fn create_heartbeat_stream(
+pub(crate) fn create_heartbeat_stream(
     topic: String,
     interval_seconds: u64,
 ) -> impl tokio_stream::Stream<Item = StreamFrame> {
@@ -252,7 +252,7 @@ pub fn create_heartbeat_stream(
 /// 1. server shutdown
 /// 2. max duration reached
 /// 3. natural end-of-stream
-pub fn apply_stream_lifecycle<S>(
+pub(crate) fn apply_stream_lifecycle<S>(
     stream: S,
     topic: String,
     shutdown_token: CancellationToken,
