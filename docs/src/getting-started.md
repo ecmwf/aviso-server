@@ -304,6 +304,6 @@ for details.
 
 ## What's Next
 
-- [Practical Examples](./practical-examples/overview.md) — constraint filtering, spatial filtering, admin operations
-- [Streaming Semantics](./streaming-semantics.md) — full rules for watch/replay behavior, request id correlation, and reconnect protocol
-- [Configuration Reference](./configuration-reference.md) — all config fields and defaults
+- [Practical Examples](./practical-examples/overview.md): constraint filtering, spatial filtering, admin operations
+- [Streaming Semantics](./streaming-semantics.md): full rules for watch/replay behavior, request id correlation, and reconnect protocol
+- [Configuration Reference](./configuration-reference.md): all config fields and defaults

@@ -157,7 +157,7 @@ pub async fn notify(
     // Build success response
     let response = NotificationResponse {
         status: "success".to_string(),
-        request_id: request_id_str.clone(),
+        request_id: request_id_str,
         processed_at: chrono::Utc::now().to_rfc3339(),
     };
 
