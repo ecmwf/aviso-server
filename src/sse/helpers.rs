@@ -289,10 +289,20 @@ where
 
     let graceful = futures_util::StreamExt::take_until(stream, stop_future);
 
+    // The terminal Close frame must be CONSTRUCTED at yield time, not at
+    // stream-build time. tokio_stream::once(value) takes an already-evaluated
+    // value, so a `tokio_stream::once({ block })` here would capture
+    // close_code (always 0 at construction) and the timestamp at function
+    // entry, breaking the ServerShutdown/MaxDurationReached close reasons
+    // and producing a stream-start timestamp on every close. Using
+    // futures_util::stream::once(future) defers evaluation: the async block
+    // is polled only after `graceful` finishes, so close_code reflects which
+    // branch of stop_future actually completed and chrono::Utc::now() reads
+    // wall-clock at the moment of close.
     let close_code_for_end = close_code.clone();
     futures_util::StreamExt::chain(
         graceful,
-        tokio_stream::once({
+        futures_util::stream::once(async move {
             let reason = match close_code_for_end.load(Ordering::SeqCst) {
                 1 => CloseReason::ServerShutdown,
                 2 => CloseReason::MaxDurationReached,
@@ -450,5 +460,57 @@ mod tests {
         assert!(text.contains(r#"event: connection-closing"#));
         assert!(text.contains(&format!(r#""request_id":"{TEST_REQUEST_ID}""#)));
         assert!(text.contains(r#""reason":"max_duration_reached""#));
+    }
+
+    // Pin the deferred-evaluation contract of apply_stream_lifecycle's
+    // synthesized close frame. With the buggy `tokio_stream::once(value)`
+    // form the close frame's reason was captured at stream construction
+    // (always 0 = EndOfStream); the fix uses
+    // `futures_util::stream::once(future)` so close_code is read at yield
+    // time and reflects which branch of stop_future actually completed.
+    // Pre-cancelling the shutdown token gives a deterministic
+    // ServerShutdown verdict that fails on the buggy code and passes on
+    // the fixed code.
+    #[tokio::test]
+    async fn close_frame_reflects_actual_close_reason_via_apply_stream_lifecycle() {
+        use super::apply_stream_lifecycle;
+        use std::time::Duration;
+        use tokio_stream::StreamExt as _;
+
+        let inner: futures_util::stream::Pending<StreamFrame> = futures_util::stream::pending();
+        let token = tokio_util::sync::CancellationToken::new();
+        token.cancel();
+
+        let stream = apply_stream_lifecycle(
+            inner,
+            "test.topic".to_string(),
+            token,
+            Some(Duration::from_secs(60)),
+            "req-shutdown".to_string(),
+        );
+        tokio::pin!(stream);
+
+        let frame = stream.next().await.expect("close frame should be yielded");
+        match frame {
+            StreamFrame::Close {
+                reason,
+                request_id,
+                topic,
+                ..
+            } => {
+                assert!(
+                    matches!(reason, CloseReason::ServerShutdown),
+                    "close reason should reflect actual cause (ServerShutdown), got: {reason:?}"
+                );
+                assert_eq!(request_id, "req-shutdown");
+                assert_eq!(topic, "test.topic");
+            }
+            other => panic!("expected StreamFrame::Close, got: {other:?}"),
+        }
+
+        assert!(
+            stream.next().await.is_none(),
+            "stream should terminate after the close frame"
+        );
     }
 }
