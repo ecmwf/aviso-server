@@ -16,7 +16,7 @@ use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::streaming::{StreamOperation, enforce_stream_auth, record_start_at_span_fields};
-use crate::sse::create_replay_only_stream;
+use crate::sse::replay::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpRequest, HttpResponse, web};
 use std::sync::Arc;

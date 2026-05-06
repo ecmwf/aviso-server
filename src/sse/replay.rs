@@ -186,7 +186,7 @@ pub(crate) fn create_historical_replay_stream(
 /// dedicated `StreamSetup` struct would be a worthwhile but separate refactor
 /// touching every caller and is intentionally out of scope here.
 #[allow(clippy::too_many_arguments)]
-pub async fn create_historical_then_live_stream(
+pub(crate) async fn create_historical_then_live_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     start_at: StartAt,
@@ -303,7 +303,7 @@ pub async fn create_historical_then_live_stream(
 /// notifications. See `create_historical_then_live_stream` for the rationale
 /// behind the `clippy::too_many_arguments` allow.
 #[allow(clippy::too_many_arguments)]
-pub async fn create_replay_only_stream(
+pub(crate) async fn create_replay_only_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     start_at: StartAt,

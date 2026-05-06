@@ -20,8 +20,11 @@ pub mod live;
 pub mod replay;
 pub mod types;
 
-// Re-export the main public API
-pub use helpers::{create_sse_response, notification_to_sse_event};
-pub use live::create_watch_sse_stream;
-pub use replay::{create_historical_then_live_stream, create_replay_only_stream};
+// Re-export the small public surface that is genuinely consumable outside
+// this module (formatting helpers and the response builder). The stream
+// constructors and the byte/event renderers are crate-private because
+// their signatures embed aviso-internal types (NotificationMessage,
+// CancellationToken, the request_id correlation contract, NotificationBackend
+// trait objects); they are never called from outside `src/`.
+pub use helpers::create_sse_response;
 pub use types::{SseEventType, format_sse_event};

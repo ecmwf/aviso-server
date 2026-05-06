@@ -33,7 +33,7 @@ fn format_stream_timestamp(timestamp: DateTime<Utc>) -> String {
 }
 
 /// Convert a notification message to an SSE event
-pub fn notification_to_sse_event(
+pub(crate) fn notification_to_sse_event(
     notification: &crate::notification_backend::NotificationMessage,
     base_url: &str,
     event_type: SseEventType,

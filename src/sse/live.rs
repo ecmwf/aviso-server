@@ -45,7 +45,7 @@ pub(crate) fn create_live_notification_stream(
 /// - Subscribes to the notification topic for real-time events
 /// - Filters each notification using matches_notification_filters (param/polygon filtering)
 /// - Sends connection established and heartbeat events, supports graceful shutdown
-pub async fn create_watch_sse_stream(
+pub(crate) async fn create_watch_sse_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     shutdown: web::Data<CancellationToken>,
