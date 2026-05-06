@@ -8,20 +8,29 @@
 
 use crate::helpers::{spawn_app, spawn_streaming_test_app};
 use crate::test_utils::test_polygon;
+use regex::Regex;
 use serde_json::Value;
+use std::sync::LazyLock;
 
 const HEADER: &str = "x-request-id";
 
+// The exact UUID version (v4 today, v7 if tracing-actix-web's uuid_v7 feature
+// is ever enabled upstream) is not part of aviso's contract; we only assert
+// the canonical hyphenated lowercase shape. Compiled once for the whole test
+// module to avoid recompiling on every assertion.
+static UUID_FORMAT_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
+        .expect("valid uuid regex")
+});
+
 fn assert_uuid_format(value: &str) {
-    // The exact UUID version (v4 today, v7 if tracing-actix-web's
-    // uuid_v7 feature is ever enabled upstream) is not part of aviso's
-    // contract; we only assert the canonical hyphenated lowercase shape.
-    let re = regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
-        .expect("valid uuid regex");
-    assert!(re.is_match(value), "expected canonical UUID, got: {value}");
+    assert!(
+        UUID_FORMAT_RE.is_match(value),
+        "expected canonical UUID, got: {value}"
+    );
 }
 
-async fn extract_header_id(response: &reqwest::Response) -> String {
+fn extract_header_id(response: &reqwest::Response) -> String {
     response
         .headers()
         .get(HEADER)
@@ -244,7 +253,7 @@ async fn schema_get_404_body_includes_request_id() {
         .expect("schema request should succeed");
 
     assert_eq!(response.status().as_u16(), 404);
-    let header_id = extract_header_id(&response).await;
+    let header_id = extract_header_id(&response);
     let body: Value = response.json().await.expect("body should be JSON");
     assert_eq!(
         body["request_id"]
@@ -271,7 +280,7 @@ async fn admin_delete_400_body_includes_request_id() {
         .expect("admin request should succeed");
 
     assert_eq!(response.status().as_u16(), 400);
-    let header_id = extract_header_id(&response).await;
+    let header_id = extract_header_id(&response);
     let body: Value = response.json().await.expect("body should be JSON");
     assert_eq!(
         body["request_id"]
@@ -296,7 +305,7 @@ async fn admin_delete_404_body_includes_request_id() {
         .expect("admin request should succeed");
 
     assert_eq!(response.status().as_u16(), 404);
-    let header_id = extract_header_id(&response).await;
+    let header_id = extract_header_id(&response);
     let body: Value = response.json().await.expect("body should be JSON");
     assert_eq!(
         body["request_id"]
