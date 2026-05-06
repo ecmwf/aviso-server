@@ -101,12 +101,18 @@ pub struct EcpdsConfig {
     /// TinyLFU eviction. Default 10 000.
     #[serde(default = "default_max_entries")]
     pub max_entries: u64,
-    /// Total wall-clock timeout for a single ECPDS HTTP request.
-    /// Default 30 seconds.
+    /// Total wall-clock budget for a single ECPDS HTTP request,
+    /// covering DNS lookup, TCP connect, TLS handshake, request send,
+    /// AND response body read. Maps to `reqwest::ClientBuilder::timeout`,
+    /// which is a deadline that starts when the request is issued, not
+    /// when connection setup completes. Default 30 seconds.
     #[serde(default = "default_request_timeout")]
     pub request_timeout_seconds: u64,
-    /// TCP + TLS handshake timeout for a single ECPDS HTTP request.
-    /// Default 5 seconds.
+    /// Sub-budget for the dial-through-TLS-handshake phase only (DNS,
+    /// TCP connect, TLS). Maps to `reqwest::ClientBuilder::connect_timeout`.
+    /// If this elapses first, the request fails with a connect timeout;
+    /// otherwise the remainder of [`Self::request_timeout_seconds`]
+    /// covers request send and response body read. Default 5 seconds.
     #[serde(default = "default_connect_timeout")]
     pub connect_timeout_seconds: u64,
     /// How to merge per-server destination lists when more than one
