@@ -28,13 +28,24 @@ Fields:
 Notes:
 
 - `error_chain` is logged server-side for diagnostics, but is not returned in API responses.
-- `message` and `details` are always present for both `4xx` and `5xx` error responses.
-- `request_id` is present on every error response body. SSE stream
-  initialization failures additionally include `topic` (the decoded logical
-  topic) so the operator can scope log queries faster.
-- `401` responses use a 4-field shape (`code`, `error`, `message`,
-  `request_id`); `details` is intentionally omitted because the upstream
-  authentication service does not provide a stable detailed message.
+- `message` is always present.
+- `details` is present on `4xx` and `5xx` errors emitted from the
+  notification/watch/replay request path (parse, validation, processing, and
+  SSE stream initialization). It is intentionally omitted from authentication
+  errors (`401`/`403`/`503`) and from the streaming-auth helpers (forbidden,
+  ECPDS service unavailable, internal misconfiguration), where the upstream
+  service or authorization plugin does not provide a stable detailed message.
+- `request_id` is present on every error response body produced by aviso's
+  own handlers (notification, watch, replay, schema, admin, auth and ECPDS
+  authorization helpers). The same UUID is also returned in the
+  `X-Request-ID` HTTP response header on every response, including success
+  responses and any framework-level fallback (404 for an unknown route, 405
+  for a wrong method, etc.) where a body field is not under aviso's control.
+- SSE stream initialization failures additionally include `topic` (the
+  decoded logical topic) so the operator can scope log queries faster.
+- The admin endpoints (`/api/v1/admin/*`) and `POST /api/v1/notification`
+  return typed responses where `request_id` is a struct field rather than a
+  free-form JSON key, but the field name and value are the same.
 
 ## How to report a problem
 

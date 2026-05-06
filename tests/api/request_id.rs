@@ -8,6 +8,7 @@
 
 use crate::helpers::{spawn_app, spawn_streaming_test_app};
 use crate::test_utils::test_polygon;
+use serde_json::Value;
 
 const HEADER: &str = "x-request-id";
 
@@ -15,6 +16,16 @@ fn assert_uuid_v4(value: &str) {
     let re = regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
         .expect("valid uuid regex");
     assert!(re.is_match(value), "expected UUID v4, got: {value}");
+}
+
+async fn extract_header_id(response: &reqwest::Response) -> String {
+    response
+        .headers()
+        .get(HEADER)
+        .expect("X-Request-ID header should be present")
+        .to_str()
+        .expect("header should be ascii")
+        .to_owned()
 }
 
 #[tokio::test]
@@ -213,5 +224,82 @@ async fn sse_connection_established_payload_includes_request_id() {
     assert_eq!(
         body_id, header_id,
         "in-stream request_id should match X-Request-ID header"
+    );
+}
+
+#[tokio::test]
+async fn schema_get_404_body_includes_request_id() {
+    let app = spawn_app().await;
+
+    let response = reqwest::Client::new()
+        .get(format!(
+            "{}/api/v1/schema/event_does_not_exist",
+            &app.address
+        ))
+        .send()
+        .await
+        .expect("schema request should succeed");
+
+    assert_eq!(response.status().as_u16(), 404);
+    let header_id = extract_header_id(&response).await;
+    let body: Value = response.json().await.expect("body should be JSON");
+    assert_eq!(
+        body["request_id"]
+            .as_str()
+            .expect("body should include request_id"),
+        header_id,
+        "schema 404 body request_id should match X-Request-ID header"
+    );
+}
+
+#[tokio::test]
+async fn admin_delete_400_body_includes_request_id() {
+    // Admin error bodies must carry request_id because aviso can be deployed
+    // with auth disabled, which makes /api/v1/admin/* publicly reachable.
+    let app = spawn_streaming_test_app().await;
+
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/notification/not-a-valid-id",
+            &app.address
+        ))
+        .send()
+        .await
+        .expect("admin request should succeed");
+
+    assert_eq!(response.status().as_u16(), 400);
+    let header_id = extract_header_id(&response).await;
+    let body: Value = response.json().await.expect("body should be JSON");
+    assert_eq!(
+        body["request_id"]
+            .as_str()
+            .expect("body should include request_id"),
+        header_id,
+        "admin 400 body request_id should match X-Request-ID header"
+    );
+}
+
+#[tokio::test]
+async fn admin_delete_404_body_includes_request_id() {
+    let app = spawn_streaming_test_app().await;
+
+    let response = reqwest::Client::new()
+        .delete(format!(
+            "{}/api/v1/admin/notification/test_polygon@999999999",
+            &app.address
+        ))
+        .send()
+        .await
+        .expect("admin request should succeed");
+
+    assert_eq!(response.status().as_u16(), 404);
+    let header_id = extract_header_id(&response).await;
+    let body: Value = response.json().await.expect("body should be JSON");
+    assert_eq!(
+        body["request_id"]
+            .as_str()
+            .expect("body should include request_id"),
+        header_id,
+        "admin 404 body request_id should match X-Request-ID header"
     );
 }
