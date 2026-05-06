@@ -1,6 +1,10 @@
 # API Errors
 
-Aviso returns a consistent JSON error object for `4xx` and `5xx` responses.
+Errors produced by aviso's own handlers use a consistent JSON error object
+on `4xx` and `5xx` responses. A small number of `4xx` responses are
+framework-level fallbacks rather than aviso-handled errors and use a
+different shape; see [Framework-Level Fallbacks](#framework-level-fallbacks)
+below.
 
 ## Response Shape
 
@@ -37,10 +41,11 @@ Notes:
   service or authorization plugin does not provide a stable detailed message.
 - `request_id` is present on every error response body produced by aviso's
   own handlers (notification, watch, replay, schema, admin, auth and ECPDS
-  authorization helpers). The same UUID is also returned in the
-  `X-Request-ID` HTTP response header on every response, including success
-  responses and any framework-level fallback (404 for an unknown route, 405
-  for a wrong method, etc.) where a body field is not under aviso's control.
+  authorization helpers). The `X-Request-ID` HTTP response header carries
+  the same UUID on **every** response (success, aviso error, or
+  framework-level fallback); see
+  [Framework-Level Fallbacks](#framework-level-fallbacks) for the
+  fallback cases where a JSON body field is not available.
 - SSE stream initialization failures additionally include `topic` (the
   decoded logical topic) so the operator can scope log queries faster.
 - The admin endpoints (`/api/v1/admin/*`) and `POST /api/v1/notification`
@@ -142,3 +147,34 @@ SSE initialization failure:
   "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
+
+## Framework-Level Fallbacks
+
+A few `4xx` responses are produced by the Actix HTTP framework itself
+**before** any aviso handler runs, so the body shape is whatever the
+framework defaults to (typically `text/plain` or empty) and not the JSON
+object documented above:
+
+| Status | Trigger |
+|---|---|
+| `404 Not Found` | Request path does not match any registered aviso route. |
+| `405 Method Not Allowed` | Path matches an aviso route but the HTTP method does not. |
+| `400 Bad Request` (rare) | Request fails framework-level checks (malformed Content-Length, etc.) before reaching aviso's body parsers. |
+
+For these cases:
+
+- `code`, `error`, `message`, `details`, and `request_id` JSON fields are
+  **not** in the body.
+- The `X-Request-ID` HTTP response header is still set on `404` and `405`
+  (the middleware stack runs before Actix's default route-mismatch
+  responses), so an operator can correlate the request with server logs
+  by header alone. Errors raised even earlier in the HTTP stack (e.g.,
+  malformed `Content-Length`, TLS handshake failure) bypass aviso's
+  middleware entirely and produce no `X-Request-ID`; in those cases the
+  request never reaches aviso, no log line is generated, and no
+  correlation is possible.
+- The aviso `code` reference table above does not apply.
+
+If you need a stable JSON shape on these paths, hit a known-good route
+(`GET /health` is the simplest); a `4xx` from there indicates an actual
+aviso-handled error and follows the documented contract.
