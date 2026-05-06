@@ -70,6 +70,7 @@ pub enum ControlEvent {
         topic: String,
         timestamp: DateTime<Utc>,
         connection_will_close_in_seconds: u64,
+        request_id: String,
     },
     ReplayStarted {
         topic: String,
@@ -77,6 +78,7 @@ pub enum ControlEvent {
         from_date: Option<DateTime<Utc>>,
         batch_size: usize,
         timestamp: DateTime<Utc>,
+        request_id: String,
     },
     ReplayCompleted {
         topic: String,
@@ -103,10 +105,12 @@ pub enum StreamFrame {
     Error {
         topic: String,
         message: String,
+        request_id: String,
     },
     Close {
         topic: String,
         reason: CloseReason,
         timestamp: DateTime<Utc>,
+        request_id: String,
     },
 }

@@ -143,3 +143,75 @@ async fn x_request_id_header_present_on_sse_stream() {
         .expect("X-Request-ID header should be present on SSE 200 OK");
     assert_uuid_v4(header.to_str().expect("header should be ascii"));
 }
+
+#[tokio::test]
+async fn sse_connection_established_payload_includes_request_id() {
+    // Stream the response just long enough to read the first SSE frame, parse
+    // its data: payload as JSON, and confirm the connection_established event
+    // exposes the same UUID as the X-Request-ID header. This is the actual
+    // user-facing contract: a client that consumes the stream as raw bytes
+    // (no header parsing) still sees the request id once, near the top.
+    use std::time::Duration;
+
+    let app = spawn_streaming_test_app().await;
+    let request_body = serde_json::json!({
+        "event_type": "test_polygon",
+        "identifier": {
+            "time": "1200",
+            "polygon": test_polygon(),
+        }
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("{}/api/v1/watch", &app.address))
+        .header("content-type", "application/json")
+        .json(&request_body)
+        .send()
+        .await
+        .expect("watch request should succeed");
+
+    assert_eq!(response.status().as_u16(), 200);
+    let header_id = response
+        .headers()
+        .get(HEADER)
+        .expect("X-Request-ID header should be present")
+        .to_str()
+        .expect("header should be ascii")
+        .to_owned();
+
+    // Read chunks until we see the first complete event terminator (\n\n)
+    // or hit a sane byte cap. Watch streams are open-ended, so we cannot
+    // wait for body close.
+    let mut response = response;
+    let mut buffer = Vec::with_capacity(4096);
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while let Ok(Some(chunk)) = response.chunk().await {
+            buffer.extend_from_slice(&chunk);
+            if buffer.windows(2).any(|w| w == b"\n\n") || buffer.len() >= 4096 {
+                break;
+            }
+        }
+    })
+    .await
+    .expect("first SSE event should arrive within 5s");
+
+    let text = String::from_utf8(buffer).expect("SSE bytes should be valid utf-8");
+    let data_line = text
+        .lines()
+        .find(|line| line.starts_with("data: "))
+        .expect("first event should contain a data: line");
+    let payload: serde_json::Value =
+        serde_json::from_str(&data_line[6..]).expect("data: line should hold valid JSON");
+
+    assert_eq!(
+        payload["type"], "connection_established",
+        "first event should be connection_established"
+    );
+    let body_id = payload["request_id"]
+        .as_str()
+        .expect("connection_established payload should carry request_id");
+    assert_eq!(
+        body_id, header_id,
+        "in-stream request_id should match X-Request-ID header"
+    );
+}

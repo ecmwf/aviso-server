@@ -37,6 +37,7 @@ pub fn notification_to_sse_event(
     notification: &crate::notification_backend::NotificationMessage,
     base_url: &str,
     event_type: SseEventType,
+    request_id: &str,
 ) -> Result<web::Bytes, actix_web::Error> {
     match create_cloud_event_from_notification(notification, base_url) {
         Ok(cloud_event) => {
@@ -66,16 +67,21 @@ pub fn notification_to_sse_event(
                 error = %e,
                 topic = %display_topic,
                 sequence = notification.sequence,
+                request_id = %request_id,
                 "Failed to create CloudEvent from notification"
             );
 
+            // CloudEvent creation failures bypass StreamFrame::Error and emit
+            // an `event: error` directly here. Carrying request_id keeps the
+            // payload self-contained for incident reports.
             let error_event = format_sse_event(
                 SseEventType::Error,
                 json!({
                     "error": "CloudEvent creation failed",
                     "message": e.to_string(),
                     "topic": display_topic,
-                    "sequence": notification.sequence
+                    "sequence": notification.sequence,
+                    "request_id": request_id,
                 }),
             );
 
@@ -87,10 +93,13 @@ pub fn notification_to_sse_event(
 /// Render an internal stream frame into SSE wire bytes.
 ///
 /// This is the single formatting boundary between typed stream state and
-/// event-stream text payloads sent to clients.
+/// event-stream text payloads sent to clients. `request_id` is propagated
+/// only for the per-message CloudEvent-failure error path; control events
+/// and lifecycle frames carry their own copy inside the variant.
 pub fn frame_to_sse_bytes(
     frame: StreamFrame,
     base_url: &str,
+    request_id: &str,
 ) -> Result<web::Bytes, actix_web::Error> {
     match frame {
         StreamFrame::Notification { notification, kind } => {
@@ -98,20 +107,22 @@ pub fn frame_to_sse_bytes(
                 DeliveryKind::Live => SseEventType::LiveNotification,
                 DeliveryKind::Replay => SseEventType::ReplayNotification,
             };
-            notification_to_sse_event(&notification, base_url, event_type)
+            notification_to_sse_event(&notification, base_url, event_type, request_id)
         }
         StreamFrame::Control(control) => match control {
             ControlEvent::ConnectionEstablished {
                 topic,
                 timestamp,
                 connection_will_close_in_seconds,
+                request_id,
             } => Ok(web::Bytes::from(format_sse_event(
                 SseEventType::LiveNotification,
                 json!({
                     "type": "connection_established",
                     "topic": decode_subject_for_display(&topic),
                     "timestamp": format_stream_timestamp(timestamp),
-                    "connection_will_close_in_seconds": connection_will_close_in_seconds
+                    "connection_will_close_in_seconds": connection_will_close_in_seconds,
+                    "request_id": request_id,
                 }),
             ))),
             ControlEvent::ReplayStarted {
@@ -120,6 +131,7 @@ pub fn frame_to_sse_bytes(
                 from_date,
                 batch_size,
                 timestamp,
+                request_id,
             } => Ok(web::Bytes::from(format_sse_event(
                 SseEventType::ReplayControl,
                 json!({
@@ -128,7 +140,8 @@ pub fn frame_to_sse_bytes(
                     "from_sequence": from_sequence,
                     "from_date": from_date.map(format_stream_timestamp),
                     "batch_size": batch_size,
-                    "timestamp": format_stream_timestamp(timestamp)
+                    "timestamp": format_stream_timestamp(timestamp),
+                    "request_id": request_id,
                 }),
             ))),
             ControlEvent::ReplayCompleted { topic, timestamp } => {
@@ -166,18 +179,24 @@ pub fn frame_to_sse_bytes(
                 "topic": decode_subject_for_display(&topic)
             }),
         ))),
-        StreamFrame::Error { topic, message } => Ok(web::Bytes::from(format_sse_event(
+        StreamFrame::Error {
+            topic,
+            message,
+            request_id,
+        } => Ok(web::Bytes::from(format_sse_event(
             SseEventType::Error,
             json!({
                 "error": "stream_processing_failed",
                 "message": message,
-                "topic": decode_subject_for_display(&topic)
+                "topic": decode_subject_for_display(&topic),
+                "request_id": request_id,
             }),
         ))),
         StreamFrame::Close {
             topic,
             reason,
             timestamp,
+            request_id,
         } => {
             let (reason_str, message) = match reason {
                 CloseReason::ServerShutdown => (
@@ -196,7 +215,8 @@ pub fn frame_to_sse_bytes(
                     "reason": reason_str,
                     "timestamp": format_stream_timestamp(timestamp),
                     "message": message,
-                    "topic": decode_subject_for_display(&topic)
+                    "topic": decode_subject_for_display(&topic),
+                    "request_id": request_id,
                 }),
             )))
         }
@@ -237,6 +257,7 @@ pub fn apply_stream_lifecycle<S>(
     topic: String,
     shutdown_token: CancellationToken,
     max_duration: Option<Duration>,
+    request_id: String,
 ) -> impl tokio_stream::Stream<Item = StreamFrame>
 where
     S: tokio_stream::Stream<Item = StreamFrame>,
@@ -282,6 +303,7 @@ where
                 topic,
                 reason,
                 timestamp: chrono::Utc::now(),
+                request_id,
             }
         }),
     )
@@ -318,8 +340,10 @@ where
 #[cfg(test)]
 mod tests {
     use super::frame_to_sse_bytes;
-    use crate::sse::types::{ControlEvent, StreamFrame};
+    use crate::sse::types::{CloseReason, ControlEvent, StreamFrame};
     use chrono::{DateTime, Utc};
+
+    const TEST_REQUEST_ID: &str = "abcd1234-0000-4000-8000-aaaaaaaaaaaa";
 
     #[test]
     fn replay_started_timestamps_are_emitted_as_clean_utc_seconds() {
@@ -337,13 +361,94 @@ mod tests {
                 from_date: Some(from_date),
                 batch_size: 100,
                 timestamp: control_timestamp,
+                request_id: TEST_REQUEST_ID.to_string(),
             }),
             "http://localhost",
+            TEST_REQUEST_ID,
         )
         .expect("frame rendering should succeed");
         let text = String::from_utf8(bytes.to_vec()).expect("sse bytes should be valid utf-8");
 
         assert!(text.contains(r#""timestamp":"2026-02-25T18:58:23Z""#));
         assert!(text.contains(r#""from_date":"2026-02-25T17:01:02Z""#));
+    }
+
+    #[test]
+    fn connection_established_event_carries_request_id() {
+        let bytes = frame_to_sse_bytes(
+            StreamFrame::Control(ControlEvent::ConnectionEstablished {
+                topic: "test.topic".to_string(),
+                timestamp: Utc::now(),
+                connection_will_close_in_seconds: 3600,
+                request_id: TEST_REQUEST_ID.to_string(),
+            }),
+            "http://localhost",
+            TEST_REQUEST_ID,
+        )
+        .expect("frame rendering should succeed");
+        let text = String::from_utf8(bytes.to_vec()).expect("sse bytes should be valid utf-8");
+
+        assert!(text.contains(&format!(r#""request_id":"{TEST_REQUEST_ID}""#)));
+        assert!(text.contains(r#""type":"connection_established""#));
+    }
+
+    #[test]
+    fn replay_started_event_carries_request_id() {
+        let bytes = frame_to_sse_bytes(
+            StreamFrame::Control(ControlEvent::ReplayStarted {
+                topic: "test.topic".to_string(),
+                from_sequence: Some(42),
+                from_date: None,
+                batch_size: 10,
+                timestamp: Utc::now(),
+                request_id: TEST_REQUEST_ID.to_string(),
+            }),
+            "http://localhost",
+            TEST_REQUEST_ID,
+        )
+        .expect("frame rendering should succeed");
+        let text = String::from_utf8(bytes.to_vec()).expect("sse bytes should be valid utf-8");
+
+        assert!(text.contains(&format!(r#""request_id":"{TEST_REQUEST_ID}""#)));
+        assert!(text.contains(r#""type":"replay_started""#));
+    }
+
+    #[test]
+    fn error_frame_carries_request_id() {
+        let bytes = frame_to_sse_bytes(
+            StreamFrame::Error {
+                topic: "test.topic".to_string(),
+                message: "backend unavailable".to_string(),
+                request_id: TEST_REQUEST_ID.to_string(),
+            },
+            "http://localhost",
+            TEST_REQUEST_ID,
+        )
+        .expect("frame rendering should succeed");
+        let text = String::from_utf8(bytes.to_vec()).expect("sse bytes should be valid utf-8");
+
+        assert!(text.contains(r#"event: error"#));
+        assert!(text.contains(&format!(r#""request_id":"{TEST_REQUEST_ID}""#)));
+        assert!(text.contains(r#""error":"stream_processing_failed""#));
+    }
+
+    #[test]
+    fn close_frame_carries_request_id() {
+        let bytes = frame_to_sse_bytes(
+            StreamFrame::Close {
+                topic: "test.topic".to_string(),
+                reason: CloseReason::MaxDurationReached,
+                timestamp: Utc::now(),
+                request_id: TEST_REQUEST_ID.to_string(),
+            },
+            "http://localhost",
+            TEST_REQUEST_ID,
+        )
+        .expect("frame rendering should succeed");
+        let text = String::from_utf8(bytes.to_vec()).expect("sse bytes should be valid utf-8");
+
+        assert!(text.contains(r#"event: connection-closing"#));
+        assert!(text.contains(&format!(r#""request_id":"{TEST_REQUEST_ID}""#)));
+        assert!(text.contains(r#""reason":"max_duration_reached""#));
     }
 }

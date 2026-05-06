@@ -44,6 +44,7 @@ pub fn create_historical_replay_stream(
     start_at: StartAt,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
+    request_id: String,
 ) -> impl tokio_stream::Stream<Item = StreamFrame> {
     // Fetch configuration values from global settings
     let watch_config = Settings::get_global_watch_settings();
@@ -52,7 +53,8 @@ pub fn create_historical_replay_stream(
     let initial_params =
         BatchParams::new(topic.clone(), watch_config.replay_batch_size).with_start_at(start_at);
 
-    // All state is in the tuple: (backend, params, has_more, delay_ms, request_params)
+    // State tuple: (backend, params, has_more, delay_ms, request_params,
+    // request_constraints, request_id), all owned by the unfold closure.
     unfold(
         (
             backend,
@@ -61,6 +63,7 @@ pub fn create_historical_replay_stream(
             watch_config.replay_batch_delay_ms,
             request_params,
             request_constraints,
+            request_id,
         ),
         move |(
             backend,
@@ -69,6 +72,7 @@ pub fn create_historical_replay_stream(
             delay_ms,
             request_params,
             request_constraints,
+            request_id,
         )| async move {
             if !has_more {
                 // End of stream: terminate unfold
@@ -137,6 +141,7 @@ pub fn create_historical_replay_stream(
                             delay_ms,
                             request_params,
                             request_constraints,
+                            request_id,
                         ),
                     ))
                 }
@@ -147,12 +152,14 @@ pub fn create_historical_replay_stream(
                         event_name = "stream.replay.batch.failed",
                         error = %e,
                         topic = %decode_subject_for_display(&params.topic),
+                        request_id = %request_id,
                         "Failed to retrieve historical message batch"
                     );
                     // On error: emit one error frame and stop replay iteration.
                     let error_frames = vec![StreamFrame::Error {
                         topic: params.topic.clone(),
                         message: e.to_string(),
+                        request_id: request_id.clone(),
                     }];
                     Some((
                         tokio_stream::iter(error_frames),
@@ -163,6 +170,7 @@ pub fn create_historical_replay_stream(
                             delay_ms,
                             request_params,
                             request_constraints,
+                            request_id,
                         ),
                     ))
                 }
@@ -172,7 +180,12 @@ pub fn create_historical_replay_stream(
     .flatten() // Flatten nested batch streams into one continuous stream
 }
 
-/// Create a combined stream that transitions from historical to live messages
+/// Create a combined stream that transitions from historical to live messages.
+///
+/// Argument count is intentionally kept above clippy's default threshold; a
+/// dedicated `StreamSetup` struct would be a worthwhile but separate refactor
+/// touching every caller and is intentionally out of scope here.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_historical_then_live_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
@@ -181,6 +194,7 @@ pub async fn create_historical_then_live_stream(
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     sse_guard: Option<crate::metrics::SseConnectionGuard>,
+    request_id: String,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let app_settings = Settings::get_global_application_settings();
@@ -192,6 +206,7 @@ pub async fn create_historical_then_live_stream(
         start_at,
         request_params.clone(),
         request_constraints.clone(),
+        request_id.clone(),
     );
 
     let (from_sequence, from_date) = start_at.as_replay_cursor();
@@ -203,6 +218,7 @@ pub async fn create_historical_then_live_stream(
         from_date,
         batch_size: watch_config.replay_batch_size,
         timestamp: chrono::Utc::now(),
+        request_id: request_id.clone(),
     });
     let completion_event = StreamFrame::Control(ControlEvent::ReplayCompleted {
         topic: topic.clone(),
@@ -233,17 +249,22 @@ pub async fn create_historical_then_live_stream(
     let heartbeat_stream =
         create_heartbeat_stream(topic.clone(), watch_config.sse_heartbeat_interval_sec);
 
-    // Sequence: replay_started -> replay frames -> replay_completed -> live frames.
-    let combined_notification_stream = FuturesStreamExt::chain(
-        FuturesStreamExt::chain(tokio_stream::once(start_event), historical_stream),
+    // Order matters: chain the replay_started control event BEFORE merging
+    // anything with heartbeat. See sse/live.rs for the full rationale; the
+    // short version is that tokio::time::interval ticks immediately on its
+    // first poll, so a naive merge would let a heartbeat race the
+    // replay_started frame and the request_id would not be in the first
+    // event of the stream.
+    let after_start = FuturesStreamExt::chain(
+        historical_stream,
         FuturesStreamExt::chain(
             tokio_stream::once(completion_event),
             live_notification_sse_stream,
         ),
     );
-
-    // Merge with heartbeat stream
-    let merged_stream = TokioStreamExt::merge(combined_notification_stream, heartbeat_stream);
+    let after_start_with_heartbeat = TokioStreamExt::merge(after_start, heartbeat_stream);
+    let merged_stream =
+        FuturesStreamExt::chain(tokio_stream::once(start_event), after_start_with_heartbeat);
 
     // Apply lifecycle and convert typed frames to SSE bytes.
     let stream_with_lifecycle = apply_stream_lifecycle(
@@ -253,10 +274,12 @@ pub async fn create_historical_then_live_stream(
         Some(Duration::from_secs(
             watch_config.connection_max_duration_sec,
         )),
+        request_id.clone(),
     );
     let base_url = app_settings.base_url.clone();
+    let request_id_for_bytes = request_id.clone();
     let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
-        frame_to_sse_bytes(frame, &base_url)
+        frame_to_sse_bytes(frame, &base_url, &request_id_for_bytes)
     });
 
     tracing::info!(
@@ -267,15 +290,19 @@ pub async fn create_historical_then_live_stream(
         from_sequence = ?from_sequence,
         from_date = ?from_date,
         batch_size = watch_config.replay_batch_size,
+        request_id = %request_id,
         "Created combined historical-then-live SSE stream"
     );
 
     Ok(create_sse_response(byte_stream, sse_guard))
 }
 
-/// Create a replay-only stream (historical messages then close)
+/// Create a replay-only stream (historical messages then close).
 ///
-/// This stream ends after replay completion; it does not transition to live notifications.
+/// This stream ends after replay completion; it does not transition to live
+/// notifications. See `create_historical_then_live_stream` for the rationale
+/// behind the `clippy::too_many_arguments` allow.
+#[allow(clippy::too_many_arguments)]
 pub async fn create_replay_only_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
@@ -284,6 +311,7 @@ pub async fn create_replay_only_stream(
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     sse_guard: Option<crate::metrics::SseConnectionGuard>,
+    request_id: String,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
 
@@ -294,6 +322,7 @@ pub async fn create_replay_only_stream(
         start_at,
         request_params.clone(),
         request_constraints.clone(),
+        request_id.clone(),
     );
 
     let (from_sequence, from_date) = start_at.as_replay_cursor();
@@ -305,6 +334,7 @@ pub async fn create_replay_only_stream(
         from_date,
         batch_size: watch_config.replay_batch_size,
         timestamp: Utc::now(),
+        request_id: request_id.clone(),
     });
     let completion_event = StreamFrame::Control(ControlEvent::ReplayCompleted {
         topic: topic.clone(),
@@ -323,11 +353,13 @@ pub async fn create_replay_only_stream(
         topic.clone(),
         shutdown.get_ref().clone(),
         None,
+        request_id.clone(),
     );
     let app_settings = Settings::get_global_application_settings();
     let base_url = app_settings.base_url.clone();
+    let request_id_for_bytes = request_id.clone();
     let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
-        frame_to_sse_bytes(frame, &base_url)
+        frame_to_sse_bytes(frame, &base_url, &request_id_for_bytes)
     });
 
     tracing::info!(
@@ -338,6 +370,7 @@ pub async fn create_replay_only_stream(
         from_sequence = ?from_sequence,
         from_date = ?from_date,
         batch_size = watch_config.replay_batch_size,
+        request_id = %request_id,
         "Created replay-only SSE stream"
     );
 

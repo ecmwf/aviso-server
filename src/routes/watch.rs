@@ -137,6 +137,7 @@ pub async fn watch(
                 filtering_params.clone(),
                 filtering_constraints.clone(),
                 sse_guard,
+                request_id_str.clone(),
             )
             .await,
         )
@@ -150,6 +151,7 @@ pub async fn watch(
                 filtering_params.clone(),
                 filtering_constraints.clone(),
                 sse_guard,
+                request_id_str.clone(),
             )
             .await,
         )
@@ -170,6 +172,6 @@ pub async fn watch(
             );
             response
         }
-        Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),
+        Err(e) => sse_error_response(e, &context.topic, &request_id_str),
     }
 }

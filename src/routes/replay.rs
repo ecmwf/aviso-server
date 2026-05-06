@@ -125,6 +125,7 @@ pub async fn replay(
         filtering_params,
         filtering_constraints,
         sse_guard,
+        request_id_str.clone(),
     )
     .await
     {
@@ -142,6 +143,6 @@ pub async fn replay(
             );
             response
         }
-        Err(e) => sse_error_response(e, &context.topic, &context.request_id.to_string()),
+        Err(e) => sse_error_response(e, &context.topic, &request_id_str),
     }
 }
