@@ -6,14 +6,6 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-mod admin;
-mod auth;
-#[cfg(feature = "ecpds")]
-mod ecpds_auth;
-mod health_check;
-mod helpers;
-mod request_id;
-mod schema;
-mod streaming;
-mod streaming_jetstream;
-mod test_utils;
+//! Cross-cutting HTTP middlewares.
+
+pub mod request_id;
