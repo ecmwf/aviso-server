@@ -8,6 +8,8 @@
 
 mod admin;
 mod auth;
+#[cfg(feature = "ecpds")]
+mod ecpds_auth;
 mod health_check;
 mod helpers;
 mod schema;

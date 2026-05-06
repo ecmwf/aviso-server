@@ -19,12 +19,38 @@ jobs:
       - name: Cache cargo + target
         uses: Swatinem/rust-cache@v2
 
-      - name: Check code formatting
+      - name: Check code formatting (root)
         run: cargo fmt -- --check
 
-      - name: Run tests
+      - name: Check code formatting (aviso-ecpds subcrate)
+        run: cargo fmt --manifest-path aviso-ecpds/Cargo.toml -- --check
+
+      - name: Run tests (default features)
         env:
           NO_PROXY: "127.0.0.1,localhost"
         run: |
           unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
           cargo test -- --test-threads=1
+
+      - name: Run tests (--features ecpds)
+        env:
+          NO_PROXY: "127.0.0.1,localhost"
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test --features ecpds -- --test-threads=1
+
+      - name: Run aviso-ecpds subcrate tests
+        env:
+          NO_PROXY: "127.0.0.1,localhost"
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test --manifest-path aviso-ecpds/Cargo.toml -- --test-threads=1
+
+      - name: Clippy (default features)
+        run: cargo clippy --all-targets -- -D warnings
+
+      - name: Clippy (--features ecpds)
+        run: cargo clippy --features ecpds --all-targets -- -D warnings
+
+      - name: Clippy (aviso-ecpds subcrate)
+        run: cargo clippy --manifest-path aviso-ecpds/Cargo.toml --all-targets -- -D warnings

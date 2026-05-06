@@ -12,6 +12,7 @@ homepage = "https://github.com/ecmwf/aviso-server"
 documentation = "https://sites.ecmwf.int/docs/aviso-server/main/"
 exclude = [
   "aviso-validators/**",
+  "aviso-ecpds/**",
 ]
 
 [lib]
@@ -54,6 +55,11 @@ tokio-util = "0.7"
 geo = "0.32"
 geo-types = "0.7"
 prometheus = { version = "0.13", features = ["process"] }
+aviso-ecpds = { version = "0.1.0", path = "aviso-ecpds", optional = true }
+
+[features]
+default = []
+ecpds = ["dep:aviso-ecpds"]
 
 [[bench]]
 name = "constraint_matcher_benchmark"
