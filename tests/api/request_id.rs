@@ -12,10 +12,13 @@ use serde_json::Value;
 
 const HEADER: &str = "x-request-id";
 
-fn assert_uuid_v4(value: &str) {
+fn assert_uuid_format(value: &str) {
+    // The exact UUID version (v4 today, v7 if tracing-actix-web's
+    // uuid_v7 feature is ever enabled upstream) is not part of aviso's
+    // contract; we only assert the canonical hyphenated lowercase shape.
     let re = regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
         .expect("valid uuid regex");
-    assert!(re.is_match(value), "expected UUID v4, got: {value}");
+    assert!(re.is_match(value), "expected canonical UUID, got: {value}");
 }
 
 async fn extract_header_id(response: &reqwest::Response) -> String {
@@ -43,7 +46,7 @@ async fn x_request_id_header_present_on_health_check() {
         .headers()
         .get(HEADER)
         .expect("X-Request-ID header should be present on /health");
-    assert_uuid_v4(header.to_str().expect("header should be ascii"));
+    assert_uuid_format(header.to_str().expect("header should be ascii"));
 }
 
 #[tokio::test]
@@ -67,7 +70,7 @@ async fn x_request_id_header_present_on_4xx_validation_error() {
         .to_str()
         .expect("header should be ascii")
         .to_owned();
-    assert_uuid_v4(&header_id);
+    assert_uuid_format(&header_id);
 
     let body: serde_json::Value = response
         .json()
@@ -152,7 +155,7 @@ async fn x_request_id_header_present_on_sse_stream() {
         .headers()
         .get(HEADER)
         .expect("X-Request-ID header should be present on SSE 200 OK");
-    assert_uuid_v4(header.to_str().expect("header should be ascii"));
+    assert_uuid_format(header.to_str().expect("header should be ascii"));
 }
 
 #[tokio::test]

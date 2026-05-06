@@ -58,14 +58,22 @@ Capture either of these and pass them to the operator:
    header.
 
 For streaming responses (`/api/v1/watch`, `/api/v1/replay`), the same UUID
-also appears in the JSON `data:` payload of the very first event
-(`connection_established` for live-only watches, `replay_started` for any
-stream that begins with replay) and in any `error` or `connection-closing`
-event the stream emits before terminating. This means a user who only sees
-the open-ended SSE body (no header parsing) can still recover the id without
-running the request again. See
+also appears in the JSON `data:` payload of the very first event and in any
+`error` or `connection-closing` event the stream emits before terminating.
+The exact wire shape depends on the stream variant:
+
+- For a live-only watch, the first event has SSE `event: live-notification`
+  and a JSON body with `"type": "connection_established"`.
+- For a stream that begins with replay, the first event has SSE
+  `event: replay-control` and a JSON body with `"type": "replay_started"`.
+
+In both cases the `request_id` field is in the JSON body alongside `type`.
+This means a user who only sees the open-ended SSE body (no header parsing)
+can still recover the id without running the request again. See
 [Streaming Semantics](./streaming-semantics.md#request-id-correlation) for
-the per-event payload.
+the full event-by-event payload table, including the SSE `event:` versus
+`data.type` distinction (relevant for clients using
+`EventSource.addEventListener`).
 
 ## Error Telemetry Events
 

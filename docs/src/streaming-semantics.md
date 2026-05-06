@@ -7,30 +7,50 @@ including start points, spatial filtering, identifier constraints, and SSE lifec
 
 ## Request ID Correlation
 
-Every HTTP response carries an `X-Request-ID` header with a per-request UUID
-v4. The same UUID is also embedded in the JSON `data:` payload of certain
-SSE events so that a client which only sees the body (not headers) can still
+Every HTTP response carries an `X-Request-ID` header with a per-request UUID.
+The same UUID is also embedded in the JSON `data:` payload of certain SSE
+events so that a client which only sees the body (not headers) can still
 quote it back when reporting a problem.
+
+A note on terminology before the tables: SSE has two related but distinct
+labels for an event. The `event:` line is the SSE-level type that an
+`EventSource.addEventListener(name, handler)` call dispatches on. The
+`data.type` field (when present) is an aviso-level discriminator inside the
+JSON body, used for the cases where we reuse a single `event:` name for
+several control events. A wire example:
+
+```text
+event: live-notification
+data: {"type":"connection_established","topic":"...","timestamp":"...","connection_will_close_in_seconds":3600,"request_id":"<uuid>"}
+```
+
+The `event:` line above is `live-notification` (so an EventSource client
+listens for `live-notification`); the `data.type` value is
+`connection_established` (so the client distinguishes it from a normal
+notification, which has no `type` field).
 
 In-stream events that include `request_id`:
 
-| Event | Frequency | Purpose |
-|---|---|---|
-| `connection_established` | Once at the start of a live-only watch | First-event correlation |
-| `replay_started` | Once at the start of any stream that begins with replay | First-event correlation |
-| `error` | Rare, on mid-stream backend failure | Failure-event correlation |
-| `connection-closing` | Once on graceful close | Final-event correlation |
+| SSE `event:` | `data.type` (when present) | Frequency | Purpose |
+|---|---|---|---|
+| `live-notification` | `connection_established` | Once at the start of a live-only watch | First-event correlation |
+| `replay-control` | `replay_started` | Once at the start of any stream that begins with replay | First-event correlation |
+| `error` | (none; uses `error` field as discriminator) | Rare, on mid-stream backend or CloudEvent-creation failure | Failure-event correlation |
+| `connection-closing` | (none; uses `reason` field as discriminator) | Once on graceful close | Final-event correlation |
 
 In-stream events that intentionally do **not** include `request_id`:
 
-| Event | Frequency | Why |
-|---|---|---|
-| `live-notification` | Per message | Repeating the same UUID on every notification would inflate the wire for no extra value (correlation is already covered by the first event and the response header) |
-| `replay` | Per message | Same |
-| `heartbeat` | Every few seconds | Same |
-| `replay_completed`, `replay_limit_reached` | Replay phase boundaries | The `replay_started` event already carries the UUID; repeating it is noise |
+| SSE `event:` | `data.type` (when present) | Frequency | Why |
+|---|---|---|---|
+| `live-notification` | (none; CloudEvent body) | Per message | Repeating the same UUID on every notification would inflate the wire for no extra value (correlation is already covered by the first event and the response header) |
+| `replay` | (none; CloudEvent body) | Per message | Same |
+| `heartbeat` | (none) | Every few seconds | Same |
+| `replay-control` | `replay_completed`, `notification_replay_limit_reached` | Replay phase boundaries | The first `replay-control` event (`replay_started`) already carries the UUID; repeating it is noise |
 
-The first event of any stream is guaranteed to carry the `request_id`.
+The first event of any stream is guaranteed to carry the `request_id` (a
+`live-notification` event with `data.type = "connection_established"` for
+live-only watches, or a `replay-control` event with `data.type =
+"replay_started"` for any stream that begins with replay).
 
 ## Reconnecting after disconnect
 

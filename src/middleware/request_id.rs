@@ -143,12 +143,14 @@ mod tests {
             .get("x-request-id")
             .expect("X-Request-ID header should be present");
         let value = header.to_str().expect("header value should be valid utf-8");
+        // Match canonical UUID format only; the specific version is an
+        // upstream tracing-actix-web detail and not aviso's contract.
         let uuid_re =
             regex::Regex::new(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
                 .expect("valid uuid regex");
         assert!(
             uuid_re.is_match(value),
-            "X-Request-ID should be a UUID, got: {value}"
+            "X-Request-ID should be a canonical UUID, got: {value}"
         );
     }
 
