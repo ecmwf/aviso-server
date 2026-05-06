@@ -153,13 +153,16 @@ class Config:
     def basic_auth_skip_reason(self) -> str | None:
         """Return a skip reason string if a HTTP-Basic-credentialled
         smoke case cannot run against the configured server, or None
-        if it can. Centralises the AUTH_ENABLED + AUTH_MODE gate so
-        every Basic-auth smoke case skips for the same reason.
+        if it can. Centralises the per-test gate for cases that
+        REQUIRE auth to be on (auth_*, ECPDS) so they skip uniformly
+        when AUTH_ENABLED=false (nothing to test).
 
-        The smoke harness only knows how to send HTTP Basic. Aviso
-        accepts Basic only in auth.mode: direct; trusted_proxy mode
-        requires Bearer JWTs minted by the upstream proxy. We do not
-        try to mint JWTs in the smoke script."""
+        The AUTH_MODE != 'direct' branch here is defence in depth: the
+        global gate at the top of main() refuses to run the harness at
+        all in that case, since the generic publish/replay/watch tests
+        also seed via Basic Auth (admin_auth_headers) and would fail
+        rather than skip cleanly. Keeping the check here means tests
+        that import this helper directly still get a correct answer."""
         if not self.auth_enabled:
             return "AUTH_ENABLED=false"
         if self.auth_mode != "direct":
@@ -1197,6 +1200,23 @@ def main() -> int:
 
     env_verbose = os.getenv("SMOKE_VERBOSE", "").strip().lower() in {"1", "true", "yes", "on"}
     config = Config(verbose=args.verbose or env_verbose)
+
+    if config.auth_enabled and config.auth_mode != "direct":
+        print(
+            f"[ERROR] smoke harness does not support AUTH_MODE={config.auth_mode!r}.\n"
+            f"        This script uses HTTP Basic Auth for BOTH seeding setup\n"
+            f"        notifications (via post_notification's default admin\n"
+            f"        credentials) AND the explicit auth/ECPDS coverage. HTTP\n"
+            f"        Basic only authenticates in auth.mode: direct; trusted_proxy\n"
+            f"        mode requires Bearer JWTs minted by the upstream proxy, which\n"
+            f"        the script does not produce.\n"
+            f"        To run smoke against this server, either configure\n"
+            f"        auth.mode: direct on the test instance, OR set\n"
+            f"        AUTH_ENABLED=false to skip auth-protected coverage entirely\n"
+            f"        (generic publish/replay/watch tests still run, since\n"
+            f"        admin_auth_headers() returns no header when auth is off)."
+        )
+        return 1
 
     cases = [
         SmokeCase("health endpoint returns 200", test_health),
