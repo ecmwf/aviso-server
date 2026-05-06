@@ -49,11 +49,26 @@ async fn x_request_id_header_present_on_4xx_validation_error() {
         .expect("request should succeed");
 
     assert_eq!(response.status().as_u16(), 400);
-    let header = response
+    let header_id = response
         .headers()
         .get(HEADER)
-        .expect("X-Request-ID header should be present on 4xx error");
-    assert_uuid_v4(header.to_str().expect("header should be ascii"));
+        .expect("X-Request-ID header should be present on 4xx error")
+        .to_str()
+        .expect("header should be ascii")
+        .to_owned();
+    assert_uuid_v4(&header_id);
+
+    let body: serde_json::Value = response
+        .json()
+        .await
+        .expect("error body should be valid JSON");
+    let body_id = body["request_id"]
+        .as_str()
+        .expect("error body should include request_id field");
+    assert_eq!(
+        body_id, header_id,
+        "X-Request-ID header should match request_id in body"
+    );
 }
 
 #[tokio::test]

@@ -164,8 +164,13 @@ where
                                 .with_label_values(&[mode_label, failure.reason()])
                                 .inc();
                         }
-                        return Ok(req
-                            .into_response(failure.response(settings.mode).map_into_right_body()));
+                        let request_id =
+                            crate::middleware::request_id::request_id_from_request(req.request());
+                        return Ok(req.into_response(
+                            failure
+                                .response(settings.mode, &request_id)
+                                .map_into_right_body(),
+                        ));
                     }
                 };
 
@@ -179,9 +184,13 @@ where
                             .with_label_values(&[mode_label, "forbidden"])
                             .inc();
                     }
-                    return Ok(
-                        req.into_response(failure.response(settings.mode).map_into_right_body())
-                    );
+                    let request_id =
+                        crate::middleware::request_id::request_id_from_request(req.request());
+                    return Ok(req.into_response(
+                        failure
+                            .response(settings.mode, &request_id)
+                            .map_into_right_body(),
+                    ));
                 }
                 if let Some(ref m) = metrics {
                     m.auth_requests_total
@@ -266,26 +275,28 @@ impl AuthFailure {
         }
     }
 
-    fn response(&self, auth_mode: AuthMode) -> HttpResponse {
+    fn response(&self, auth_mode: AuthMode, request_id: &str) -> HttpResponse {
         if matches!(self, Self::Unauthorized(_)) {
-            return unauthorized_response(auth_mode, self.message());
+            return unauthorized_response(auth_mode, self.message(), request_id);
         }
 
         HttpResponse::build(self.status_code()).json(json!({
             "code": self.code(),
             "error": self.reason(),
-            "message": self.message()
+            "message": self.message(),
+            "request_id": request_id,
         }))
     }
 }
 
-pub fn unauthorized_response(auth_mode: AuthMode, message: &str) -> HttpResponse {
+pub fn unauthorized_response(auth_mode: AuthMode, message: &str, request_id: &str) -> HttpResponse {
     let mut response = HttpResponse::Unauthorized();
     append_www_authenticate_headers(&mut response, auth_mode);
     response.json(json!({
         "code": "UNAUTHORIZED",
         "error": "unauthorized",
-        "message": message
+        "message": message,
+        "request_id": request_id,
     }))
 }
 

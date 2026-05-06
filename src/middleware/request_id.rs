@@ -19,7 +19,7 @@ use std::future::{Ready, ready};
 use std::rc::Rc;
 
 use actix_web::{
-    Error, HttpMessage,
+    Error, HttpMessage, HttpRequest,
     dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
     http::header::{HeaderName, HeaderValue},
 };
@@ -27,6 +27,18 @@ use futures_util::future::LocalBoxFuture;
 use tracing_actix_web::RequestId;
 
 const HEADER_NAME: HeaderName = HeaderName::from_static("x-request-id");
+
+/// Extract the per-request UUID set by `tracing-actix-web` as an owned string.
+///
+/// Returns an empty string when the [`RequestId`] is missing, for example in
+/// unit tests that bypass `TracingLogger`. Callers should treat the result as
+/// best-effort metadata, never as an authentication or authorization input.
+pub fn request_id_from_request(req: &HttpRequest) -> String {
+    req.extensions()
+        .get::<RequestId>()
+        .map(|rid| rid.to_string())
+        .unwrap_or_default()
+}
 
 /// Middleware that copies the request's [`RequestId`] onto the
 /// `X-Request-ID` response header.

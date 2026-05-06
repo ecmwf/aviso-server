@@ -107,6 +107,7 @@ pub enum ApiError {
     Parse {
         code: ApiErrorCode,
         error: &'static str,
+        request_id: String,
         #[source]
         source: RequestParseError,
     },
@@ -114,6 +115,7 @@ pub enum ApiError {
     Validation {
         code: ApiErrorCode,
         error: &'static str,
+        request_id: String,
         #[source]
         source: anyhow::Error,
     },
@@ -121,6 +123,7 @@ pub enum ApiError {
     Processing {
         code: ApiErrorCode,
         error: &'static str,
+        request_id: String,
         #[source]
         source: anyhow::Error,
     },
@@ -136,7 +139,7 @@ pub enum ApiError {
 
 impl ApiError {
     // Parse error codes are determined by the parser variant, never by message text.
-    fn parse(kind: RequestKind, source: RequestParseError) -> Self {
+    fn parse(kind: RequestKind, source: RequestParseError, request_id: &str) -> Self {
         let code = match source {
             RequestParseError::InvalidJson(_) => ApiErrorCode::InvalidJson,
             RequestParseError::UnknownField(_) => ApiErrorCode::UnknownField,
@@ -146,22 +149,25 @@ impl ApiError {
         Self::Parse {
             code,
             error: kind.label(),
+            request_id: request_id.to_string(),
             source,
         }
     }
 
-    fn validation(kind: RequestKind, source: anyhow::Error) -> Self {
+    fn validation(kind: RequestKind, source: anyhow::Error, request_id: &str) -> Self {
         Self::Validation {
             code: kind.code(),
             error: kind.label(),
+            request_id: request_id.to_string(),
             source,
         }
     }
 
-    fn processing(kind: ProcessingKind, source: anyhow::Error) -> Self {
+    fn processing(kind: ProcessingKind, source: anyhow::Error, request_id: &str) -> Self {
         Self::Processing {
             code: kind.code(),
             error: kind.label(),
+            request_id: request_id.to_string(),
             source,
         }
     }
@@ -189,6 +195,7 @@ impl ResponseError for ApiError {
             ApiError::Parse {
                 code,
                 error: error_label,
+                request_id,
                 source,
             } => {
                 let message = source.to_string();
@@ -210,11 +217,13 @@ impl ResponseError for ApiError {
                     "error": error_label,
                     "message": message,
                     "details": message,
+                    "request_id": request_id,
                 }))
             }
             ApiError::Validation {
                 code,
                 error: error_label,
+                request_id,
                 source,
             } => {
                 let (message, details, chain) = error_summary(source);
@@ -236,11 +245,13 @@ impl ResponseError for ApiError {
                     "error": error_label,
                     "message": message,
                     "details": details,
+                    "request_id": request_id,
                 }))
             }
             ApiError::Processing {
                 code,
                 error: error_label,
+                request_id,
                 source,
             } => {
                 let (message, details, chain) = error_summary(source);
@@ -262,6 +273,7 @@ impl ResponseError for ApiError {
                     "error": error_label,
                     "message": message,
                     "details": details,
+                    "request_id": request_id,
                 }))
             }
             ApiError::Sse {
@@ -314,16 +326,28 @@ fn error_summary(error: &anyhow::Error) -> (String, String, Vec<String>) {
     (message, details, chain)
 }
 
-pub fn request_parse_error_response(kind: RequestKind, error: RequestParseError) -> HttpResponse {
-    ApiError::parse(kind, error).error_response()
+pub fn request_parse_error_response(
+    kind: RequestKind,
+    error: RequestParseError,
+    request_id: &str,
+) -> HttpResponse {
+    ApiError::parse(kind, error, request_id).error_response()
 }
 
-pub fn request_validation_error_response(kind: RequestKind, error: anyhow::Error) -> HttpResponse {
-    ApiError::validation(kind, error).error_response()
+pub fn request_validation_error_response(
+    kind: RequestKind,
+    error: anyhow::Error,
+    request_id: &str,
+) -> HttpResponse {
+    ApiError::validation(kind, error, request_id).error_response()
 }
 
-pub fn processing_error_response(kind: ProcessingKind, error: anyhow::Error) -> HttpResponse {
-    ApiError::processing(kind, error).error_response()
+pub fn processing_error_response(
+    kind: ProcessingKind,
+    error: anyhow::Error,
+    request_id: &str,
+) -> HttpResponse {
+    ApiError::processing(kind, error, request_id).error_response()
 }
 
 pub fn sse_error_response(error: anyhow::Error, topic: &str, request_id: &str) -> HttpResponse {
@@ -346,22 +370,28 @@ mod tests {
         serde_json::from_slice(&bytes).expect("response should be valid json")
     }
 
+    const TEST_REQUEST_ID: &str = "req-test-1234";
+
     #[test]
     fn parse_error_uses_specific_code_for_json() {
         let parse_error = RequestParseError::InvalidJson(
             serde_json::from_slice::<serde_json::Value>(b"{").expect_err("must fail"),
         );
 
-        let response = ApiError::parse(RequestKind::Replay, parse_error).error_response();
+        let response =
+            ApiError::parse(RequestKind::Replay, parse_error, TEST_REQUEST_ID).error_response();
 
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
     #[test]
     fn validation_error_maps_to_bad_request() {
-        let response =
-            ApiError::validation(RequestKind::Watch, anyhow!("from_id must be positive"))
-                .error_response();
+        let response = ApiError::validation(
+            RequestKind::Watch,
+            anyhow!("from_id must be positive"),
+            TEST_REQUEST_ID,
+        )
+        .error_response();
         assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     }
 
@@ -370,6 +400,7 @@ mod tests {
         let response = ApiError::processing(
             ProcessingKind::NotificationStorage,
             anyhow!("failed to write to backend"),
+            TEST_REQUEST_ID,
         )
         .error_response();
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
@@ -387,13 +418,15 @@ mod tests {
         let parse_error = RequestParseError::InvalidJson(
             serde_json::from_slice::<serde_json::Value>(b"{").expect_err("must fail"),
         );
-        let response = request_parse_error_response(RequestKind::Replay, parse_error);
+        let response =
+            request_parse_error_response(RequestKind::Replay, parse_error, TEST_REQUEST_ID);
         let json = response_json(response).await;
 
         assert_eq!(json["code"], "INVALID_JSON");
         assert_eq!(json["error"], "Invalid Replay Request");
         assert!(json["message"].is_string());
         assert!(json["details"].is_string());
+        assert_eq!(json["request_id"], TEST_REQUEST_ID);
     }
 
     #[actix_web::test]
@@ -401,9 +434,11 @@ mod tests {
         let unknown_field_response = request_parse_error_response(
             RequestKind::Watch,
             RequestParseError::UnknownField(anyhow!("Unknown field 'foo' in request")),
+            TEST_REQUEST_ID,
         );
         let unknown_field_json = response_json(unknown_field_response).await;
         assert_eq!(unknown_field_json["code"], "UNKNOWN_FIELD");
+        assert_eq!(unknown_field_json["request_id"], TEST_REQUEST_ID);
 
         let invalid_shape_source =
             serde_json::from_value::<std::collections::HashMap<String, String>>(json!(1))
@@ -411,9 +446,11 @@ mod tests {
         let invalid_shape_response = request_parse_error_response(
             RequestKind::Notification,
             RequestParseError::InvalidShape(invalid_shape_source),
+            TEST_REQUEST_ID,
         );
         let invalid_shape_json = response_json(invalid_shape_response).await;
         assert_eq!(invalid_shape_json["code"], "INVALID_REQUEST_SHAPE");
+        assert_eq!(invalid_shape_json["request_id"], TEST_REQUEST_ID);
     }
 
     #[actix_web::test]
@@ -421,6 +458,7 @@ mod tests {
         let response = request_validation_error_response(
             RequestKind::Watch,
             anyhow!("Cannot specify both identifier.polygon and identifier.point"),
+            TEST_REQUEST_ID,
         );
         let json = response_json(response).await;
 
@@ -428,6 +466,7 @@ mod tests {
         assert_eq!(json["error"], "Invalid Watch Request");
         assert!(json["message"].is_string());
         assert!(json["details"].is_string());
+        assert_eq!(json["request_id"], TEST_REQUEST_ID);
         assert!(json.get("error_chain").is_none());
     }
 
@@ -436,10 +475,12 @@ mod tests {
         let processing_response = processing_error_response(
             ProcessingKind::NotificationStorage,
             anyhow!("backend write failed"),
+            TEST_REQUEST_ID,
         );
         let processing_json = response_json(processing_response).await;
         assert_eq!(processing_json["code"], "NOTIFICATION_STORAGE_FAILED");
         assert_eq!(processing_json["error"], "Notification Storage Failed");
+        assert_eq!(processing_json["request_id"], TEST_REQUEST_ID);
 
         let sse_response =
             sse_error_response(anyhow!("stream setup failed"), "mars.ens%2Emember", "req-1");

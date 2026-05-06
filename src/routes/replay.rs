@@ -63,10 +63,11 @@ pub async fn replay(
     request_id: RequestId,
     metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
+    let request_id_str = request_id.to_string();
     // Parse and validate request structure
     let notification_request = match parse_and_validate_request(&body) {
         Ok(req) => req,
-        Err(e) => return request_parse_error_response(RequestKind::Replay, e),
+        Err(e) => return request_parse_error_response(RequestKind::Replay, e, &request_id_str),
     };
 
     // Enforce schema-level auth before replay setup to fail fast.
@@ -84,7 +85,9 @@ pub async fn replay(
         ValidationConfig::for_replay(),
     ) {
         Ok(ctx) => ctx,
-        Err(e) => return request_validation_error_response(RequestKind::Replay, e),
+        Err(e) => {
+            return request_validation_error_response(RequestKind::Replay, e, &request_id_str);
+        }
     };
 
     tracing::Span::current().record("event_type", &context.event_type);
