@@ -9,7 +9,8 @@ Aviso returns a consistent JSON error object for `4xx` and `5xx` responses.
   "code": "INVALID_REPLAY_REQUEST",
   "error": "Invalid Replay Request",
   "message": "Replay endpoint requires either from_id or from_date parameter...",
-  "details": "Replay endpoint requires either from_id or from_date parameter..."
+  "details": "Replay endpoint requires either from_id or from_date parameter...",
+  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
 
@@ -19,11 +20,41 @@ Fields:
 - `error`: human-readable error category.
 - `message`: top-level failure message (safe for client display).
 - `details`: deepest/root detail available.
+- `request_id`: per-request UUID. The same value is also returned in the
+  `X-Request-ID` HTTP response header and in every server-side log line for
+  this request. Quoting it is the easiest way to ask the operator to look up
+  the corresponding traces.
 
 Notes:
 
 - `error_chain` is logged server-side for diagnostics, but is not returned in API responses.
 - `message` and `details` are always present for both `4xx` and `5xx` error responses.
+- `request_id` is present on every error response body. SSE stream
+  initialization failures additionally include `topic` (the decoded logical
+  topic) so the operator can scope log queries faster.
+- `401` responses use a 4-field shape (`code`, `error`, `message`,
+  `request_id`); `details` is intentionally omitted because the upstream
+  authentication service does not provide a stable detailed message.
+
+## How to report a problem
+
+Capture either of these and pass them to the operator:
+
+1. The `X-Request-ID` HTTP response header. Visible to `curl -i`, browser
+   devtools, every reverse proxy, and most log aggregators. Present on every
+   response, success or failure.
+2. The `request_id` field in any error response body. Same UUID as the
+   header.
+
+For streaming responses (`/api/v1/watch`, `/api/v1/replay`), the same UUID
+also appears in the JSON `data:` payload of the very first event
+(`connection_established` for live-only watches, `replay_started` for any
+stream that begins with replay) and in any `error` or `connection-closing`
+event the stream emits before terminating. This means a user who only sees
+the open-ended SSE body (no header parsing) can still recover the id without
+running the request again. See
+[Streaming Semantics](./streaming-semantics.md#request-id-correlation) for
+the per-event payload.
 
 ## Error Telemetry Events
 
@@ -35,11 +66,6 @@ These `event_name` values are emitted in structured logs:
 | `api.request.validation.failed` | `warn` | Domain/request validation failure (`400`). |
 | `api.request.processing.failed` | `error` | Server-side processing/storage failure (`500`). |
 | `stream.sse.initialization.failed` | `error` | Replay/watch SSE initialization failure (`500`). |
-
-For SSE setup failures, response also includes:
-
-- `topic`: decoded logical topic.
-- `request_id`: request correlation id.
 
 ## Error Code Reference
 
@@ -68,18 +94,20 @@ Invalid replay request:
   "code": "INVALID_REPLAY_REQUEST",
   "error": "Invalid Replay Request",
   "message": "Cannot specify both from_id and from_date...",
-  "details": "Cannot specify both from_id and from_date..."
+  "details": "Cannot specify both from_id and from_date...",
+  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
 
 Auth error (missing credentials on a protected stream).
-Auth errors use three fields (`code`, `error`, `message`); `details` is not included:
+Auth errors use four fields (`code`, `error`, `message`, `request_id`); `details` is not included:
 
 ```json
 {
   "code": "UNAUTHORIZED",
   "error": "unauthorized",
-  "message": "Authentication is required for this stream"
+  "message": "Authentication is required for this stream",
+  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
 
