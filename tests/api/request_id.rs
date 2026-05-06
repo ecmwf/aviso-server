@@ -59,8 +59,7 @@ async fn x_request_id_header_present_on_health_check() {
 }
 
 #[tokio::test]
-async fn x_request_id_header_present_on_4xx_validation_error() {
-    // Trigger a 400 by posting an invalid notification body to /publish.
+async fn x_request_id_parse_error_body_matches_header() {
     let app = spawn_app().await;
 
     let response = reqwest::Client::new()
