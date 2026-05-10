@@ -29,7 +29,15 @@ COPY --from=chef /app/recipe.json recipe.json
 # CARGO_FEATURES=ecpds.
 COPY --from=chef /app/aviso-validators /app/aviso-validators
 COPY --from=chef /app/aviso-ecpds      /app/aviso-ecpds
-RUN cargo chef cook --release --features "${CARGO_FEATURES}" --recipe-path recipe.json
+# Gate `--features` on a non-empty value: passing `--features ""` is
+# accepted by some cargo versions but errors on others, and an unquoted
+# `${CARGO_FEATURES:+--features $CARGO_FEATURES}` would word-split a
+# multi-value setting like `ecpds foo` into broken positional args.
+RUN if [ -n "$CARGO_FEATURES" ]; then \
+      cargo chef cook --release --features "$CARGO_FEATURES" --recipe-path recipe.json; \
+    else \
+      cargo chef cook --release --recipe-path recipe.json; \
+    fi
 
 ###############################
 # Stage 3: Build the Project
@@ -41,7 +49,11 @@ WORKDIR /app
 COPY . .
 COPY --from=cacher /app/target target
 COPY --from=cacher /usr/local/cargo /usr/local/cargo
-RUN cargo build --release --features "${CARGO_FEATURES}"
+RUN if [ -n "$CARGO_FEATURES" ]; then \
+      cargo build --release --features "$CARGO_FEATURES"; \
+    else \
+      cargo build --release; \
+    fi
 
 ###############################
 # Stage 4: Production Release Image
