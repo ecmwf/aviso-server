@@ -101,14 +101,41 @@ fn parse_rust_log_value(value: &str, default_level: &str) -> Option<EnvFilter> {
         Ok(filter) => Some(filter),
         Err(error) => {
             eprintln!(
-                "warning: RUST_LOG={value:?} could not be parsed as an EnvFilter \
-                 directive ({error}); falling back to logging.level={default_level}. \
-                 Example valid value: RUST_LOG=info,aviso_server=debug,actix_web=warn",
-                value = truncate_for_diagnostic(value, 200),
+                "{}",
+                format_rust_log_fallback_warning(value, &error, default_level)
             );
             None
         }
     }
+}
+
+/// Build the malformed-`RUST_LOG` warning message without printing it.
+///
+/// Two diagnostics matter here:
+/// 1. The value the operator set is included verbatim (Debug-formatted to
+///    quote and escape, truncated past 200 chars) so triage from logs alone
+///    does not require pod-env access.
+/// 2. The fallback level is shown both as configured (`default_level`, the
+///    raw string from `logging.level`) and as effective (the canonical name
+///    of the `LevelFilter` that `parse_level_filter` actually installs).
+///    These differ when `logging.level` is also misconfigured: a raw value
+///    like `verbose` falls through to `info` silently, and a malformed
+///    `RUST_LOG` warning that says only "falling back to logging.level=verbose"
+///    would mislead operators about what is actually running.
+fn format_rust_log_fallback_warning(
+    value: &str,
+    error: &dyn std::fmt::Display,
+    default_level: &str,
+) -> String {
+    let effective = level_filter_canonical_name(parse_level_filter(default_level));
+    format!(
+        "warning: RUST_LOG={value:?} could not be parsed as an EnvFilter \
+         directive ({error}); falling back to logging.level={configured:?} \
+         (effective filter: {effective}). \
+         Example valid value: RUST_LOG=info,aviso_server=debug,actix_web=warn",
+        value = truncate_for_diagnostic(value, 200),
+        configured = default_level,
+    )
 }
 
 /// Truncate a free-form string for inclusion in a diagnostic message.
@@ -131,6 +158,20 @@ fn parse_level_filter(level: &str) -> LevelFilter {
         "warn" => LevelFilter::WARN,
         "error" => LevelFilter::ERROR,
         _ => LevelFilter::INFO,
+    }
+}
+
+/// Lowercase canonical name of a `LevelFilter`, matching the spelling used
+/// in `logging.level` and `RUST_LOG`. Used in operator-facing diagnostics so
+/// the printed level matches what the operator would type into config.
+fn level_filter_canonical_name(level: LevelFilter) -> &'static str {
+    match level {
+        LevelFilter::OFF => "off",
+        LevelFilter::ERROR => "error",
+        LevelFilter::WARN => "warn",
+        LevelFilter::INFO => "info",
+        LevelFilter::DEBUG => "debug",
+        LevelFilter::TRACE => "trace",
     }
 }
 
@@ -853,6 +894,88 @@ mod tests {
         // total character count is max_chars plus the marker length, not
         // exactly max_chars.
         assert!(truncated.chars().count() < 1_000);
+    }
+
+    #[test]
+    fn level_filter_canonical_name_round_trips_through_parse_level_filter() {
+        // Each canonical name fed back into parse_level_filter must yield the
+        // same LevelFilter. This pins the contract that the diagnostic
+        // message can be copy-pasted into config.yaml without translation.
+        for level in [
+            LevelFilter::OFF,
+            LevelFilter::ERROR,
+            LevelFilter::WARN,
+            LevelFilter::INFO,
+            LevelFilter::DEBUG,
+            LevelFilter::TRACE,
+        ] {
+            let name = level_filter_canonical_name(level);
+            // OFF is intentionally not a valid logging.level value (config
+            // uses absent or info as the floor); skip the round-trip check.
+            if level == LevelFilter::OFF {
+                continue;
+            }
+            assert_eq!(
+                parse_level_filter(name),
+                level,
+                "canonical name {name:?} for {level:?} must round-trip",
+            );
+        }
+    }
+
+    #[test]
+    fn rust_log_fallback_warning_includes_value_and_effective_level() {
+        let msg = format_rust_log_fallback_warning(
+            "info,foo=BOGUSLEVEL",
+            &"error parsing level filter",
+            "info",
+        );
+        assert!(
+            msg.contains("RUST_LOG=\"info,foo=BOGUSLEVEL\""),
+            "must include the failing value verbatim, got: {msg}"
+        );
+        assert!(
+            msg.contains("logging.level=\"info\""),
+            "must include the configured level, got: {msg}"
+        );
+        assert!(
+            msg.contains("effective filter: info"),
+            "must include the effective filter level, got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rust_log_fallback_warning_surfaces_unrecognized_logging_level_via_effective_label() {
+        // The bug being prevented: when logging.level is also misconfigured
+        // (e.g. operator wrote "verbose" instead of "debug"), parse_level_filter
+        // silently falls through to INFO. A warning that says only "falling
+        // back to logging.level=verbose" would imply we are running at
+        // verbose; we are running at info. Both labels must appear so the
+        // operator can spot the discrepancy from logs alone during incident
+        // response, without cross-referencing config.yaml.
+        let msg = format_rust_log_fallback_warning("garbage", &"error parsing filter", "verbose");
+        assert!(
+            msg.contains("logging.level=\"verbose\""),
+            "must show the configured (typo'd) level so the operator sees the source of truth"
+        );
+        assert!(
+            msg.contains("effective filter: info"),
+            "must show the effective fallback level so the operator sees what is actually installed"
+        );
+    }
+
+    #[test]
+    fn rust_log_fallback_warning_truncates_oversized_values() {
+        let huge = "a".repeat(500);
+        let msg = format_rust_log_fallback_warning(&huge, &"e", "info");
+        assert!(
+            msg.contains("…(truncated)"),
+            "oversized values must be truncated in the diagnostic"
+        );
+        assert!(
+            !msg.contains(&"a".repeat(300)),
+            "no fragment longer than the truncation cap should appear"
+        );
     }
 
     #[test]
