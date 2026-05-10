@@ -522,11 +522,31 @@ const HYDRATABLE_SPAN_FIELDS: &[&str] = &["request_id", "event_type", "topic"];
 
 /// Pre-compiled regex per hydratable field, keyed by field name.
 ///
-/// `EnvFilter::default()` formats span fields as `key=value` (with quoted
-/// values when they contain whitespace), so the regex extracts a value as
-/// either `"..."` or a contiguous run of non-whitespace characters. The
-/// `\b` word-boundary anchor prevents `event_type` from accidentally
-/// matching `aviso_event_type`.
+/// `tracing-subscriber`'s `DefaultVisitor` formats span fields as `key=value`
+/// where the quoting depends on how the field was recorded:
+/// - `record_str` (any `&str`/`String` value, including `Span::record(&str)`)
+///   delegates to `record_debug`, which writes `key={value:?}` with quotes
+///   and Debug-escaping. So fields recorded from string references are
+///   always quoted, even when the value contains no whitespace.
+/// - `record_debug` (anything formatted via `?value`) is also quoted.
+/// - `Display` values (anything formatted via `%value`) write `key=value`
+///   unquoted and unescaped.
+///
+/// In production, `request_id` is recorded via `%request_id` (Display,
+/// unquoted) while `event_type` and `topic` go through `record_str`
+/// (quoted). The regex must therefore match either a quoted run
+/// (`"[^"]+"`) or an unquoted contiguous non-space run (`[^ ]+`), which is
+/// what the alternation expresses.
+///
+/// The `\b` word-boundary anchor prevents `event_type` from accidentally
+/// matching `aviso_event_type` or `event_typeable`.
+///
+/// The unquoted branch deliberately uses `[^ ]+` rather than `[^\s]+`. Tabs
+/// and newlines do not appear in any current hydratable value
+/// (`request_id` is a UUID; quoted fields cannot reach this branch), and
+/// using `[^\s]+` would only matter if a future hydratable field were
+/// recorded via `Display` AND could contain whitespace, which the
+/// curation principle forbids.
 static SPAN_FIELD_REGEXES: std::sync::LazyLock<Vec<(&'static str, Regex)>> =
     std::sync::LazyLock::new(|| {
         HYDRATABLE_SPAN_FIELDS
@@ -759,6 +779,32 @@ mod tests {
     }
 
     #[test]
+    fn hydratable_field_names_are_not_in_attribute_normalization_table() {
+        // The event-fields-win precedence in populate_attributes_from_span
+        // checks attributes.contains_key(field_name) using the RAW name
+        // from HYDRATABLE_SPAN_FIELDS. The event's attribute map is
+        // populated by JsonVisitor and then re-keyed via
+        // normalize_attribute_key. So if any hydratable field name ever
+        // gets added to the normalization rename table (e.g. event_type
+        // -> event.type), the explicit-event-field check would miss
+        // because the event's value would be stored under the renamed
+        // key, and hydration would then overwrite it with the span value.
+        // This test pins the invariant; a regression would surface as an
+        // assertion failure rather than a silent precedence inversion in
+        // production.
+        for field_name in HYDRATABLE_SPAN_FIELDS {
+            let normalized = normalize_attribute_key(field_name);
+            assert_eq!(
+                normalized.as_str(),
+                *field_name,
+                "hydratable field {field_name:?} must not appear in \
+                 normalize_attribute_key's rename table; otherwise the \
+                 event-fields-win precedence breaks silently"
+            );
+        }
+    }
+
+    #[test]
     fn span_field_regex_handles_quoted_values_with_dots() {
         // Topic values are dotted (mars.od.0001.g...), and Span::record on a
         // string with whitespace would be quoted by the default formatter.
@@ -823,8 +869,22 @@ mod tests {
     }
 
     fn run_with_capturing_subscriber<F: FnOnce()>(body: F) -> Vec<Value> {
+        // Build the subscriber directly instead of going through
+        // `get_subscriber`, which honours the process `RUST_LOG` env var.
+        // Tests must be hermetic: a CI runner exporting `RUST_LOG=error`
+        // (or any other restrictive directive) would otherwise filter out
+        // the warn-level events the tests emit, leaving the captured
+        // buffer empty and the assertions panicking on `first()`.
         let writer = CapturingWriter::new();
-        let subscriber = get_subscriber("test-subscriber".to_string(), None, writer.clone());
+        let formatter = OTelLogFormatter::new("test-subscriber".to_string());
+        let formatting_layer = tracing_subscriber::fmt::layer()
+            .with_writer(writer.clone())
+            .with_ansi(false)
+            .with_span_events(FmtSpan::NONE)
+            .event_format(formatter);
+        let subscriber = Registry::default()
+            .with(EnvFilter::new("trace"))
+            .with(formatting_layer);
         tracing::subscriber::with_default(subscriber, body);
         writer
             .captured_lines()

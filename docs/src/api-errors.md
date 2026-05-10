@@ -91,6 +91,8 @@ These `event_name` values are emitted in structured logs:
 | `api.request.processing.failed` | `error` | Server-side processing/storage failure (`500`). |
 | `stream.sse.initialization.failed` | `error` | Replay/watch SSE initialization failure (`500`). |
 
+Every event carries `request_id`. When the request reaches the route handler far enough for the schema to be known, `event_type` is also attached automatically (so `api.request.validation.failed`, `api.request.processing.failed`, and `stream.sse.initialization.failed` carry it; `api.request.parse.failed` does not, because the request body has not yet been parsed). Notification processing failures (`api.request.processing.failed`) and SSE initialization failures additionally carry `topic`. These fields are propagated from the surrounding request span, so an operator filtering by `event_type` or `topic` sees the failure log directly without needing to join on `request_id` to recover them from the corresponding request log.
+
 ## Error Code Reference
 
 | Code | HTTP Status | Meaning |
