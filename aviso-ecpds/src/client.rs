@@ -3,7 +3,7 @@ use futures::future::join_all;
 use serde::Deserialize;
 use std::collections::HashSet;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Coarse-grained reason a single ECPDS fetch (or merged fetch under a
 /// partial-outage policy) failed. Surfaces in
@@ -497,7 +497,7 @@ impl EcpdsClient {
             .collect();
 
         if skipped_inactive > 0 {
-            info!(
+            debug!(
                 service_name = crate::service_name(),
                 service_version = crate::service_version(),
                 event_name = "auth.ecpds.fetch.skipped_inactive",
@@ -510,7 +510,7 @@ impl EcpdsClient {
             );
         }
         if skipped_missing_field > 0 {
-            info!(
+            debug!(
                 service_name = crate::service_name(),
                 service_version = crate::service_version(),
                 event_name = "auth.ecpds.fetch.skipped_record",
