@@ -13,7 +13,7 @@ use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::Result;
 use aviso_validators::PolygonHandler;
 use std::collections::HashMap;
-use tracing::{debug, info};
+use tracing::debug;
 
 /// Save notification result to the configured backend
 ///
@@ -60,7 +60,7 @@ pub async fn save_to_backend(
             .put_message_with_headers(&result.topic, Some(headers), payload)
             .await?;
 
-        info!(
+        debug!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_name = "notification.storage.spatial.succeeded",
@@ -70,12 +70,11 @@ pub async fn save_to_backend(
             "Notification with spatial metadata saved to backend successfully"
         );
     } else {
-        // Save the notification result to backend using put_messages
         notification_backend
             .put_messages(&result.topic, payload)
             .await?;
 
-        info!(
+        debug!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_name = "notification.storage.succeeded",

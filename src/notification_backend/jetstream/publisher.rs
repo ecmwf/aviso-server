@@ -12,7 +12,7 @@ use anyhow::{Context, Result, anyhow};
 use async_nats::HeaderMap;
 use std::collections::HashMap;
 use std::time::Duration;
-use tracing::{debug, info};
+use tracing::debug;
 
 pub async fn put_messages(backend: &JetStreamBackend, topic: &str, payload: String) -> Result<()> {
     publish_with_retry(backend, topic, None, payload).await
@@ -125,7 +125,7 @@ async fn publish_once(
         "backend.jetstream.publish.succeeded"
     };
 
-    info!(
+    debug!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
         event_name = event_name,
