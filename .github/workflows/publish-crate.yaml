@@ -156,24 +156,28 @@ jobs:
               exit 0
             fi
 
-            # crates.io index propagation can lag in two distinct shapes:
+            # crates.io index propagation can lag in two shapes:
             #
-            # 1. "no matching package named X found" / "failed to get X as
-            #    a dependency" -- the leaf crate does not exist on the
-            #    registry yet at all. Fires on the very first publish.
+            #   shape A (first publish only): the leaf crate does not
+            #     exist on the registry at all yet -- "no matching
+            #     package named X found" / "failed to get X as a
+            #     dependency".
             #
-            # 2. "failed to select a version for the requirement X = ..."
-            #    / "candidate versions found which didn't match" -- the
-            #    leaf crate exists, but the specific new version just
-            #    pushed by the previous job has not propagated to the
-            #    index a cargo publish sees. Fires on every subsequent
-            #    release because aviso-validators and aviso-ecpds already
-            #    exist; only the new version is missing.
+            #   shape B (every subsequent release): the leaf crate
+            #     exists, but the specific new version just pushed by
+            #     the previous job has not propagated to the index --
+            #     "failed to select a version for the requirement X =
+            #     ..." / "candidate versions found which didn't match".
             #
-            # The retry has to catch both. The original regex covered
-            # only shape (1), so the workflow would fail on shape (2)
-            # which is now the more likely path.
-            if grep -Eq 'no matching package named `aviso-(validators|ecpds)` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-(validators|ecpds)` as a dependency|failed to select a version for the requirement `aviso-(validators|ecpds)|candidate versions found which didn.t match' "${ERR_FILE}"; then
+            # Empirical cargo 1.95 output for both shapes wraps the
+            # crate name in backticks, but the trailing backtick comes
+            # after the version specifier in shape B, not right after
+            # the crate name. Rather than encoding cargo's quoting
+            # style (which has changed in the past), each crate-name
+            # alternative uses `.?` to match an optional opening
+            # quote/backtick/space character, so the regex stays
+            # uniform and survives a future cargo output tweak.
+            if grep -Eq '(no matching package named|failed to get|failed to select a version for the requirement) .?aviso-(validators|ecpds)|candidate versions found which didn.t match|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io' "${ERR_FILE}"; then
               echo "Dependency/index not ready yet (attempt ${attempt}/10); retrying in 30s..."
               sleep 30
               continue

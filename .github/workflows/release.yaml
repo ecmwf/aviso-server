@@ -26,8 +26,7 @@ jobs:
       is_stable: ${{ steps.release_tags.outputs.is_stable }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
-        # This step fetches the repository code.
+        uses: actions/checkout@v4
 
       - name: Extract package version and name
         id: get_version
@@ -106,8 +105,7 @@ jobs:
       CARGO_VERSION: ${{ needs.release-setup.outputs.package_version }}
     steps:
       - name: Check out code
-        uses: actions/checkout@v3
-        # Ensures the latest code is available for the build.
+        uses: actions/checkout@v4
 
       - name: Docker login
         run: |
