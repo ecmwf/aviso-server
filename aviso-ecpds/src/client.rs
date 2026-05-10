@@ -548,6 +548,44 @@ mod tests {
         }
     }
 
+    #[test]
+    fn skipped_record_events_pin_debug_level_in_source() {
+        // Regression-prevention pin matching the parallel test in
+        // aviso_server::telemetry. Both auth.ecpds.fetch.skipped_inactive
+        // and auth.ecpds.fetch.skipped_record were demoted from info to
+        // debug in PR #86 because they fire on every ECPDS fetch in a
+        // healthy deployment (any inactive record or any record without
+        // the configured target_field). A textual flip back to info!
+        // would silently undo Phase 3 of the volume reduction; this
+        // source-scan catches that regression class without needing a
+        // capturing tracing subscriber or a network mock for what is
+        // ultimately a textual pin.
+        let src = include_str!("client.rs");
+        for event_name in [
+            "auth.ecpds.fetch.skipped_inactive",
+            "auth.ecpds.fetch.skipped_record",
+        ] {
+            let needle = format!("event_name = \"{event_name}\"");
+            let event_idx = src
+                .find(&needle)
+                .unwrap_or_else(|| panic!("event {event_name:?} not found in source"));
+            let window_start = event_idx.saturating_sub(256);
+            let window = &src[window_start..event_idx];
+            let macro_name = ["debug!", "info!", "warn!", "error!", "trace!"]
+                .iter()
+                .filter_map(|m| window.rfind(m).map(|pos| (*m, pos)))
+                .max_by_key(|(_, pos)| *pos)
+                .map(|(m, _)| m)
+                .unwrap_or_else(|| {
+                    panic!("no tracing macro found in 256 bytes before {event_name:?}")
+                });
+            assert_eq!(
+                macro_name, "debug!",
+                "event {event_name:?} must use debug! (PR #86 Phase 3 contract)",
+            );
+        }
+    }
+
     #[tokio::test]
     async fn fetch_parses_destination_names() {
         let mut server = mockito::Server::new_async().await;

@@ -69,25 +69,44 @@ where
 /// Kept as a free function so unit tests can exercise the resolution rules
 /// without standing up the full subscriber.
 fn build_env_filter(default_level: &str) -> EnvFilter {
-    if std::env::var_os("RUST_LOG").is_some() {
-        match EnvFilter::try_from_default_env() {
-            Ok(filter) => return filter,
-            Err(error) => {
-                // Subscriber is not yet installed, so any `tracing::*!` here
-                // would be lost. Use stderr directly so the operator sees the
-                // misconfiguration on startup.
-                eprintln!(
-                    "warning: RUST_LOG is set but could not be parsed as an EnvFilter \
-                     directive ({error}); falling back to logging.level={default_level}. \
-                     Example valid value: RUST_LOG=info,aviso_server=debug,actix_web=warn"
-                );
-            }
-        }
+    if let Some(raw) = std::env::var_os("RUST_LOG")
+        && let Some(filter) = parse_rust_log_value(&raw.to_string_lossy(), default_level)
+    {
+        return filter;
     }
 
     apply_default_mute_directives(
         EnvFilter::default().add_directive(parse_level_filter(default_level).into()),
     )
+}
+
+/// Parse an explicit `RUST_LOG` value. Returns `None` to signal "fall back to
+/// the default filter" rather than installing the value as-is.
+///
+/// Two values must be treated as "fall back":
+/// 1. Empty or whitespace-only strings. `EnvFilter::try_new("")` succeeds and
+///    yields a filter that matches nothing, which would silently silence the
+///    entire process. Some deployment systems (Kubernetes downward API,
+///    docker-compose `${VAR:-}`) export unset variables as empty strings, so
+///    this case is reachable in production.
+/// 2. Strings that fail `EnvFilter` parsing. The error is surfaced to stderr
+///    (the subscriber is not yet installed, so `tracing::*!` would be lost)
+///    and the operator gets a real malformed example to compare against.
+fn parse_rust_log_value(value: &str, default_level: &str) -> Option<EnvFilter> {
+    if value.trim().is_empty() {
+        return None;
+    }
+    match EnvFilter::try_new(value) {
+        Ok(filter) => Some(filter),
+        Err(error) => {
+            eprintln!(
+                "warning: RUST_LOG is set but could not be parsed as an EnvFilter \
+                 directive ({error}); falling back to logging.level={default_level}. \
+                 Example valid value: RUST_LOG=info,aviso_server=debug,actix_web=warn"
+            );
+            None
+        }
+    }
 }
 
 fn parse_level_filter(level: &str) -> LevelFilter {
@@ -667,5 +686,162 @@ mod tests {
                     panic!("default mute directive {directive:?} must parse: {error}")
                 });
         }
+    }
+
+    #[test]
+    fn parse_rust_log_value_treats_empty_or_whitespace_as_unset() {
+        // Critical regression test. EnvFilter::try_new("") silently succeeds
+        // with a filter that matches nothing, which would black-hole the
+        // entire process. Empty/whitespace must fall through to the default.
+        // Some deployment systems (Kubernetes downward API,
+        // docker-compose ${VAR:-}) export unset env vars as empty strings,
+        // so this case is reachable in production, not just a theoretical
+        // edge case.
+        assert!(parse_rust_log_value("", "info").is_none());
+        assert!(parse_rust_log_value(" ", "info").is_none());
+        assert!(parse_rust_log_value("   ", "info").is_none());
+        assert!(parse_rust_log_value("\t", "info").is_none());
+        assert!(parse_rust_log_value("\n", "info").is_none());
+        assert!(parse_rust_log_value("\t\n  ", "info").is_none());
+    }
+
+    #[test]
+    fn parse_rust_log_value_accepts_valid_directives() {
+        assert!(parse_rust_log_value("info", "warn").is_some());
+        assert!(parse_rust_log_value("info,aviso_server=debug", "warn").is_some());
+        assert!(parse_rust_log_value("warn,aviso_server::auth=trace", "info").is_some());
+        assert!(parse_rust_log_value("debug", "info").is_some());
+    }
+
+    #[test]
+    fn parse_rust_log_value_falls_back_on_unparseable_input() {
+        // Confirmed parse failures via EnvFilter::try_new (tracing-subscriber
+        // 0.3.x): an empty target before `=` (e.g. "=warn") and a non-level
+        // value after `=` ("foo=BOGUSLEVEL"). Note that
+        // "info aviso_server=debug" (a missing comma) is NOT a parse error;
+        // it parses as a single target name with a space, so we cannot use
+        // it as a fallback test case.
+        assert!(parse_rust_log_value("=warn", "info").is_none());
+        assert!(parse_rust_log_value("info,foo=BOGUSLEVEL", "info").is_none());
+    }
+
+    /// Find the macro level (`trace`/`debug`/`info`/`warn`/`error`) of the
+    /// `tracing::*!` call whose argument list references a given `event_name`.
+    ///
+    /// Used by the level-pinning tests below. Source-scan rather than runtime
+    /// capture because (a) most demoted call sites require network/database
+    /// setup to exercise end-to-end and (b) a regression in the macro choice
+    /// (e.g. `tracing::debug!` flipped back to `tracing::info!`) is a textual
+    /// change, so a textual pin is the minimum-overhead detection mechanism.
+    ///
+    /// Two source patterns are recognised:
+    /// 1. Literal in the macro arguments: `event_name = "value"`. The macro
+    ///    opens BEFORE the literal in the file. Scanned backwards.
+    /// 2. Literal as the value of a `let event_name = ...` binding, with
+    ///    `event_name = event_name` (or shorthand `event_name`) inside the
+    ///    macro that follows. The macro opens AFTER the literal. Scanned
+    ///    forwards. This is how `notification_backend::jetstream::publisher`
+    ///    handles the headers/no-headers conditional event name.
+    fn macro_level_for_event_name(src: &str, event_name: &str) -> &'static str {
+        let macro_re = Regex::new(r"\b(trace|debug|info|warn|error)!\s*\(")
+            .expect("level-pinning macro regex must compile");
+
+        let in_macro_needle = format!("event_name = \"{event_name}\"");
+        if let Some(idx) = src.find(&in_macro_needle) {
+            let last = macro_re.find_iter(&src[..idx]).last().unwrap_or_else(|| {
+                panic!(
+                    "no tracing macro call found before event_name {event_name:?} \
+                     — call site refactored?"
+                )
+            });
+            return capture_level(&macro_re, last.as_str());
+        }
+
+        let quoted_needle = format!("\"{event_name}\"");
+        if let Some(idx) = src.find(&quoted_needle) {
+            let next = macro_re.find(&src[idx..]).unwrap_or_else(|| {
+                panic!(
+                    "literal {event_name:?} found but no following tracing macro \
+                     — call site refactored?"
+                )
+            });
+            return capture_level(&macro_re, next.as_str());
+        }
+
+        panic!("event_name {event_name:?} not found in source");
+    }
+
+    fn capture_level(macro_re: &Regex, matched_text: &str) -> &'static str {
+        let captures = macro_re
+            .captures(matched_text)
+            .expect("macro regex must capture on its own match");
+        match captures.get(1).expect("level capture group").as_str() {
+            "trace" => "trace",
+            "debug" => "debug",
+            "info" => "info",
+            "warn" => "warn",
+            "error" => "error",
+            other => panic!("unexpected macro level {other:?}"),
+        }
+    }
+
+    #[test]
+    fn demoted_events_pin_their_log_level_in_source() {
+        // Regression-prevention pins for the events whose level was
+        // explicitly chosen by PR #86's volume reduction. Without these
+        // pins, a textual flip back to `tracing::info!` would silently
+        // undo Phase 2 / Phase 3 of the volume reduction and the rest of
+        // the test suite would still pass. The pin is a source-text scan
+        // because the alternative — installing a capturing tracing
+        // subscriber and exercising every call site end-to-end — would
+        // require network and backend mocks well beyond the scope of a
+        // unit test, and would still not catch the textual regression
+        // class this test is designed to catch.
+        let storage_src = include_str!("handlers/storage.rs");
+        let publisher_src = include_str!("notification_backend/jetstream/publisher.rs");
+        let streaming_src = include_str!("routes/streaming.rs");
+        let notify_src = include_str!("routes/notify.rs");
+
+        // Phase 2: notification chain demotions to debug.
+        assert_eq!(
+            macro_level_for_event_name(storage_src, "notification.storage.spatial.succeeded"),
+            "debug",
+        );
+        assert_eq!(
+            macro_level_for_event_name(storage_src, "notification.storage.succeeded"),
+            "debug",
+        );
+        assert_eq!(
+            macro_level_for_event_name(publisher_src, "backend.jetstream.publish.succeeded"),
+            "debug",
+        );
+        assert_eq!(
+            macro_level_for_event_name(
+                publisher_src,
+                "backend.jetstream.publish_with_headers.succeeded"
+            ),
+            "debug",
+        );
+
+        // Phase 3 safe half: ECPDS demotion to debug.
+        assert_eq!(
+            macro_level_for_event_name(streaming_src, "auth.ecpds.admin.bypass"),
+            "debug",
+        );
+
+        // Kept-info pins. If these flip to debug the audit/observability
+        // contract changes; updating the level here without also updating
+        // the corresponding runbook entry (docs/src/ecpds-runbook.md for
+        // check.allowed; PR #86 description for the canonical
+        // notification line) is a contract regression even if the gates
+        // pass.
+        assert_eq!(
+            macro_level_for_event_name(notify_src, "api.notification.processed"),
+            "info",
+        );
+        assert_eq!(
+            macro_level_for_event_name(streaming_src, "auth.ecpds.check.allowed"),
+            "info",
+        );
     }
 }

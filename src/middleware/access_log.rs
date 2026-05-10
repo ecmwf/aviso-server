@@ -6,37 +6,43 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-//! `RootSpanBuilder` that demotes infrastructure paths to a debug-level span.
+//! `RootSpanBuilder` that demotes infrastructure-path request spans to debug.
 //!
 //! `tracing-actix-web`'s default builder creates an info-level root span for
-//! every HTTP request. That span carries fields like `http.method`,
-//! `http.status_code`, and `request_id`, and any event recorded inside the
-//! request's lifetime inherits them. With the standard subscriber that emits
-//! span events on `FmtSpan::CLOSE`, this becomes one log line per request,
-//! including high-frequency infrastructure paths (Kubernetes liveness probes
-//! on `/health`, Prometheus scrapes on `/metrics`, static asset fetches,
-//! Swagger UI loads).
+//! every HTTP request. With the standard subscriber that emits span events on
+//! `FmtSpan::CLOSE` (one log line per request close), this floods logs from
+//! high-frequency infrastructure paths: Kubernetes liveness probes on
+//! `/health`, Prometheus scrapes on `/metrics`, static asset fetches, Swagger
+//! UI loads, OpenAPI doc fetches.
 //!
-//! Today aviso's subscriber sets `FmtSpan::NONE`, so the default builder is
-//! already silent at the span boundary — but the span level still gates which
-//! application-level events inside it are emitted, and any future change to
-//! `FmtSpan` (e.g. an operator dialing up to debug to investigate) would
-//! immediately flood the logs from these paths.
+//! What this builder changes — and what it does NOT change:
 //!
-//! [`AvisoRootSpanBuilder`] is a forward-defensive alternative. For a fixed
-//! list of infrastructure paths it builds the span at debug level instead of
-//! info, so:
-//! - At the default info filter the span is below the floor and nothing it
-//!   emits is recorded, regardless of `FmtSpan` configuration.
-//! - At debug filter (or via `RUST_LOG=info,aviso_server=debug`) the span
-//!   becomes visible again for triage.
+//! * **Span emission events** (close events from `FmtSpan::CLOSE` /
+//!   `FmtSpan::ACTIVE` / etc.) for the request span are filtered at the
+//!   span's own level. By emitting the request span at debug for
+//!   infrastructure paths, those span-close lines are silenced at the
+//!   default info filter while business-route span-close lines stay
+//!   visible. Today aviso uses `FmtSpan::NONE` so this saves zero lines;
+//!   the value is realised the moment `FmtSpan` is reconfigured (an SRE
+//!   tweak that could ship in any future PR for richer trace correlation),
+//!   without re-introducing the access-log flood at the same time.
 //!
-//! Application-level events (from handlers) are unaffected: their level is
-//! whatever the call site chose, independent of the parent span's level.
+//! * **Application events recorded by handlers inside the request lifetime**
+//!   are *unaffected*. Each event is filtered by its own call-site level
+//!   (the `tracing::info!` / `warn!` / `error!` macro the handler chose),
+//!   independent of the parent span's level. A handler that emits a
+//!   `tracing::error!` from inside a `/health` request still logs that
+//!   error.
 //!
-//! This builder also short-circuits OpenTelemetry parent propagation for
-//! quiet paths via the standard delegation pattern, which keeps the OTel
-//! pipeline aligned with the noise budget.
+//! * **OpenTelemetry parent propagation** for the request is delegated to
+//!   `DefaultRootSpanBuilder::on_request_end` and inherits the span's level
+//!   for trace export. For deployments with OTel disabled (the aviso
+//!   default today), this is a no-op.
+//!
+//! In other words: Phase 1 is a span-level pin, not an event-level pin. It
+//! exists to prevent the request span itself from generating noise on
+//! infrastructure paths if the subscriber's `FmtSpan` config ever changes,
+//! without affecting handler-emitted events.
 
 use actix_web::Error;
 use actix_web::body::MessageBody;
@@ -107,9 +113,14 @@ mod tests {
         assert!(!is_infrastructure_path("/healthcheck"));
         assert!(!is_infrastructure_path("/healthz"));
         assert!(!is_infrastructure_path("/metricsfoo"));
-        // Trailing-slash variant of /health is intentionally NOT matched
-        // because the route is registered as exactly "/health" and Actix
-        // would 404 a "/health/" request before reaching this builder.
+        // /health/ trailing-slash: the builder runs BEFORE Actix routing, so
+        // this path does reach is_infrastructure_path and we explicitly
+        // choose not to match it. The exact-equality match on "/health" is
+        // intentional: a non-empty trailing slash usually means the operator
+        // typo'd the URL, and Actix returns 404 (no NormalizePath wrapper
+        // is registered), so the resulting log line is genuinely
+        // diagnostic for "someone is hitting the wrong path" and should
+        // stay at the default info level rather than be silently muted.
         assert!(!is_infrastructure_path("/health/"));
     }
 }

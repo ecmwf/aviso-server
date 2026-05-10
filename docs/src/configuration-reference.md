@@ -36,7 +36,9 @@ RUST_LOG=warn,aviso_server::auth=trace
 RUST_LOG=info,aviso_server::sse=debug,actix_web=warn
 ```
 
-A malformed `RUST_LOG` value is reported on stderr at startup and the server falls back to `logging.level`. A typical malformed value is a missing comma between directives (`info aviso_server=debug` instead of `info,aviso_server=debug`).
+A malformed `RUST_LOG` value is reported on stderr at startup and the server falls back to `logging.level`. The most common parse failures are an empty target before `=` (e.g. `RUST_LOG==warn`) and a non-level value after `=` (e.g. `RUST_LOG=info,aviso_server=verbose`). A missing comma like `RUST_LOG=info aviso_server=debug` does **not** trigger this fallback because `EnvFilter` parses the whole string as a single target name with a space — the directive ends up matching nothing instead of failing loudly. If a `RUST_LOG` value looks correct but no logs appear, double-check the commas first.
+
+`RUST_LOG=""` (empty string) is treated as if `RUST_LOG` were unset and falls back to `logging.level`. Without this guard `EnvFilter::try_new("")` would silently succeed with a filter that matches nothing and silence the entire process — a real failure mode under deployment systems that export unset variables as empty strings (Kubernetes downward API, docker-compose `${VAR:-}`).
 
 When `RUST_LOG` is unset, the default filter combines `logging.level` with a small set of mute directives so that framework internals do not flood operational logs:
 
