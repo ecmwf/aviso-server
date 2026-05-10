@@ -90,13 +90,13 @@ Every event uses the codebase's standard structured shape (`service_name`, `serv
 | `auth.ecpds.check.denied` | warn | The plugin denied the request. See `reason` field. |
 | `auth.ecpds.check.unavailable` | warn | The plugin failed to reach a verdict. See `fetch_outcome` field. |
 | `auth.ecpds.check.error` | error | An unexpected error in the plugin. See `error_kind` or `error` field. |
-| `auth.ecpds.admin.bypass` | info | An admin user skipped the ECPDS check. |
+| `auth.ecpds.admin.bypass` | debug | An admin user skipped the ECPDS check. Demoted from info because admin bypass is configured behaviour, not an event SREs alert on; the `aviso_ecpds_access_decisions_total{outcome="admin_bypass"}` Prometheus counter still records every occurrence unconditionally. |
 | `auth.ecpds.cache.hit` | debug | The destination list came from cache. |
 | `auth.ecpds.cache.miss` | debug | The destination list was not in cache; a fetch was triggered. |
 | `auth.ecpds.fetch.succeeded` | debug | A fetch to one ECPDS server succeeded. |
 | `auth.ecpds.fetch.failed` | warn | A fetch to one ECPDS server failed. See `error` field. |
-| `auth.ecpds.fetch.skipped_inactive` | info | One or more ECPDS records returned by a single server had `active != true` (false, missing, or not a boolean) and got dropped from the user's allow-list. Carries `server_index`, `server`, `username`, `skipped`, `total`. |
-| `auth.ecpds.fetch.skipped_record` | info | One or more ECPDS records returned by a single server were active but missing the configured `target_field` and got dropped. Carries `server_index`, `server`, `username`, `target_field`, `skipped`, `total` so on-call can pinpoint which ECPDS server is producing the malformed records. |
+| `auth.ecpds.fetch.skipped_inactive` | debug | One or more ECPDS records returned by a single server had `active != true` (false, missing, or not a boolean) and got dropped from the user's allow-list. Carries `server_index`, `server`, `username`, `skipped`, `total`. Demoted from info because every ECPDS fetch routinely returns inactive records and the skip behaviour is the documented contract; flip to debug only when investigating a denied user whose expected destination appears in this skip count. |
+| `auth.ecpds.fetch.skipped_record` | debug | One or more ECPDS records returned by a single server were active but missing the configured `target_field` and got dropped. Carries `server_index`, `server`, `username`, `target_field`, `skipped`, `total` so on-call can pinpoint which ECPDS server is producing the malformed records. Demoted from info on the same grounds as `skipped_inactive`. |
 
 ### Common fields
 

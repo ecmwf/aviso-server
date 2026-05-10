@@ -6,6 +6,7 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
+use crate::middleware::access_log::AvisoRootSpanBuilder;
 use crate::middleware::request_id::RequestIdHeader;
 use actix_web::{App, HttpResponse, HttpServer, dev::Server, web};
 use prometheus::{
@@ -319,7 +320,7 @@ pub fn run_metrics_server(
     let server = HttpServer::new(move || {
         App::new()
             .wrap(RequestIdHeader)
-            .wrap(TracingLogger::default())
+            .wrap(TracingLogger::<AvisoRootSpanBuilder>::new())
             .app_data(registry.clone())
             .route("/metrics", web::get().to(metrics_handler))
     })
@@ -592,7 +593,7 @@ mod tests {
         let app = init_service(
             App::new()
                 .wrap(RequestIdHeader)
-                .wrap(TracingLogger::default())
+                .wrap(TracingLogger::<AvisoRootSpanBuilder>::new())
                 .app_data(registry_data)
                 .route("/metrics", web::get().to(metrics_handler)),
         )

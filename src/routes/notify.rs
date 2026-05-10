@@ -139,8 +139,8 @@ pub async fn notify(
         .as_ref()
         .map(serde_json::Value::to_string)
         .unwrap_or_else(|| "null".to_string());
+    let payload_size = payload_string.len();
 
-    // Save to backend storage (handles spatial metadata automatically).
     if let Err(e) = save_to_backend(
         &notification_result,
         payload_string,
@@ -154,14 +154,17 @@ pub async fn notify(
 
     record_notification(&metrics, event_type, "success");
 
-    // Build success response
     let response = NotificationResponse {
         status: "success".to_string(),
         request_id: request_id_str,
         processed_at: chrono::Utc::now().to_rfc3339(),
     };
 
-    // Emit one success event with optional spatial metadata instead of branching logs.
+    // This single info event is now the canonical per-notification log line.
+    // The previously-info storage and publisher events were demoted to debug
+    // because they describe sub-steps of the same business outcome; their
+    // unique fields (payload_size here, sequence/stream_name still on the
+    // backend's debug line) live alongside this event when it matters.
     let payload_kind = payload
         .payload
         .as_ref()
@@ -181,6 +184,7 @@ pub async fn notify(
         event_type = %notification_result.event_type,
         param_count = notification_result.canonicalized_params.len(),
         payload_kind = %payload_kind,
+        payload_size = payload_size,
         spatial_enabled = spatial_enabled,
         spatial_bbox = ?spatial_bbox,
         "Notification processed and saved successfully"

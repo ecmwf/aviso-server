@@ -3,7 +3,7 @@ use futures::future::join_all;
 use serde::Deserialize;
 use std::collections::HashSet;
 use thiserror::Error;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 /// Coarse-grained reason a single ECPDS fetch (or merged fetch under a
 /// partial-outage policy) failed. Surfaces in
@@ -497,7 +497,7 @@ impl EcpdsClient {
             .collect();
 
         if skipped_inactive > 0 {
-            info!(
+            debug!(
                 service_name = crate::service_name(),
                 service_version = crate::service_version(),
                 event_name = "auth.ecpds.fetch.skipped_inactive",
@@ -510,7 +510,7 @@ impl EcpdsClient {
             );
         }
         if skipped_missing_field > 0 {
-            info!(
+            debug!(
                 service_name = crate::service_name(),
                 service_version = crate::service_version(),
                 event_name = "auth.ecpds.fetch.skipped_record",
@@ -545,6 +545,44 @@ mod tests {
             connect_timeout_seconds: 5,
             partial_outage_policy: PartialOutagePolicy::Strict,
             servers,
+        }
+    }
+
+    #[test]
+    fn skipped_record_events_pin_debug_level_in_source() {
+        // Regression-prevention pin matching the parallel test in
+        // aviso_server::telemetry. Both auth.ecpds.fetch.skipped_inactive
+        // and auth.ecpds.fetch.skipped_record were demoted from info to
+        // debug in PR #86 because they fire on every ECPDS fetch in a
+        // healthy deployment (any inactive record or any record without
+        // the configured target_field). A textual flip back to info!
+        // would silently undo Phase 3 of the volume reduction; this
+        // source-scan catches that regression class without needing a
+        // capturing tracing subscriber or a network mock for what is
+        // ultimately a textual pin.
+        let src = include_str!("client.rs");
+        for event_name in [
+            "auth.ecpds.fetch.skipped_inactive",
+            "auth.ecpds.fetch.skipped_record",
+        ] {
+            let needle = format!("event_name = \"{event_name}\"");
+            let event_idx = src
+                .find(&needle)
+                .unwrap_or_else(|| panic!("event {event_name:?} not found in source"));
+            let window_start = event_idx.saturating_sub(256);
+            let window = &src[window_start..event_idx];
+            let macro_name = ["debug!", "info!", "warn!", "error!", "trace!"]
+                .iter()
+                .filter_map(|m| window.rfind(m).map(|pos| (*m, pos)))
+                .max_by_key(|(_, pos)| *pos)
+                .map(|(m, _)| m)
+                .unwrap_or_else(|| {
+                    panic!("no tracing macro found in 256 bytes before {event_name:?}")
+                });
+            assert_eq!(
+                macro_name, "debug!",
+                "event {event_name:?} must use debug! (PR #86 Phase 3 contract)",
+            );
         }
     }
 

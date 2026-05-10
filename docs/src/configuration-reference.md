@@ -23,8 +23,32 @@ See [Topic Encoding](./topic-encoding.md) for rules and examples.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `level` | `string` | implementation default | Example: `info`, `debug`, `warn`, `error`. |
+| `level` | `string` | `info` | One of `trace`, `debug`, `info`, `warn`, `error`. Unknown values fall back to `info` instead of failing startup. Used as the application-wide level when `RUST_LOG` is unset. |
 | `format` | `string` | implementation default | Kept for compatibility; output is OTel-aligned JSON. |
+
+### Runtime override via `RUST_LOG`
+
+If the `RUST_LOG` environment variable is set, it takes priority over `logging.level` and gives the operator full [`EnvFilter` directive syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives) for runtime triage without a code change. Examples:
+
+```bash
+RUST_LOG=info,aviso_server=debug
+RUST_LOG=warn,aviso_server::auth=trace
+RUST_LOG=info,aviso_server::sse=debug,actix_web=warn
+```
+
+A malformed `RUST_LOG` value is reported on stderr at startup and the server falls back to `logging.level`. The most common parse failures are an empty target before `=` (e.g. `RUST_LOG==warn`) and a non-level value after `=` (e.g. `RUST_LOG=info,aviso_server=verbose`). A missing comma like `RUST_LOG=info aviso_server=debug` does **not** trigger this fallback because `EnvFilter` parses the whole string as a single target name with a space — the directive ends up matching nothing instead of failing loudly. If a `RUST_LOG` value looks correct but no logs appear, double-check the commas first.
+
+`RUST_LOG=""` (empty string) is treated as if `RUST_LOG` were unset and falls back to `logging.level`. Without this guard `EnvFilter::try_new("")` would silently succeed with a filter that matches nothing and silence the entire process — a real failure mode under deployment systems that export unset variables as empty strings (Kubernetes downward API, docker-compose `${VAR:-}`).
+
+When `RUST_LOG` is unset, the default filter combines `logging.level` with a small set of mute directives so that framework internals do not flood operational logs:
+
+| Directive | Effect |
+|---|---|
+| `actix_web=warn` | Caps Actix-web request lifecycle logs at warn (worker started, accepting, etc.). |
+| `actix_server=warn` | Caps Actix-server lifecycle logs at warn. |
+| `async_nats=info` | Caps the NATS client at info; trace/debug per-message chatter stays off. |
+
+These mute directives are pinned by unit tests, only apply when `RUST_LOG` is unset, and only apply when the directive's level is **more restrictive** than `logging.level`. With `logging.level=warn` or `logging.level=error` the directives are skipped entirely so they never raise the per-target ceiling above what the operator chose; with `logging.level=info` the two `actix_*=warn` directives narrow framework chatter while `async_nats=info` is skipped (it would be neutral); with `logging.level=debug` or `logging.level=trace` all three directives apply. Setting `RUST_LOG` opts out of all of them and gives the operator full directive control.
 
 ## `auth`
 
@@ -66,7 +90,7 @@ Optional ECPDS destination authorization. Only available when built with `--feat
 | `password` | `string` | none | Service account password. Redacted to `[REDACTED]` in `Debug` output (and therefore in any structured-log dump of the configuration). Must not be empty. The `/api/v1/schema` endpoint never exposes the top-level `ecpds` block at all, only per-event identifier and payload fields, so the password is not reachable through it. |
 | `servers` | `string[]` | none | List of ECPDS server base URLs. **Use `https://` for any reachable host**: the plugin authenticates with HTTP Basic Auth, so plain `http://` to a real host would put the service-account password and per-user destination lookups on the wire without TLS. Plain `http://` is accepted only for loopback (`127.0.0.1`, `[::1]`, `localhost`) for local testing; a typo from `https://` to `http://` on a non-loopback host fails closed at startup. Each URL must parse with no query string and no fragment. Path prefixes (e.g. `https://proxy.example/ecpds-api/`) are accepted. The plugin appends `/ecpds/v1/destination/list?id=<username>` itself. |
 | `match_key` | `string` | none | Identifier field to match against the user's destination list (e.g. `"destination"`). Must be a single bare identifier name (no whitespace, `/` or NUL) and must be present in the schema's `identifier` with `required: true` (so the value is guaranteed before the plugin runs). It does NOT need to appear in `topic.key_order`; the plugin reads the value from the request's canonicalized identifier params, not from topic routing. |
-| `target_field` | `string` | `"name"` | JSON field to extract from each ECPDS destination record. Records that lack this field are silently skipped (logged at `info` as `auth.ecpds.fetch.skipped_record`). |
+| `target_field` | `string` | `"name"` | JSON field to extract from each ECPDS destination record. Records that lack this field are silently skipped (logged at `debug` as `auth.ecpds.fetch.skipped_record`; flip to `RUST_LOG=info,aviso_ecpds=debug` when triaging missing-destination reports). |
 | `cache_ttl_seconds` | `u64` | `300` | How long (in seconds) to cache a user's destination list before re-fetching. Must be `> 0`. |
 | `max_entries` | `u64` | `10000` | Maximum number of distinct usernames held in the cache; eviction policy is moka's TinyLFU. Must be `> 0`. |
 | `request_timeout_seconds` | `u64` | `30` | Total wall-clock budget for a single ECPDS HTTP request: DNS lookup, TCP connect, TLS handshake, request send, AND response body read must all complete within this. (`reqwest::ClientBuilder::timeout` is a total deadline that starts when the request is issued; tune this as an upper bound that includes connection setup, not just response time.) Must be `> 0`. |
