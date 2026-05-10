@@ -156,10 +156,24 @@ jobs:
               exit 0
             fi
 
-            # crates.io index propagation lag can briefly delay either of
-            # the two leaf deps; treat both 'aviso-validators' and
-            # 'aviso-ecpds' not-yet-available errors as retriable.
-            if grep -Eq 'no matching package named `aviso-(validators|ecpds)` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-(validators|ecpds)` as a dependency' "${ERR_FILE}"; then
+            # crates.io index propagation can lag in two distinct shapes:
+            #
+            # 1. "no matching package named X found" / "failed to get X as
+            #    a dependency" -- the leaf crate does not exist on the
+            #    registry yet at all. Fires on the very first publish.
+            #
+            # 2. "failed to select a version for the requirement X = ..."
+            #    / "candidate versions found which didn't match" -- the
+            #    leaf crate exists, but the specific new version just
+            #    pushed by the previous job has not propagated to the
+            #    index a cargo publish sees. Fires on every subsequent
+            #    release because aviso-validators and aviso-ecpds already
+            #    exist; only the new version is missing.
+            #
+            # The retry has to catch both. The original regex covered
+            # only shape (1), so the workflow would fail on shape (2)
+            # which is now the more likely path.
+            if grep -Eq 'no matching package named `aviso-(validators|ecpds)` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-(validators|ecpds)` as a dependency|failed to select a version for the requirement `aviso-(validators|ecpds)|candidate versions found which didn.t match' "${ERR_FILE}"; then
               echo "Dependency/index not ready yet (attempt ${attempt}/10); retrying in 30s..."
               sleep 30
               continue
