@@ -19,6 +19,7 @@ use crate::auth::middleware::AuthMiddleware;
 use crate::configuration::validate_ecpds_settings;
 use crate::configuration::{AuthSettings, validate_metrics_settings};
 use crate::metrics::AppMetrics;
+use crate::middleware::access_log::AvisoRootSpanBuilder;
 use crate::middleware::request_id::RequestIdHeader;
 use crate::openapi::ApiDoc;
 use crate::routes::admin::{delete_notification, wipe_all, wipe_stream};
@@ -346,7 +347,7 @@ pub fn run(
     let server = HttpServer::new(move || {
         let mut app = App::new()
             .wrap(RequestIdHeader)
-            .wrap(TracingLogger::default())
+            .wrap(TracingLogger::<AvisoRootSpanBuilder>::new())
             .service(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
                     .url("/api-docs/openapi.json", ApiDoc::openapi()),
