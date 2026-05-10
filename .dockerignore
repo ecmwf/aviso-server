@@ -1,14 +1,20 @@
-./target
+# Cargo build outputs at every level. Without the per-subcrate entries,
+# `aviso-ecpds/target/` and `aviso-validators/target/` would each
+# contribute multiple GB to the build context (verified locally).
+target/
+**/target/
 
 # Local runtime/state data should never be part of image build context.
 .nui/
 scripts/.nui
+nats_config/
 
 # Local environment and editor artifacts.
 .env
 .env.*
 .vscode/
 .idea/
+.sisyphus/
 
 # VCS and CI noise.
 .git/
@@ -17,4 +23,21 @@ scripts/.nui
 # Python/Node local caches (used by scripts/tooling).
 __pycache__/
 *.pyc
+**/__pycache__/
 node_modules/
+
+# mdbook output.
+docs/book/
+
+# Local-only refactoring artifacts that occasionally appear at the
+# repo root (CACHE_*, KEY_FINDINGS, REFACTORING_*, VERIFICATION_*).
+# Excluded from the build context so a contributor's working directory
+# does not bloat the image.
+CACHE_OUTCOME_*
+KEY_FINDINGS.md
+REFACTORING_*
+README_REFACTORING.md
+VERIFICATION_*
+log.txt
+aviso-intro.*
+tooling/

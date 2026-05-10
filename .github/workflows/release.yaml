@@ -21,6 +21,9 @@ jobs:
       package_name: ${{ steps.get_version.outputs.package_name }}
       package_version: ${{ steps.get_version.outputs.package_version }}
       should_release: ${{ steps.verify_tag.outputs.should_release }}
+      major_minor: ${{ steps.release_tags.outputs.major_minor }}
+      short_sha: ${{ steps.release_tags.outputs.short_sha }}
+      is_stable: ${{ steps.release_tags.outputs.is_stable }}
     steps:
       - name: Check out code
         uses: actions/checkout@v3
@@ -43,15 +46,42 @@ jobs:
       - name: Verify Tag Equals Cargo Version
         id: verify_tag
         run: |
-          # Compare the pushed tag (github.ref_name) with the version from Cargo.toml
-          echo "Pushed Tag: ${{ github.ref_name }}"
-          echo "Cargo Version: ${{ steps.get_version.outputs.package_version }}"
-          if [ "${{ github.ref_name }}" = "${{ steps.get_version.outputs.package_version }}" ]; then
+          # Accept both `0.4.1` and `v0.4.1` as the pushed tag; strip a
+          # leading `v` before comparing to the Cargo.toml version.
+          PUSHED="${{ github.ref_name }}"
+          NORMALIZED="${PUSHED#v}"
+          CARGO_VERSION="${{ steps.get_version.outputs.package_version }}"
+          echo "Pushed Tag:        ${PUSHED}"
+          echo "Normalized Tag:    ${NORMALIZED}"
+          echo "Cargo Version:     ${CARGO_VERSION}"
+          if [ "${NORMALIZED}" = "${CARGO_VERSION}" ]; then
             echo "should_release=true" >> $GITHUB_OUTPUT
           else
             echo "should_release=false" >> $GITHUB_OUTPUT
             echo "Tag does not match Cargo version. Skipping release steps."
           fi
+
+      - name: Compute additional release tags
+        id: release_tags
+        if: steps.verify_tag.outputs.should_release == 'true'
+        run: |
+          # Derive the major.minor rolling tag (`0.4` for `0.4.1`) so
+          # consumers can pin to a minor line that picks up patch
+          # releases automatically. Pre-release versions (`-alpha`,
+          # `-rc`, etc.) are excluded from `latest` and from the
+          # rolling tag to avoid surprising stable consumers.
+          VERSION="${{ steps.get_version.outputs.package_version }}"
+          MAJOR_MINOR="$(echo "$VERSION" | cut -d. -f1,2)"
+          SHORT_SHA="$(echo '${{ github.sha }}' | cut -c1-7)"
+          if [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            IS_STABLE="true"
+          else
+            IS_STABLE="false"
+          fi
+          echo "major_minor=${MAJOR_MINOR}" >> $GITHUB_OUTPUT
+          echo "short_sha=${SHORT_SHA}" >> $GITHUB_OUTPUT
+          echo "is_stable=${IS_STABLE}" >> $GITHUB_OUTPUT
+          echo "Resolved tags: version=${VERSION} major_minor=${MAJOR_MINOR} short_sha=${SHORT_SHA} is_stable=${IS_STABLE}"
 
   #################################################################
   # Job: build-multiarch
@@ -134,12 +164,37 @@ jobs:
       - name: Create and push multiarch manifest for ${{ matrix.image }}
         env:
           PACKAGE_VERSION: ${{ needs.release-setup.outputs.package_version }}
+          MAJOR_MINOR:     ${{ needs.release-setup.outputs.major_minor }}
+          SHORT_SHA:       ${{ needs.release-setup.outputs.short_sha }}
+          IS_STABLE:       ${{ needs.release-setup.outputs.is_stable }}
           REPO: eccr.ecmwf.int/aviso/${{ matrix.image }}
         run: |
-          # Source tags may already be manifest lists from the per-arch build jobs.
-          # `imagetools create` handles both image manifests and manifest lists.
+          # Source tags from the per-arch build jobs are already manifest
+          # lists; `imagetools create` handles both image manifests and
+          # manifest lists. We attach multiple human-friendly tags to the
+          # same digest so consumers can pick the pinning level that
+          # matches their risk tolerance:
+          #
+          #   :<version>           always (e.g. 0.4.1) — exact pin
+          #   :<version>-<sha>     always              — exact-build pin for incident response
+          #   :<major>.<minor>     stable releases     — picks up patch releases
+          #   :latest              stable releases     — newest stable
+          #
+          # Pre-release versions (-alpha, -rc, etc.) are deliberately
+          # excluded from the rolling tags so consumers tracking
+          # :latest or :0.4 are not surprised by a beta build.
+          TAGS=(
+            "--tag $REPO:$PACKAGE_VERSION"
+            "--tag $REPO:$PACKAGE_VERSION-$SHORT_SHA"
+          )
+          if [ "$IS_STABLE" = "true" ]; then
+            TAGS+=(
+              "--tag $REPO:$MAJOR_MINOR"
+              "--tag $REPO:latest"
+            )
+          fi
           docker buildx imagetools create \
-            --tag $REPO:$PACKAGE_VERSION \
+            ${TAGS[@]} \
             $REPO:$PACKAGE_VERSION-amd64 \
             $REPO:$PACKAGE_VERSION-arm64
 
