@@ -156,10 +156,10 @@ Switch back to the watch terminal. The notification should have arrived as a Clo
 
 ```
 event: live-notification
-data: {"specversion":"1.0","id":"my_event@1","source":"http://localhost:8000","type":"int.ecmwf.aviso.my_event","time":"2026-03-04T10:00:00Z","data":{...}}
+data: {"data":{"identifier":{...},"payload":{"note":"data is ready"}},"datacontenttype":"application/json","dataschema":"http://localhost:8000/schema/my_event","id":"my_event@1","source":"http://localhost:8000","specversion":"1.0","time":"2026-03-04T10:00:00.123456Z","type":"int.ecmwf.aviso.my_event"}
 ```
 
-The `source` field reflects the server's `application.base_url`. With the default config (no `base_url` set), it would be `http://localhost`; the example above matches the snippet in step 2 which sets it to `http://localhost:8000`.
+The `source` and `dataschema` fields are derived from the server's `application.base_url`. With the default config (no `base_url` set), they would use `http://localhost`; the example above matches the snippet in step 2 which sets it to `http://localhost:8000`. The CloudEvent body also includes the canonicalized identifier and the payload under `data`.
 
 The CloudEvent `id` (`my_event@1`) is the `<event_type>@<sequence>` reference for replay and admin delete. The replay endpoint takes only the numeric sequence (`"1"`), not the full string.
 

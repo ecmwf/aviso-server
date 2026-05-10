@@ -11,12 +11,14 @@ below.
 ```json
 {
   "code": "INVALID_REPLAY_REQUEST",
+  "details": "Replay endpoint requires either from_id or from_date parameter...",
   "error": "Invalid Replay Request",
   "message": "Replay endpoint requires either from_id or from_date parameter...",
-  "details": "Replay endpoint requires either from_id or from_date parameter...",
   "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
+
+Wire field order is alphabetical because `serde_json::Map` uses a `BTreeMap`. The examples below match what `curl` actually emits.
 
 Fields:
 
@@ -125,9 +127,9 @@ Invalid replay request:
 ```json
 {
   "code": "INVALID_REPLAY_REQUEST",
+  "details": "Cannot specify both from_id and from_date...",
   "error": "Invalid Replay Request",
   "message": "Cannot specify both from_id and from_date...",
-  "details": "Cannot specify both from_id and from_date...",
   "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
@@ -149,11 +151,11 @@ SSE initialization failure:
 ```json
 {
   "code": "SSE_STREAM_INITIALIZATION_FAILED",
+  "details": "nats connect failed: timeout",
   "error": "SSE stream creation failed",
   "message": "Failed to create stream consumer",
-  "details": "nats connect failed: timeout",
-  "topic": "test_polygon.*.1200",
-  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
+  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6",
+  "topic": "test_polygon.*.1200"
 }
 ```
 
