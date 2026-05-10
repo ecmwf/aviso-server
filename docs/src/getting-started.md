@@ -30,6 +30,7 @@ Open `configuration/config.yaml` and make sure it contains at minimum:
 application:
   host: "127.0.0.1"
   port: 8000
+  base_url: "http://localhost:8000"
 
 notification_backend:
   kind: in_memory
@@ -113,8 +114,10 @@ You will see the SSE connection frame immediately:
 
 ```
 event: live-notification
-data: {"connection_will_close_in_seconds":3600,"request_id":"0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6","timestamp":"2026-03-04T10:00:00Z","topic":"my_event.north.20250706","type":"connection_established"}
+data: {"connection_will_close_in_seconds":3600,"request_id":"a3f1d2c8-9b4e-4f7a-bd56-1c8e2a9d4e3f","timestamp":"2026-03-04T10:00:00Z","topic":"my_event.north.20250706","type":"connection_established"}
 ```
+
+The `request_id` here is unique to this watch request. Save it: you will compare it with the next request's `request_id` to confirm each call gets its own.
 
 The stream stays open and will print new events as they arrive.
 
@@ -147,14 +150,16 @@ Expected response:
 }
 ```
 
-`request_id` is the per-request UUID for this notify call (different from the watch call's UUID; each HTTP request gets its own). The same value appears in the `X-Request-ID` HTTP response header and in the corresponding server log lines. Quote it when reporting issues.
+`request_id` is the per-request UUID for this notify call. Note that it is **different** from the watch call's UUID above (`a3f1d2c8-...`); each HTTP request gets its own. The same value appears in the `X-Request-ID` HTTP response header and in the corresponding server log lines. Quote it when reporting issues.
 
 Switch back to the watch terminal. The notification should have arrived as a CloudEvent body:
 
 ```
 event: live-notification
-data: {"specversion":"1.0","id":"my_event@1","source":"localhost:8000","type":"int.ecmwf.aviso.my_event","time":"2026-03-04T10:00:00Z","data":{...}}
+data: {"specversion":"1.0","id":"my_event@1","source":"http://localhost:8000","type":"int.ecmwf.aviso.my_event","time":"2026-03-04T10:00:00Z","data":{...}}
 ```
+
+The `source` field reflects the server's `application.base_url`. With the default config (no `base_url` set), it would be `http://localhost`; the example above matches the snippet in step 2 which sets it to `http://localhost:8000`.
 
 The CloudEvent `id` (`my_event@1`) is the `<event_type>@<sequence>` reference for replay and admin delete. The replay endpoint takes only the numeric sequence (`"1"`), not the full string.
 
@@ -181,8 +186,10 @@ The stream will emit all matching historical notifications, then close with:
 
 ```
 event: connection-closing
-data: {"message":"Stream completed","reason":"end_of_stream","request_id":"0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6","timestamp":"...","topic":"my_event.north.20250706"}
+data: {"message":"Stream completed","reason":"end_of_stream","request_id":"f7e8d910-2b3c-4d5a-9c8b-1234567890ab","timestamp":"...","topic":"my_event.north.20250706"}
 ```
+
+This `request_id` is yet another distinct UUID, since `/replay` is a separate HTTP request from `/watch` and `/notification`.
 
 ---
 
