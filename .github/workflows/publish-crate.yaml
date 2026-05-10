@@ -26,9 +26,20 @@ jobs:
           set -euo pipefail
           server_version=$(grep '^version\s*=' Cargo.toml | head -1 | cut -d'"' -f2)
           validators_version=$(grep '^version\s*=' aviso-validators/Cargo.toml | head -1 | cut -d'"' -f2)
+          ecpds_version=$(grep '^version\s*=' aviso-ecpds/Cargo.toml | head -1 | cut -d'"' -f2)
 
-          if [ -z "${server_version}" ] || [ -z "${validators_version}" ]; then
+          if [ -z "${server_version}" ] || [ -z "${validators_version}" ] || [ -z "${ecpds_version}" ]; then
             echo "::error::Could not extract crate versions from Cargo manifests"
+            exit 1
+          fi
+
+          # All three crates must move in lockstep. A divergent version is
+          # almost always an accidental partial bump in a PR rather than an
+          # intentional independent release; failing loud here catches it
+          # at tag-push time rather than after a half-finished publish.
+          if [ "${server_version}" != "${validators_version}" ] || [ "${server_version}" != "${ecpds_version}" ]; then
+            echo "::error::Crate versions are not in lockstep: server=${server_version}, validators=${validators_version}, ecpds=${ecpds_version}"
+            echo "should_publish=false" >> "$GITHUB_OUTPUT"
             exit 1
           fi
 
@@ -43,10 +54,14 @@ jobs:
             exit 0
           fi
 
-          if [ "${{ github.ref_name }}" = "${server_version}" ] && [ "${{ github.ref_name }}" = "${validators_version}" ]; then
+          # Accept both `0.4.1` and `v0.4.1` git tags; strip leading `v`
+          # before comparing to the Cargo manifest versions.
+          pushed_tag="${{ github.ref_name }}"
+          normalized_tag="${pushed_tag#v}"
+          if [ "${normalized_tag}" = "${server_version}" ]; then
             echo "should_publish=true" >> "$GITHUB_OUTPUT"
           else
-            echo "Tag ${{ github.ref_name }} does not match crate versions (server=${server_version}, validators=${validators_version}), skipping."
+            echo "Tag ${pushed_tag} (normalized: ${normalized_tag}) does not match crate version ${server_version}, skipping."
             echo "should_publish=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -82,9 +97,41 @@ jobs:
             exit 1
           fi
 
+  publish-ecpds:
+    needs: verify-tag
+    if: ${{ needs.verify-tag.outputs.should_publish == 'true' }}
+    runs-on: ubuntu-latest
+    env:
+      CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Publish aviso-ecpds
+        run: |
+          set -euo pipefail
+          ERR_FILE="${RUNNER_TEMP}/publish-ecpds.err"
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.dry_run }}" = "true" ]; then
+            cargo publish --manifest-path aviso-ecpds/Cargo.toml --dry-run
+          else
+            if cargo publish --manifest-path aviso-ecpds/Cargo.toml 2>"${ERR_FILE}"; then
+              exit 0
+            fi
+
+            if grep -q 'already exists on crates.io index' "${ERR_FILE}"; then
+              echo "aviso-ecpds is already published for this version; continuing."
+              exit 0
+            fi
+
+            cat "${ERR_FILE}" >&2
+            exit 1
+          fi
+
   publish-server:
-    needs: publish-validators
-    if: ${{ needs.publish-validators.result == 'success' }}
+    needs: [publish-validators, publish-ecpds]
+    if: ${{ needs.publish-validators.result == 'success' && needs.publish-ecpds.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
@@ -109,7 +156,10 @@ jobs:
               exit 0
             fi
 
-            if grep -Eq 'no matching package named `aviso-validators` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-validators` as a dependency' "${ERR_FILE}"; then
+            # crates.io index propagation lag can briefly delay either of
+            # the two leaf deps; treat both 'aviso-validators' and
+            # 'aviso-ecpds' not-yet-available errors as retriable.
+            if grep -Eq 'no matching package named `aviso-(validators|ecpds)` found|download of config\.json failed|spurious network error|Could not resolve host: index\.crates\.io|failed to get `aviso-(validators|ecpds)` as a dependency' "${ERR_FILE}"; then
               echo "Dependency/index not ready yet (attempt ${attempt}/10); retrying in 30s..."
               sleep 30
               continue
@@ -120,5 +170,5 @@ jobs:
           done
 
           cat "${ERR_FILE}" >&2
-          echo "Timed out waiting for aviso-validators to become available on crates.io." >&2
+          echo "Timed out waiting for aviso-validators / aviso-ecpds to become available on crates.io." >&2
           exit 1
