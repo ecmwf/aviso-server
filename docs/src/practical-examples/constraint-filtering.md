@@ -11,7 +11,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"north","run_time":"1200","severity":"3","anomaly":42.5,"polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"},
+    "identifier":{"region":"north","run_time":"1200","severity":"3","anomaly":"42.5","polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"},
     "payload":{"note":"seed-a"}
   }'
 
@@ -19,7 +19,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":87.2,"polygon":"(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"},
+    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":"87.2","polygon":"(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"},
     "payload":{"note":"seed-b"}
   }'
 ```
@@ -35,7 +35,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"south","run_time":"1200","severity":6,"anomaly":87.2},
+    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":"87.2"},
     "from_id":"1"
   }'
 ```
@@ -56,7 +56,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":{"in":["north","south"]},
       "run_time":"1200",
       "severity":{"gte":5},
-      "anomaly":87.2
+      "anomaly":"87.2"
     },
     "from_id":"1"
   }'
@@ -127,7 +127,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/watch" \
       "region":{"in":["south","west"]},
       "run_time":"1200",
       "severity":"6",
-      "anomaly":87.2
+      "anomaly":"87.2"
     }
   }'
 ```
@@ -148,7 +148,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":"north",
       "run_time":"1200",
       "severity":{"gte":4,"lt":7},
-      "anomaly":42.5
+      "anomaly":"42.5"
     },
     "from_id":"1"
   }'
@@ -170,7 +170,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "region":"north",
       "run_time":"1200",
       "severity":{"gte":4},
-      "anomaly":42.5
+      "anomaly":"42.5"
     },
     "payload":{"note":"should-fail"}
   }'

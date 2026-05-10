@@ -22,7 +22,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "region":"north",
       "run_time":"1200",
       "severity":"4",
-      "anomaly":42.5,
+      "anomaly":"42.5",
       "polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
     },
     "payload":{"note":"poly-a"}
@@ -36,7 +36,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "region":"north",
       "run_time":"1200",
       "severity":"4",
-      "anomaly":87.2,
+      "anomaly":"87.2",
       "polygon":"(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"
     },
     "payload":{"note":"poly-b"}

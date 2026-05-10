@@ -43,6 +43,10 @@ notification_schema:
 - Content type: `application/json`
 - Replay examples use `from_id` or `from_date` explicitly.
 
+## Identifier Value Style
+
+The examples in this section send all scalar identifier values as JSON strings, including numeric ones (`"severity":"4"`, `"anomaly":"42.5"`). The server canonicalizes scalar identifier values to strings internally, and JSON numbers are also accepted and canonicalized identically. Constraint operator arguments (`{"gte":5}`, `{"between":[3,7]}`, etc.) are sent as JSON numbers because they are typed comparison operands, not identifier values.
+
 ## Notify Identifier Rule
 
 A subtlety that catches every first-time reader: `POST /api/v1/notification` requires **every** identifier key declared in the schema, regardless of whether each key is marked `required: true` or `required: false`. The `required` flag has no effect on notify; every key must be present and every value must pass the handler's validation (`StringHandler` rejects empty strings, `IntHandler` rejects out-of-range, `DateHandler` rejects unparseable values, and so on).
