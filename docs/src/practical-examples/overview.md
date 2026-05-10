@@ -43,6 +43,10 @@ notification_schema:
 - Content type: `application/json`
 - Replay examples use `from_id` or `from_date` explicitly.
 
+## Notify Identifier Rule
+
+A subtlety that catches every first-time reader: `POST /api/v1/notification` requires **every** identifier key declared in the schema, not just the ones marked `required: true`. The `required` flag relaxes value validation (empty strings are accepted); it does **not** make the key itself optional. The shared schema above declares five keys, so notify examples on the following pages include all five. Watch and replay are different: there, missing keys are treated as wildcards automatically.
+
 Next:
 
 - [Basic Notify/Watch/Replay](./basic-notify-watch-replay.md)

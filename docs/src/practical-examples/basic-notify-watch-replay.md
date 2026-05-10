@@ -9,6 +9,8 @@ Read the examples in order.
 
 ## 1) Notify
 
+Notify requires every identifier key declared in the schema, including those marked `required: false`. The flag relaxes value validation (an empty string is accepted); it does **not** make the key itself optional. The shared schema declares five keys (`region`, `run_time`, `severity`, `anomaly`, `polygon`), so all five appear below.
+
 ```bash
 curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
@@ -18,16 +20,14 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "region":"north",
       "run_time":"1200",
       "severity":"4",
-      "anomaly":"42.5"
+      "anomaly":"42.5",
+      "polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
     },
     "payload":{"note":"initial forecast"}
   }'
 ```
 
-Expected:
-
-- HTTP `200`
-- required identifier keys must be present; optional keys may be omitted
+Expected: HTTP `200`. Omitting any of the five identifier keys returns `400` with `code: INVALID_NOTIFICATION_REQUEST`.
 
 ## 2) Watch (Live Only)
 
