@@ -170,7 +170,7 @@ Input `"1"` → stored as `"0001"`. Input `"test"` → stored as `"test"`.
 
 Accepts a closed polygon as a coordinate string. Used for spatial filtering on `/watch` and `/replay`.
 
-Format: `lat,lon,lat,lon,...,lat,lon` — the first and last coordinate pair must be identical to close the polygon. Parentheses are optional.
+Format: `lat,lon,lat,lon,...,lat,lon`. The first and last coordinate pair must be identical to close the polygon. Parentheses are optional.
 
 ```yaml
 polygon:
@@ -188,7 +188,7 @@ See [Spatial Filtering](./practical-examples/spatial-filtering.md) for usage exa
 
 The `point` field is a reserved identifier that clients can send on `/watch` or `/replay` to filter notifications whose polygon contains the given point. It accepts a single `lat,lon` coordinate pair.
 
-`point` is **not** a schema-configurable handler — it is always available on any schema that includes a `PolygonHandler` field. The `/notification` endpoint rejects requests that include `point`.
+`point` is **not** a schema-configurable handler; it is always available on any schema that includes a `PolygonHandler` field. The `/notification` endpoint rejects requests that include `point`.
 
 See [Spatial Filtering](./practical-examples/spatial-filtering.md) for usage examples.
 
@@ -229,7 +229,7 @@ auth:
 
 | Field | Default when omitted | Effect |
 |---|---|---|
-| `required` | — | Must be set explicitly to `true` or `false`. |
+| `required` | (none) | Must be set explicitly to `true` or `false`. |
 | `read_roles` | Any authenticated user can read | Maps realm → role list for watch/replay access. |
 | `write_roles` | Only admins can write | Maps realm → role list for notify access. |
 
@@ -291,7 +291,7 @@ notification_schema:
         values: ["europe", "asia", "africa", "americas", "oceania"]
         required: true
       severity_level:
-        description: "Alert severity (1–5)."
+        description: "Alert severity (1 to 5)."
         type: IntHandler
         range: [1, 5]
         required: true

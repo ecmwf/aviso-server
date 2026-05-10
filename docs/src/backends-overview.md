@@ -38,17 +38,17 @@ flowchart TD
 
 | Capability | JetStream | In-Memory |
 |---|---|---|
-| Durable storage | Yes | No — data lost on restart |
-| Replay support | Yes | Yes — node-local only |
-| Live watch support | Yes | Yes — node-local fan-out |
+| Durable storage | Yes | No (data lost on restart) |
+| Replay support | Yes | Yes (node-local only) |
+| Live watch support | Yes | Yes (node-local fan-out) |
 | Multi-replica / HA | Yes (clustered NATS) | No |
-| Per-schema storage policy | Yes | No — rejected at startup |
+| Per-schema storage policy | Yes | No (rejected at startup) |
 | Cross-instance consistency | Yes | No |
 
 ---
 
 ## Backend Details
 
-- [In-Memory Backend](./backend-in-memory.md) — behavior, config, production caveats
-- [JetStream Backend](./backend-jetstream.md) — setup, stream management, operational notes
-- [Backend Development](./backend-development.md) — how to implement a new backend
+- [In-Memory Backend](./backend-in-memory.md): behavior, config, production caveats.
+- [JetStream Backend](./backend-jetstream.md): setup, stream management, operational notes.
+- [Backend Development](./backend-development.md): how to implement a new backend.

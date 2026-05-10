@@ -35,7 +35,7 @@ notification_backend:
 ```
 
 For full setup options including authentication and storage limits, see
-[Installation — Local JetStream](./installation.md#local-jetstream-docker).
+[Installation: Local JetStream](./installation.md#local-jetstream-docker).
 
 ---
 
@@ -87,10 +87,10 @@ These apply to every stream created by Aviso unless overridden by a per-schema `
 | `max_messages` | `None` | Stream message cap (maps to `max_messages`). |
 | `max_bytes` | `None` | Stream size cap in bytes (maps to `max_bytes`). |
 | `retention_time` | `None` | Default max age: duration literal (`s`, `m`, `h`, `d`, `w`; e.g. `30d`). |
-| `storage_type` | `file` | `file` or `memory` — parsed as typed enum at config load. |
+| `storage_type` | `file` | `file` or `memory`, parsed as typed enum at config load. |
 | `replicas` | `None` | Stream replica count. |
-| `retention_policy` | `limits` | `limits`, `interest`, or `workqueue` — parsed as typed enum. |
-| `discard_policy` | `old` | `old` or `new` — parsed as typed enum. |
+| `retention_policy` | `limits` | `limits`, `interest`, or `workqueue`, parsed as typed enum. |
+| `discard_policy` | `old` | `old` or `new`, parsed as typed enum. |
 
 > **Fail-fast validation:** `storage_type`, `retention_policy`, and `discard_policy` are parsed
 > as typed enums during configuration loading. Invalid values fail startup immediately, before
@@ -133,7 +133,7 @@ under that base.
 
 ### Reconciliation of existing streams
 
-When a stream already exists and is accessed by Aviso, it is **reconciled** — the current
+When a stream already exists and is accessed by Aviso, it is **reconciled**: the current
 stream config is compared against the desired config and mutable fields are updated if drift
 is detected:
 
@@ -165,7 +165,7 @@ To force historical data to be physically rewritten with new settings (e.g. re-p
 
 1. Stop all Aviso writers for the target stream.
 2. Delete the stream in NATS.
-3. Restart Aviso (or publish again) — the stream is recreated with current config.
+3. Restart Aviso (or publish again). The stream is recreated with current config.
 
 ```bash
 # List streams
@@ -205,7 +205,7 @@ Fields to check:
 
 - **Sequence replay** (`from_id`): starts from that sequence number, inclusive.
 - **Time replay** (`from_date`): uses JetStream start-time delivery policy.
-- The API enforces mutual exclusivity — `from_id` and `from_date` cannot both be present.
+- The API enforces mutual exclusivity: `from_id` and `from_date` cannot both be present.
 
 ---
 

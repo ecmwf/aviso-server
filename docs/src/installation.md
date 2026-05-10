@@ -185,7 +185,7 @@ notification_backend:
     nats_url: "nats://localhost:4222"
 ```
 
-With auth — pass the token printed by the script:
+With auth, pass the token printed by the script:
 
 ```yaml
 notification_backend:

@@ -3,8 +3,7 @@
 This guide walks you through running Aviso Server locally and sending your first notification.
 It assumes you have already completed [Installation](./installation.md).
 
-If you haven't read [Key Concepts](./concepts.md) yet, do that first —
-it will make the commands below much easier to follow.
+If you haven't read [Key Concepts](./concepts.md) yet, do that first; it will make the commands below much easier to follow.
 
 ---
 
@@ -96,7 +95,7 @@ Expected response: `200 OK`
 ## 5. Open a Watch Stream
 
 Before publishing, open a terminal and start watching for events.
-This is a live SSE stream — keep it open while you proceed to step 6.
+This is a live SSE stream; keep it open while you proceed to step 6.
 
 ```bash
 curl -N -X POST "http://127.0.0.1:8000/api/v1/watch" \
@@ -113,7 +112,8 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/watch" \
 You will see the SSE connection frame immediately:
 
 ```
-data: {"type":"connection_established","timestamp":"2026-03-04T10:00:00Z"}
+event: live-notification
+data: {"connection_will_close_in_seconds":3600,"request_id":"0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6","timestamp":"2026-03-04T10:00:00Z","topic":"my_event.north.20250706","type":"connection_established"}
 ```
 
 The stream stays open and will print new events as they arrive.
@@ -140,17 +140,23 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
 Expected response:
 
 ```json
-{ "id": "my_event@1", "topic": "my_event.north.20250706" }
+{
+  "status": "success",
+  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6",
+  "processed_at": "2026-03-04T10:00:00.123456+00:00"
+}
 ```
 
-The `id` (`my_event@1`) is the backend sequence reference.
-You can use it later to replay from that point or delete that specific notification.
+`request_id` is the per-request UUID for this notify call (different from the watch call's UUID; each HTTP request gets its own). The same value appears in the `X-Request-ID` HTTP response header and in the corresponding server log lines. Quote it when reporting issues.
 
-Switch back to the watch terminal — the notification should have arrived:
+Switch back to the watch terminal. The notification should have arrived as a CloudEvent body:
 
 ```
-data: {"specversion":"1.0","id":"my_event@1","type":"aviso.notification",...}
+event: live-notification
+data: {"specversion":"1.0","id":"my_event@1","source":"localhost:8000","type":"int.ecmwf.aviso.my_event","time":"2026-03-04T10:00:00Z","data":{...}}
 ```
+
+The CloudEvent `id` (`my_event@1`) is the `<event_type>@<sequence>` reference for replay and admin delete. The replay endpoint takes only the numeric sequence (`"1"`), not the full string.
 
 ---
 
@@ -174,7 +180,8 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
 The stream will emit all matching historical notifications, then close with:
 
 ```
-data: {"type":"connection_closing","reason":"end_of_stream","timestamp":"..."}
+event: connection-closing
+data: {"message":"Stream completed","reason":"end_of_stream","request_id":"0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6","timestamp":"...","topic":"my_event.north.20250706"}
 ```
 
 ---
@@ -182,7 +189,7 @@ data: {"type":"connection_closing","reason":"end_of_stream","timestamp":"..."}
 ## Optional: Local JetStream Setup
 
 To test with the JetStream backend (persistent storage, more realistic), see
-[Installation — Local JetStream](./installation.md#local-jetstream-docker) for the full setup
+[Installation: Local JetStream](./installation.md#local-jetstream-docker) for the full setup
 including environment variables and token authentication.
 
 ---
@@ -197,7 +204,7 @@ cp configuration/config.yaml.example configuration/config.yaml
 cargo run
 ```
 
-**With auth (default)** — start auth-o-tron before running the smoke tests:
+**With auth (default).** Start auth-o-tron before running the smoke tests:
 
 ```bash
 python3 -m pip install httpx
@@ -205,7 +212,7 @@ python3 -m pip install httpx
 python3 scripts/smoke_test.py
 ```
 
-**Without auth** — set `auth.enabled: false` in your config (or remove the `auth` section), then:
+**Without auth.** Set `auth.enabled: false` in your config (or remove the `auth` section), then:
 
 ```bash
 AUTH_ENABLED=false python3 scripts/smoke_test.py

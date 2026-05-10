@@ -12,8 +12,8 @@ Characteristics:
 - Single-process state only.
 - Not suitable for horizontal scaling or replica failover.
 - Supports replay and watch in-process, limited by local memory retention.
-- For local JetStream testing, see [Installation — Local JetStream](./installation.md#local-jetstream-docker).
-- For a quick end-to-end behavior check, see [Getting Started — Run the Smoke Test](./getting-started.md#run-the-smoke-test).
+- For local JetStream testing, see [Installation: Local JetStream](./installation.md#local-jetstream-docker).
+- For a quick end-to-end behavior check, see [Getting Started: Run the Smoke Test](./getting-started.md#run-the-smoke-test).
 
 ## Production-like / persistent mode
 

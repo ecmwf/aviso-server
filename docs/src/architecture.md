@@ -1,7 +1,6 @@
 # Architecture
 
-Aviso Server is built around three operations — **Notify**, **Watch**, and **Replay** —
-each sharing a common validation and schema layer but diverging at the backend interaction.
+Aviso Server is built around three operations (**Notify**, **Watch**, and **Replay**) that share a common validation and schema layer but diverge at the backend interaction.
 
 ---
 
@@ -80,16 +79,16 @@ sequenceDiagram
     P->>T: build_topic_with_schema()
     T-->>P: topic string (e.g. mars.od.0001.g.20250706.1200)
     P->>B: put_message_with_headers()
-    B-->>C: 200 { id, topic }
+    B-->>C: 200 { status, request_id, processed_at }
 ```
 
 Key steps:
 
-1. **Parse** — raw JSON bytes are deserialized; unknown fields are rejected (`UNKNOWN_FIELD`)
-2. **Validate** — each identifier field is checked against its `ValidationRules` (type, range, enum values)
-3. **Canonicalize** — values are normalized (e.g. dates to `YYYYMMDD`, enums to lowercase)
-4. **Build topic** — fields are ordered per `key_order`, reserved chars are percent-encoded
-5. **Store** — the message is written to the backend with the encoded topic as the subject
+1. **Parse**: raw JSON bytes are deserialized; unknown fields are rejected (`UNKNOWN_FIELD`).
+2. **Validate**: each identifier field is checked against its `ValidationRules` (type, range, enum values).
+3. **Canonicalize**: values are normalized (for example dates to `YYYYMMDD`, enums to lowercase).
+4. **Build topic**: fields are ordered per `key_order`, reserved chars are percent-encoded.
+5. **Store**: the message is written to the backend with the encoded topic as the subject.
 
 ---
 
@@ -132,14 +131,14 @@ sequenceDiagram
     end
 
     C-->>R: disconnect / timeout
-    R-->>C: SSE: connection_closing
+    R-->>C: SSE: connection-closing
 ```
 
 ---
 
 ## Replay Request Flow
 
-`POST /api/v1/replay` is like watch but historical-only — the stream closes when history ends.
+`POST /api/v1/replay` is like watch but historical-only; the stream closes when history ends.
 
 ```mermaid
 sequenceDiagram
@@ -162,7 +161,7 @@ sequenceDiagram
         P->>P: filter + convert to CloudEvent
         P-->>C: SSE: notification events
     end
-    P-->>C: SSE: replay_completed → connection_closing (end_of_stream)
+    P-->>C: SSE: replay_completed → connection-closing (end_of_stream)
 ```
 
 ---
@@ -172,19 +171,19 @@ sequenceDiagram
 The streaming layer (`src/sse/`) is built around typed values rather than raw strings,
 which keeps the lifecycle explicit and the endpoint logic thin.
 
-**Cursor types** — how a start point is represented internally:
+**Cursor types** describe how a start point is represented internally:
 
-- `StartAt::LiveOnly` — no history, subscribe immediately
-- `StartAt::Sequence(u64)` — start from a specific backend sequence number
-- `StartAt::Date(DateTime<Utc>)` — start from a UTC timestamp
+- `StartAt::LiveOnly`: no history, subscribe immediately.
+- `StartAt::Sequence(u64)`: start from a specific backend sequence number.
+- `StartAt::Date(DateTime<Utc>)`: start from a UTC timestamp.
 
-**Frame types** — what the stream produces before rendering to SSE wire format:
+**Frame types** are what the stream produces before rendering to SSE wire format:
 
-- Control frames — `connection_established`, `replay_started`, `replay_completed`
-- Notification frames — a decoded CloudEvent ready for delivery
-- Heartbeat frames — periodic keep-alive
-- Error frames — non-fatal stream errors
-- Close frame — carries one of: `end_of_stream`, `max_duration_reached`, `server_shutdown`
+- Control frames: `connection_established`, `replay_started`, `replay_completed`, `notification_replay_limit_reached`.
+- Notification frames: a decoded CloudEvent ready for delivery.
+- Heartbeat frames: periodic keep-alive.
+- Error frames: non-fatal stream errors.
+- Close frame: carries one of `end_of_stream`, `max_duration_reached`, `server_shutdown`.
 
 Lifecycle (shutdown token, max duration, natural end) is applied once in a shared wrapper,
 so individual endpoint handlers don't need to reimplement it.
@@ -195,7 +194,7 @@ so individual endpoint handlers don't need to reimplement it.
 
 | Component | Path | Role |
 |---|---|---|
-| Routes | `src/routes/` | Thin HTTP handlers — parse request, delegate, return response |
+| Routes | `src/routes/` | Thin HTTP handlers: parse request, delegate, return response |
 | Auth | `src/auth/` | Middleware, JWT validation, role matching, auth-o-tron client |
 | Handlers | `src/handlers/` | Shared parsing, validation, and processing logic |
 | Notification core | `src/notification/` | Schema registry, topic builder/codec/parser, wildcard matcher, spatial |

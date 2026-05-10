@@ -2,10 +2,7 @@
 
 Uses the shared generic schema from [Practical Examples](./overview.md).
 
-Constraint filtering lets subscribers express conditions over identifier fields instead of exact values.
-In practice, this is how you ask for ranges (`severity >= 5`), numeric bands, or enum subsets.
-This page starts with seed data, then shows valid constraint requests, then common failure cases.
-It is the best reference for building client-side filter payloads.
+Constraint filtering lets subscribers express conditions over identifier fields instead of exact values: ranges (`severity >= 5`), numeric bands, or enum subsets. This page covers seed data, valid constraint requests, and common failure cases.
 
 ## Seed Notifications
 

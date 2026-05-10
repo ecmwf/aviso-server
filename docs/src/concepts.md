@@ -1,13 +1,12 @@
 # Key Concepts
 
-This page defines the core terms you will encounter throughout Aviso's documentation and API.
-Reading it before Getting Started will make everything else click faster.
+These are the core terms used throughout Aviso's documentation and API. Read this page before Getting Started to make the commands easier to follow.
 
 ---
 
 ## Event Type
 
-An **event type** is a named category of notification — for example `extreme_event`, `sensor_alert`, or `data_ready`.
+An **event type** is a named category of notification, for example `extreme_event`, `sensor_alert`, or `data_ready`.
 
 Every request to Aviso (notify, watch, or replay) targets exactly one event type.
 The server uses the event type to:
@@ -46,8 +45,8 @@ Identifiers serve two purposes depending on the operation:
 | Operation | Role of identifier |
 |---|---|
 | `notify`  | Declares the metadata of the notification being published |
-| `watch`   | Acts as a filter — which notifications to receive |
-| `replay`  | Acts as a filter — which historical notifications to retrieve |
+| `watch`   | Acts as a filter for which notifications to receive |
+| `replay`  | Acts as a filter for which historical notifications to retrieve |
 
 In `watch` and `replay`, identifier values can be **constraint objects** instead of scalars
 (e.g. `{"gte": 5}`) for numeric and enum fields. See [Streaming Semantics](./streaming-semantics.md).
@@ -57,7 +56,7 @@ In `watch` and `replay`, identifier values can be **constraint objects** instead
 ## Topic
 
 A **topic** is the internal routing key Aviso builds from an identifier.
-You rarely construct topics manually — Aviso builds them for you.
+You rarely construct topics manually; Aviso builds them for you.
 
 Topics are dot-separated strings, for example:
 
@@ -66,7 +65,7 @@ extreme_event.north.1200.4.42%2E5
 ```
 
 Each token corresponds to one identifier field, in the order defined by `key_order` in the schema.
-Note the `%2E` — the dot in `42.5` is percent-encoded so it doesn't conflict with the topic separator.
+The `%2E` is the dot in `42.5`, percent-encoded so it doesn't conflict with the topic separator.
 Reserved characters (`.`, `*`, `>`, `%`) in field values are percent-encoded before writing
 to the backend so they do not break routing. See [Topic Encoding](./topic-encoding.md).
 
@@ -79,11 +78,11 @@ Schemas are defined in `configuration/config.yaml` under `notification_schema`.
 
 A schema controls:
 
-- **`topic.base`** — the stream/prefix for this event type (e.g. `diss`, `mars`)
-- **`topic.key_order`** — the order of identifier fields in the topic string
-- **`identifier.*`** — validation rules per field (type, required, allowed values, ranges)
-- **`payload.required`** — whether a payload is mandatory on notify
-- **`storage_policy`** — per-stream retention, size limits, compression (JetStream only)
+- **`topic.base`**: the stream/prefix for this event type (e.g. `diss`, `mars`)
+- **`topic.key_order`**: the order of identifier fields in the topic string
+- **`identifier.*`**: validation rules per field (type, required, allowed values, ranges)
+- **`payload.required`**: whether a payload is mandatory on notify
+- **`storage_policy`**: per-stream retention, size limits, compression (JetStream only)
 
 Example:
 
@@ -128,7 +127,7 @@ is still required on `notify` so Aviso can build a deterministic topic.
 ## Payload
 
 A **payload** is arbitrary JSON attached to a notification.
-Aviso treats it as opaque — it stores and replays the value exactly as sent.
+Aviso treats it as opaque; it stores and replays the value exactly as sent.
 
 Valid payload types: object, array, string, number, boolean, or `null`.
 
@@ -145,39 +144,39 @@ See [Payload Contract](./payload-contract.md) for the full input → storage →
 
 Aviso exposes three operations, each on its own endpoint:
 
-### Notify — `POST /api/v1/notification`
+### Notify: `POST /api/v1/notification`
 
 Publishes a notification to the backend.
 The identifier must match all required schema fields exactly (no wildcards, no constraints).
 
-### Watch — `POST /api/v1/watch`
+### Watch: `POST /api/v1/watch`
 
 Opens a persistent **Server-Sent Events (SSE)** stream.
 Receives live notifications as they arrive, optionally starting from a historical point.
 
-- Omit `from_id`/`from_date` → live-only stream
-- Provide one of them → historical replay first, then live
+- Omit `from_id`/`from_date` for a live-only stream.
+- Provide one of them for historical replay first, then live.
 
-### Replay — `POST /api/v1/replay`
+### Replay: `POST /api/v1/replay`
 
 Opens a finite SSE stream of **historical notifications only**.
 Requires exactly one of `from_id` or `from_date`.
 Stream closes automatically when history is exhausted.
 
-For end-to-end working examples of all three operations — including spatial and constraint filtering — see [Practical Examples](./practical-examples/overview.md).
+For end-to-end working examples of all three operations, including spatial and constraint filtering, see [Practical Examples](./practical-examples/overview.md).
 
 ---
 
 ## CloudEvents
 
-Aviso delivers notifications to watch/replay clients as **CloudEvents** — a standard envelope format.
+Aviso delivers notifications to watch/replay clients as **CloudEvents**, a standard envelope format.
 Each event includes:
 
-- `id` — the backend sequence reference (e.g. `mars@42`), used for targeted delete or resume
-- `type` — the Aviso event type string
-- `source` — the server base URL
-- `data.identifier` — the canonicalized identifier
-- `data.payload` — the notification payload (or `null` if omitted)
+- `id`: the backend sequence reference (e.g. `mars@42`), used for targeted delete or resume.
+- `type`: the Aviso event type string, prefixed with `int.ecmwf.aviso.` (for example `int.ecmwf.aviso.mars`).
+- `source`: the server base URL.
+- `data.identifier`: the canonicalized identifier.
+- `data.payload`: the notification payload (or `null` if omitted).
 
 ---
 
