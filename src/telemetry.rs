@@ -27,6 +27,16 @@ pub const SERVICE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Build a tracing subscriber that emits OTel-aligned JSON logs.
+///
+/// Filter resolution order:
+/// 1. If the `RUST_LOG` env var is set, it wins outright. Operators get full
+///    `EnvFilter` directive syntax (e.g. `info,aviso_server=debug,actix_web=warn`)
+///    for runtime triage without a code change. A malformed `RUST_LOG` is
+///    logged to stderr and the configured default is used instead.
+/// 2. Otherwise, build a default filter from `logging.level` (or `info` when
+///    no config is supplied) and add a small set of mute directives for
+///    framework internals that are routinely chatty at info
+///    (see [`default_mute_directives`]).
 pub fn get_subscriber<Sink>(
     name: String,
     logging_config: Option<&LoggingSettings>,
@@ -35,19 +45,11 @@ pub fn get_subscriber<Sink>(
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
-    // Default to INFO when config is missing or unrecognized.
     let level = logging_config
         .map(|config| config.level.clone())
         .unwrap_or_else(|| "info".to_string());
 
-    let level_filter = match level.to_lowercase().as_str() {
-        "trace" => LevelFilter::TRACE,
-        "debug" => LevelFilter::DEBUG,
-        "warn" => LevelFilter::WARN,
-        "error" => LevelFilter::ERROR,
-        _ => LevelFilter::INFO,
-    };
-    let filter_layer = EnvFilter::default().add_directive(level_filter.into());
+    let filter_layer = build_env_filter(&level);
 
     let formatter = OTelLogFormatter::new(name);
     let formatting_layer = tracing_subscriber::fmt::layer()
@@ -59,6 +61,76 @@ where
     Registry::default()
         .with(filter_layer)
         .with(formatting_layer)
+}
+
+/// Build the runtime `EnvFilter` honouring `RUST_LOG` first, then falling back
+/// to the configured base level plus the default mute directives.
+///
+/// Kept as a free function so unit tests can exercise the resolution rules
+/// without standing up the full subscriber.
+fn build_env_filter(default_level: &str) -> EnvFilter {
+    if std::env::var_os("RUST_LOG").is_some() {
+        match EnvFilter::try_from_default_env() {
+            Ok(filter) => return filter,
+            Err(error) => {
+                // Subscriber is not yet installed, so any `tracing::*!` here
+                // would be lost. Use stderr directly so the operator sees the
+                // misconfiguration on startup.
+                eprintln!(
+                    "warning: RUST_LOG is set but could not be parsed as an EnvFilter \
+                     directive ({error}); falling back to logging.level={default_level}. \
+                     Example valid value: RUST_LOG=info,aviso_server=debug,actix_web=warn"
+                );
+            }
+        }
+    }
+
+    apply_default_mute_directives(
+        EnvFilter::default().add_directive(parse_level_filter(default_level).into()),
+    )
+}
+
+fn parse_level_filter(level: &str) -> LevelFilter {
+    match level.to_lowercase().as_str() {
+        "trace" => LevelFilter::TRACE,
+        "debug" => LevelFilter::DEBUG,
+        "warn" => LevelFilter::WARN,
+        "error" => LevelFilter::ERROR,
+        _ => LevelFilter::INFO,
+    }
+}
+
+/// Default per-target mute directives applied when `RUST_LOG` is unset.
+///
+/// Each directive narrows a noisy dependency below the application-wide
+/// default level. The list is intentionally short; anything beyond
+/// "framework internals that flood at info" should be opt-in via `RUST_LOG`.
+fn default_mute_directives() -> &'static [&'static str] {
+    &[
+        // Actix request/server lifecycle (worker started, accepting, etc.).
+        "actix_web=warn",
+        "actix_server=warn",
+        // NATS keeps connect/reconnect at info and message-level chatter at
+        // debug; info is the right floor for an operational surface.
+        "async_nats=info",
+    ]
+}
+
+fn apply_default_mute_directives(mut filter: EnvFilter) -> EnvFilter {
+    for directive_str in default_mute_directives() {
+        match directive_str.parse() {
+            Ok(directive) => filter = filter.add_directive(directive),
+            Err(error) => {
+                // A bad hardcoded directive is a developer error, not an
+                // operator one; log to stderr so it does not silently drift.
+                eprintln!(
+                    "warning: failed to parse default mute directive {directive_str:?} \
+                     ({error}); skipping"
+                );
+            }
+        }
+    }
+    filter
 }
 
 /// Register tracing globally and bridge `log` records into tracing.
@@ -569,5 +641,31 @@ mod tests {
 
         assert!(record.get("traceId").is_none());
         assert!(record.get("spanId").is_none());
+    }
+
+    #[test]
+    fn parse_level_filter_maps_known_levels_and_falls_back_to_info() {
+        assert_eq!(parse_level_filter("trace"), LevelFilter::TRACE);
+        assert_eq!(parse_level_filter("DEBUG"), LevelFilter::DEBUG);
+        assert_eq!(parse_level_filter("warn"), LevelFilter::WARN);
+        assert_eq!(parse_level_filter("error"), LevelFilter::ERROR);
+        assert_eq!(parse_level_filter("info"), LevelFilter::INFO);
+        // Typos and empty strings must not panic; INFO is the safe floor.
+        assert_eq!(parse_level_filter("nonsense"), LevelFilter::INFO);
+        assert_eq!(parse_level_filter(""), LevelFilter::INFO);
+    }
+
+    #[test]
+    fn default_mute_directives_all_parse_as_valid_envfilter_directives() {
+        // A typo in this list would silently disappear at runtime (the
+        // skip-and-eprintln branch in apply_default_mute_directives), so
+        // we pin the contract here at compile/test time instead.
+        for directive in default_mute_directives() {
+            directive
+                .parse::<tracing_subscriber::filter::Directive>()
+                .unwrap_or_else(|error| {
+                    panic!("default mute directive {directive:?} must parse: {error}")
+                });
+        }
     }
 }

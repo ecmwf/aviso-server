@@ -23,8 +23,30 @@ See [Topic Encoding](./topic-encoding.md) for rules and examples.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `level` | `string` | implementation default | Example: `info`, `debug`, `warn`, `error`. |
+| `level` | `string` | `info` | One of `trace`, `debug`, `info`, `warn`, `error`. Unknown values fall back to `info` instead of failing startup. Used as the application-wide level when `RUST_LOG` is unset. |
 | `format` | `string` | implementation default | Kept for compatibility; output is OTel-aligned JSON. |
+
+### Runtime override via `RUST_LOG`
+
+If the `RUST_LOG` environment variable is set, it takes priority over `logging.level` and gives the operator full [`EnvFilter` directive syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives) for runtime triage without a code change. Examples:
+
+```bash
+RUST_LOG=info,aviso_server=debug
+RUST_LOG=warn,aviso_server::auth=trace
+RUST_LOG=info,aviso_server::sse=debug,actix_web=warn
+```
+
+A malformed `RUST_LOG` value is reported on stderr at startup and the server falls back to `logging.level`. A typical malformed value is a missing comma between directives (`info aviso_server=debug` instead of `info,aviso_server=debug`).
+
+When `RUST_LOG` is unset, the default filter combines `logging.level` with a small set of mute directives so that framework internals do not flood operational logs:
+
+| Directive | Effect |
+|---|---|
+| `actix_web=warn` | Mutes Actix-web request lifecycle info logs (worker started, accepting). |
+| `actix_server=warn` | Mutes Actix-server lifecycle info logs. |
+| `async_nats=info` | Caps the NATS client at info; trace/debug per-message chatter stays off. |
+
+These mute directives are pinned by a unit test and only apply when `RUST_LOG` is unset; setting `RUST_LOG` opts out of all of them.
 
 ## `auth`
 
