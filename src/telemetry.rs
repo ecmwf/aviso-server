@@ -577,10 +577,12 @@ fn populate_attributes_from_span<S, N>(
         return;
     };
 
-    // Pre-collect scope spans innermost-first because the most request-specific
-    // context lives in the innermost span; an outer span's value should only
-    // be used when the inner span did not record one.
-    let scope_spans: Vec<_> = span.scope().from_root().collect();
+    // `span.scope()` walks the parent chain leaf-first (innermost-first),
+    // which is exactly the order we want for "innermost wins" precedence:
+    // the per-field loop below stops at the first hit, so the most
+    // request-specific recording wins. We collect once so each per-field
+    // loop iteration can re-walk without re-traversing the parent chain.
+    let scope_spans: Vec<_> = span.scope().collect();
 
     for (field_name, regex) in SPAN_FIELD_REGEXES.iter() {
         // Event fields always win: a call site that sets `event_type=foo`
@@ -588,7 +590,7 @@ fn populate_attributes_from_span<S, N>(
         if attributes.contains_key(*field_name) {
             continue;
         }
-        for scope_span in scope_spans.iter().rev() {
+        for scope_span in &scope_spans {
             let extensions = scope_span.extensions();
             let Some(formatted) = extensions.get::<FormattedFields<N>>() else {
                 continue;
