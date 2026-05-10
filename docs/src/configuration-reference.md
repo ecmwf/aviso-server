@@ -44,11 +44,11 @@ When `RUST_LOG` is unset, the default filter combines `logging.level` with a sma
 
 | Directive | Effect |
 |---|---|
-| `actix_web=warn` | Mutes Actix-web request lifecycle info logs (worker started, accepting). |
-| `actix_server=warn` | Mutes Actix-server lifecycle info logs. |
+| `actix_web=warn` | Caps Actix-web request lifecycle logs at warn (worker started, accepting, etc.). |
+| `actix_server=warn` | Caps Actix-server lifecycle logs at warn. |
 | `async_nats=info` | Caps the NATS client at info; trace/debug per-message chatter stays off. |
 
-These mute directives are pinned by a unit test and only apply when `RUST_LOG` is unset; setting `RUST_LOG` opts out of all of them.
+These mute directives are pinned by unit tests, only apply when `RUST_LOG` is unset, and only apply when the directive's level is **more restrictive** than `logging.level`. With `logging.level=warn` or `logging.level=error` the directives are skipped entirely so they never raise the per-target ceiling above what the operator chose; with `logging.level=info` the two `actix_*=warn` directives narrow framework chatter while `async_nats=info` is skipped (it would be neutral); with `logging.level=debug` or `logging.level=trace` all three directives apply. Setting `RUST_LOG` opts out of all of them and gives the operator full directive control.
 
 ## `auth`
 

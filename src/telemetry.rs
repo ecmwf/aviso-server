@@ -75,9 +75,8 @@ fn build_env_filter(default_level: &str) -> EnvFilter {
         return filter;
     }
 
-    apply_default_mute_directives(
-        EnvFilter::default().add_directive(parse_level_filter(default_level).into()),
-    )
+    let base = parse_level_filter(default_level);
+    apply_default_mute_directives(EnvFilter::default().add_directive(base.into()), base)
 }
 
 /// Parse an explicit `RUST_LOG` value. Returns `None` to signal "fall back to
@@ -91,7 +90,9 @@ fn build_env_filter(default_level: &str) -> EnvFilter {
 ///    this case is reachable in production.
 /// 2. Strings that fail `EnvFilter` parsing. The error is surfaced to stderr
 ///    (the subscriber is not yet installed, so `tracing::*!` would be lost)
-///    and the operator gets a real malformed example to compare against.
+///    along with the value that failed and the configured fallback so the
+///    operator can correlate the warning with their deployment without
+///    cross-referencing pod env.
 fn parse_rust_log_value(value: &str, default_level: &str) -> Option<EnvFilter> {
     if value.trim().is_empty() {
         return None;
@@ -100,13 +101,27 @@ fn parse_rust_log_value(value: &str, default_level: &str) -> Option<EnvFilter> {
         Ok(filter) => Some(filter),
         Err(error) => {
             eprintln!(
-                "warning: RUST_LOG is set but could not be parsed as an EnvFilter \
+                "warning: RUST_LOG={value:?} could not be parsed as an EnvFilter \
                  directive ({error}); falling back to logging.level={default_level}. \
-                 Example valid value: RUST_LOG=info,aviso_server=debug,actix_web=warn"
+                 Example valid value: RUST_LOG=info,aviso_server=debug,actix_web=warn",
+                value = truncate_for_diagnostic(value, 200),
             );
             None
         }
     }
+}
+
+/// Truncate a free-form string for inclusion in a diagnostic message.
+///
+/// Defensive against an operator passing an absurdly large value via env
+/// (a misexpansion in deployment templating, a scripted typo) — the parse
+/// error surface should not flood stderr with the entire input.
+fn truncate_for_diagnostic(value: &str, max_chars: usize) -> std::borrow::Cow<'_, str> {
+    if value.chars().count() <= max_chars {
+        return std::borrow::Cow::Borrowed(value);
+    }
+    let truncated: String = value.chars().take(max_chars).collect();
+    std::borrow::Cow::Owned(format!("{truncated}…(truncated)"))
 }
 
 fn parse_level_filter(level: &str) -> LevelFilter {
@@ -121,22 +136,61 @@ fn parse_level_filter(level: &str) -> LevelFilter {
 
 /// Default per-target mute directives applied when `RUST_LOG` is unset.
 ///
-/// Each directive narrows a noisy dependency below the application-wide
-/// default level. The list is intentionally short; anything beyond
+/// Each directive caps a noisy dependency at a fixed level so it never floods
+/// operational logs. The list is intentionally short; anything beyond
 /// "framework internals that flood at info" should be opt-in via `RUST_LOG`.
-fn default_mute_directives() -> &'static [&'static str] {
+///
+/// Returned as `(target, target_level)` pairs rather than a string so the
+/// runtime guard in [`apply_default_mute_directives`] can compare each
+/// directive's level against the operator's chosen base level and skip any
+/// directive that would *widen* logging.
+fn default_mute_directives() -> &'static [(&'static str, LevelFilter)] {
     &[
         // Actix request/server lifecycle (worker started, accepting, etc.).
-        "actix_web=warn",
-        "actix_server=warn",
+        ("actix_web", LevelFilter::WARN),
+        ("actix_server", LevelFilter::WARN),
         // NATS keeps connect/reconnect at info and message-level chatter at
         // debug; info is the right floor for an operational surface.
-        "async_nats=info",
+        ("async_nats", LevelFilter::INFO),
     ]
 }
 
-fn apply_default_mute_directives(mut filter: EnvFilter) -> EnvFilter {
-    for directive_str in default_mute_directives() {
+/// Verbosity ordering for `LevelFilter`, with higher meaning more events kept.
+///
+/// `tracing::LevelFilter`'s natural `PartialOrd` reverses the inner discriminant
+/// (TRACE > ERROR), and the relationship between the level filters and how
+/// many events they admit is the inverse of typical numeric "higher = more".
+/// To avoid every reader having to re-derive that, this helper returns an
+/// explicit rank that matches the intuitive sense: more verbose = higher
+/// number, OFF = 0.
+fn verbosity_rank(level: LevelFilter) -> u8 {
+    match level {
+        LevelFilter::OFF => 0,
+        LevelFilter::ERROR => 1,
+        LevelFilter::WARN => 2,
+        LevelFilter::INFO => 3,
+        LevelFilter::DEBUG => 4,
+        LevelFilter::TRACE => 5,
+    }
+}
+
+/// Apply the curated mute list, but only for directives that strictly *narrow*
+/// the operator's chosen base level.
+///
+/// `EnvFilter` matches longest-prefix-first: a more specific directive
+/// completely overrides the global one for that target. So an unconditional
+/// `async_nats=info` directive on top of a global `warn` filter would
+/// *widen* `async_nats` back to info, in contradiction with the operator's
+/// "I want warn or above" choice. This guard skips any default directive
+/// whose level is more verbose than (or equal to) the base, so the list is
+/// only ever a noise floor and never raises the ceiling.
+fn apply_default_mute_directives(mut filter: EnvFilter, base_level: LevelFilter) -> EnvFilter {
+    let base_rank = verbosity_rank(base_level);
+    for (target, level) in default_mute_directives() {
+        if verbosity_rank(*level) >= base_rank {
+            continue;
+        }
+        let directive_str = format!("{target}={level}");
         match directive_str.parse() {
             Ok(directive) => filter = filter.add_directive(directive),
             Err(error) => {
@@ -675,17 +729,130 @@ mod tests {
     }
 
     #[test]
-    fn default_mute_directives_all_parse_as_valid_envfilter_directives() {
-        // A typo in this list would silently disappear at runtime (the
-        // skip-and-eprintln branch in apply_default_mute_directives), so
-        // we pin the contract here at compile/test time instead.
-        for directive in default_mute_directives() {
-            directive
+    fn default_mute_directives_assemble_to_valid_envfilter_directives() {
+        // A typo in any (target, level) pair would silently disappear at
+        // runtime (the skip-and-eprintln branch in
+        // apply_default_mute_directives), so we pin the contract here at
+        // compile/test time instead.
+        for (target, level) in default_mute_directives() {
+            let directive_str = format!("{target}={level}");
+            directive_str
                 .parse::<tracing_subscriber::filter::Directive>()
                 .unwrap_or_else(|error| {
-                    panic!("default mute directive {directive:?} must parse: {error}")
+                    panic!("default mute directive {directive_str:?} must parse: {error}")
                 });
         }
+    }
+
+    #[test]
+    fn verbosity_rank_orders_levels_intuitively() {
+        // OFF rejects everything (lowest verbosity); TRACE keeps everything
+        // (highest). This ordering is what the widening guard depends on.
+        assert!(verbosity_rank(LevelFilter::OFF) < verbosity_rank(LevelFilter::ERROR));
+        assert!(verbosity_rank(LevelFilter::ERROR) < verbosity_rank(LevelFilter::WARN));
+        assert!(verbosity_rank(LevelFilter::WARN) < verbosity_rank(LevelFilter::INFO));
+        assert!(verbosity_rank(LevelFilter::INFO) < verbosity_rank(LevelFilter::DEBUG));
+        assert!(verbosity_rank(LevelFilter::DEBUG) < verbosity_rank(LevelFilter::TRACE));
+    }
+
+    fn assert_filter_includes(filter: &EnvFilter, fragment: &str) {
+        let rendered = filter.to_string();
+        assert!(
+            rendered.contains(fragment),
+            "expected filter to contain {fragment:?}, got: {rendered}"
+        );
+    }
+
+    fn assert_filter_excludes(filter: &EnvFilter, fragment: &str) {
+        let rendered = filter.to_string();
+        assert!(
+            !rendered.contains(fragment),
+            "expected filter NOT to contain {fragment:?}, got: {rendered}"
+        );
+    }
+
+    #[test]
+    fn mute_directives_apply_when_base_is_more_verbose_than_directive() {
+        // base=info: actix_web=warn (warn < info, narrows) → applied;
+        // actix_server=warn (warn < info, narrows) → applied;
+        // async_nats=info (info == info, neutral) → skipped to keep the
+        // applied set minimal.
+        let base = LevelFilter::INFO;
+        let filter =
+            apply_default_mute_directives(EnvFilter::default().add_directive(base.into()), base);
+        assert_filter_includes(&filter, "actix_web=warn");
+        assert_filter_includes(&filter, "actix_server=warn");
+        assert_filter_excludes(&filter, "async_nats");
+
+        // base=debug: every directive narrows.
+        let base = LevelFilter::DEBUG;
+        let filter =
+            apply_default_mute_directives(EnvFilter::default().add_directive(base.into()), base);
+        assert_filter_includes(&filter, "actix_web=warn");
+        assert_filter_includes(&filter, "actix_server=warn");
+        assert_filter_includes(&filter, "async_nats=info");
+
+        let base = LevelFilter::TRACE;
+        let filter =
+            apply_default_mute_directives(EnvFilter::default().add_directive(base.into()), base);
+        assert_filter_includes(&filter, "actix_web=warn");
+        assert_filter_includes(&filter, "actix_server=warn");
+        assert_filter_includes(&filter, "async_nats=info");
+    }
+
+    #[test]
+    fn mute_directives_skipped_when_base_is_at_least_as_restrictive() {
+        // Regression test for the widening bug: when the operator picks
+        // logging.level=warn, the async_nats=info default would have
+        // RAISED async_nats events back into the log stream because of
+        // EnvFilter's longest-prefix-first matching. The guard must skip
+        // any directive whose level is more verbose than (or equal to)
+        // the base.
+        let base = LevelFilter::WARN;
+        let filter =
+            apply_default_mute_directives(EnvFilter::default().add_directive(base.into()), base);
+        assert_filter_excludes(&filter, "actix_web");
+        assert_filter_excludes(&filter, "actix_server");
+        assert_filter_excludes(&filter, "async_nats");
+
+        // base=error is even more restrictive; no directive applies.
+        let base = LevelFilter::ERROR;
+        let filter =
+            apply_default_mute_directives(EnvFilter::default().add_directive(base.into()), base);
+        assert_filter_excludes(&filter, "actix_web");
+        assert_filter_excludes(&filter, "actix_server");
+        assert_filter_excludes(&filter, "async_nats");
+
+        // base=off: no events emitted regardless of directives; we still
+        // skip all of them to keep the filter minimal.
+        let base = LevelFilter::OFF;
+        let filter =
+            apply_default_mute_directives(EnvFilter::default().add_directive(base.into()), base);
+        assert_filter_excludes(&filter, "actix_web");
+        assert_filter_excludes(&filter, "actix_server");
+        assert_filter_excludes(&filter, "async_nats");
+    }
+
+    #[test]
+    fn truncate_for_diagnostic_passes_through_short_values() {
+        assert_eq!(truncate_for_diagnostic("hello", 200), "hello");
+        assert_eq!(truncate_for_diagnostic("", 200), "");
+        assert_eq!(
+            truncate_for_diagnostic("a".repeat(200).as_str(), 200),
+            "a".repeat(200)
+        );
+    }
+
+    #[test]
+    fn truncate_for_diagnostic_caps_oversized_values() {
+        let long = "a".repeat(1_000);
+        let truncated = truncate_for_diagnostic(&long, 100);
+        assert!(truncated.starts_with(&"a".repeat(100)));
+        assert!(truncated.ends_with("…(truncated)"));
+        // The truncation marker is part of the returned string, so the
+        // total character count is max_chars plus the marker length, not
+        // exactly max_chars.
+        assert!(truncated.chars().count() < 1_000);
     }
 
     #[test]
