@@ -64,7 +64,7 @@ Every field supports these common properties:
 | Property | Type | Description |
 |---|---|---|
 | `type` | string | Handler type (see below). Required. |
-| `required` | bool | If `true`, requests missing this field are rejected. Required. |
+| `required` | bool | Affects `watch` and `replay` only: if `true`, those requests must include this field; if `false`, missing keys become wildcards. Has **no effect on `notify`**, which always requires every declared field. Required. |
 | `description` | string | Human-readable text exposed by `GET /api/v1/schema`. Optional. |
 
 ### Handler Types

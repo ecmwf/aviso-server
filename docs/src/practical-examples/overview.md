@@ -45,7 +45,11 @@ notification_schema:
 
 ## Notify Identifier Rule
 
-A subtlety that catches every first-time reader: `POST /api/v1/notification` requires **every** identifier key declared in the schema, not just the ones marked `required: true`. The `required` flag relaxes value validation (empty strings are accepted); it does **not** make the key itself optional. The shared schema above declares five keys, so notify examples on the following pages include all five. Watch and replay are different: there, missing keys are treated as wildcards automatically.
+A subtlety that catches every first-time reader: `POST /api/v1/notification` requires **every** identifier key declared in the schema, regardless of whether each key is marked `required: true` or `required: false`. The `required` flag has no effect on notify; every key must be present and every value must pass the handler's validation (`StringHandler` rejects empty strings, `IntHandler` rejects out-of-range, `DateHandler` rejects unparseable values, and so on).
+
+The flag only matters on **watch** and **replay**: there, a missing key marked `required: true` returns `400`, while a missing key marked `required: false` is treated as a wildcard. When a key IS provided on watch or replay, its value (or constraint object) still goes through the same handler validation as on notify.
+
+The shared schema above declares five keys, so notify examples on the following pages include all five.
 
 Next:
 

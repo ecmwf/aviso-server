@@ -118,9 +118,7 @@ notification_schema:
 ```
 
 Every key listed in `key_order` must have a corresponding entry in `identifier`.
-For `notify`, every identifier key declared in the schema must be present in the request.
-Fields marked `required: false` are optional for validation semantics, but the key itself
-is still required on `notify` so Aviso can build a deterministic topic.
+For `notify`, every identifier key declared in the schema must be present in the request and every value must pass the handler's validation (an empty string, an out-of-range integer, an unparseable date, and so on are all rejected). The `required` flag has **no effect on notify**; it only changes the behavior of `watch` and `replay`. There, a missing key marked `required: true` returns `400`, while a missing key marked `required: false` is treated as a wildcard. The flag never relaxes value validation; only the presence rules.
 
 ---
 

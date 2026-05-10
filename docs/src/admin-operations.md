@@ -161,12 +161,24 @@ When to use:
 
 ## Wipe Response Shape
 
-Both wipe endpoints return:
+Both wipe endpoints return the same field set: `success`, `message`, `request_id`. The `message` value differs:
+
+`DELETE /api/v1/admin/wipe/stream`:
 
 ```json
 {
   "success": true,
   "message": "Successfully wiped stream: MARS",
+  "request_id": "<uuid>"
+}
+```
+
+`DELETE /api/v1/admin/wipe/all`:
+
+```json
+{
+  "success": true,
+  "message": "Successfully wiped all data",
   "request_id": "<uuid>"
 }
 ```

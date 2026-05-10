@@ -9,7 +9,7 @@ Read the examples in order.
 
 ## 1) Notify
 
-Notify requires every identifier key declared in the schema, including those marked `required: false`. The flag relaxes value validation (an empty string is accepted); it does **not** make the key itself optional. The shared schema declares five keys (`region`, `run_time`, `severity`, `anomaly`, `polygon`), so all five appear below.
+Notify requires every identifier key declared in the schema. The `required` flag has no effect on notify (every key must be present and every value must pass handler validation); it only affects watch and replay, where keys marked `required: false` may be omitted and are treated as wildcards. The shared schema declares five keys (`region`, `run_time`, `severity`, `anomaly`, `polygon`), so all five appear below.
 
 ```bash
 curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
