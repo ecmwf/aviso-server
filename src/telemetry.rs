@@ -313,7 +313,7 @@ where
         let mut visitor = JsonVisitor::default();
         event.record(&mut visitor);
         let record = LogRecordBuilder::from_event(metadata, visitor.fields)
-            .with_request_id_from_span(ctx)
+            .with_span_field_hydration(ctx)
             .with_code_location(metadata)
             .finalize()
             .build_json(self, metadata);
@@ -342,14 +342,15 @@ impl LogRecordBuilder {
         }
     }
 
-    fn with_request_id_from_span<S, N>(mut self, ctx: &FmtContext<'_, S, N>) -> Self
+    fn with_span_field_hydration<S, N>(mut self, ctx: &FmtContext<'_, S, N>) -> Self
     where
         S: Subscriber + for<'span> LookupSpan<'span>,
         N: for<'writer> FormatFields<'writer> + 'static,
     {
         // Keep library events raw: if a log does not set event_name,
-        // we do not synthesize fallback values.
-        populate_request_id_from_span(ctx, &mut self.attributes);
+        // we do not synthesize fallback values. The hydration only
+        // touches the curated allow-list in HYDRATABLE_SPAN_FIELDS.
+        populate_attributes_from_span(ctx, &mut self.attributes);
         self
     }
 
@@ -505,51 +506,88 @@ fn promote_trace_correlation(attributes: &mut Map<String, Value>) {
     }
 }
 
-fn populate_request_id_from_span<S, N>(
+/// Span fields that are hydrated onto child events when the event itself
+/// does not set them.
+///
+/// The list is intentionally short: hydrating a field onto every event
+/// inside the span is "context for free", but it also means a field
+/// recorded once on the span ends up duplicated across every emitted log
+/// line, so the curation principle is "fields whose value is the natural
+/// triage axis for the request as a whole, not per-event detail".
+///
+/// Order matters only for clarity; each field is looked up independently
+/// against every span in scope (innermost-first), so adding or reordering
+/// does not change behaviour for existing fields.
+const HYDRATABLE_SPAN_FIELDS: &[&str] = &["request_id", "event_type", "topic"];
+
+/// Pre-compiled regex per hydratable field, keyed by field name.
+///
+/// `EnvFilter::default()` formats span fields as `key=value` (with quoted
+/// values when they contain whitespace), so the regex extracts a value as
+/// either `"..."` or a contiguous run of non-whitespace characters. The
+/// `\b` word-boundary anchor prevents `event_type` from accidentally
+/// matching `aviso_event_type`.
+static SPAN_FIELD_REGEXES: std::sync::LazyLock<Vec<(&'static str, Regex)>> =
+    std::sync::LazyLock::new(|| {
+        HYDRATABLE_SPAN_FIELDS
+            .iter()
+            .map(|name| {
+                let pattern = field_pattern(name);
+                let regex = Regex::new(&pattern).unwrap_or_else(|error| {
+                    panic!("hydratable field pattern {pattern:?} must compile: {error}")
+                });
+                (*name, regex)
+            })
+            .collect()
+    });
+
+fn field_pattern(field_name: &str) -> String {
+    format!(r#"\b{}=("[^"]+"|[^ ]+)"#, regex::escape(field_name))
+}
+
+fn populate_attributes_from_span<S, N>(
     ctx: &FmtContext<'_, S, N>,
     attributes: &mut Map<String, Value>,
 ) where
     S: Subscriber + for<'span> LookupSpan<'span>,
     N: for<'writer> FormatFields<'writer> + 'static,
 {
-    // Event fields win over span-derived values.
-    if attributes.contains_key("request_id") {
-        return;
-    }
-
     // No current span means no request context to hydrate from.
     let Some(span) = ctx.lookup_current() else {
         return;
     };
 
-    // Prefer the innermost span first because it is the most request-specific context.
-    let scoped_spans = span.scope().from_root().collect::<Vec<_>>();
-    for scope_span in scoped_spans.into_iter().rev() {
-        let extensions = scope_span.extensions();
-        let Some(formatted) = extensions.get::<FormattedFields<N>>() else {
+    // Pre-collect scope spans innermost-first because the most request-specific
+    // context lives in the innermost span; an outer span's value should only
+    // be used when the inner span did not record one.
+    let scope_spans: Vec<_> = span.scope().from_root().collect();
+
+    for (field_name, regex) in SPAN_FIELD_REGEXES.iter() {
+        // Event fields always win: a call site that sets `event_type=foo`
+        // explicitly is more specific than the span context.
+        if attributes.contains_key(*field_name) {
             continue;
-        };
-        if let Some(request_id) = extract_request_id_from_formatted_fields(formatted) {
-            attributes.insert("request_id".to_string(), json!(request_id));
-            return;
+        }
+        for scope_span in scope_spans.iter().rev() {
+            let extensions = scope_span.extensions();
+            let Some(formatted) = extensions.get::<FormattedFields<N>>() else {
+                continue;
+            };
+            if let Some(value) = extract_named_field_from_text(formatted.fields.as_str(), regex) {
+                attributes.insert((*field_name).to_string(), json!(value));
+                break;
+            }
         }
     }
 }
 
-fn extract_request_id_from_formatted_fields<N>(
-    formatted_fields: &FormattedFields<N>,
-) -> Option<String> {
-    // `FormattedFields` is key=value text; this extracts request_id=<value>.
-    extract_request_id_from_text(formatted_fields.fields.as_str())
-}
-
-fn extract_request_id_from_text(formatted_fields: &str) -> Option<String> {
-    static REQUEST_ID_RE: std::sync::OnceLock<Regex> = std::sync::OnceLock::new();
-    let request_id_re = REQUEST_ID_RE.get_or_init(|| {
-        Regex::new(r#"request_id=("[^"]+"|[^ ]+)"#).expect("valid request_id regex")
-    });
-
-    let captures = request_id_re.captures(formatted_fields)?;
+/// Extract a single `key=value` field from formatted span text.
+///
+/// `regex` must be one of the pre-compiled patterns from `SPAN_FIELD_REGEXES`;
+/// the helper exists so unit tests can exercise the matching logic against
+/// ad-hoc text without standing up a `FmtContext`.
+fn extract_named_field_from_text(formatted_fields: &str, regex: &Regex) -> Option<String> {
+    let captures = regex.captures(formatted_fields)?;
     let raw = captures.get(1)?.as_str();
     Some(raw.trim_matches('"').to_string())
 }
@@ -652,17 +690,254 @@ fn redact_message(message: &str) -> String {
 mod tests {
     use super::*;
 
+    fn regex_for(field_name: &str) -> &'static Regex {
+        SPAN_FIELD_REGEXES
+            .iter()
+            .find(|(name, _)| *name == field_name)
+            .map(|(_, regex)| regex)
+            .unwrap_or_else(|| {
+                panic!(
+                    "test helper requested {field_name:?} which is not in HYDRATABLE_SPAN_FIELDS"
+                )
+            })
+    }
+
     #[test]
     fn request_id_extractor_handles_quoted_and_unquoted_values() {
+        let request_id = regex_for("request_id");
         assert_eq!(
-            extract_request_id_from_text(r#"request_id="abc-123" foo=bar"#),
+            extract_named_field_from_text(r#"request_id="abc-123" foo=bar"#, request_id),
             Some("abc-123".to_string())
         );
         assert_eq!(
-            extract_request_id_from_text("request_id=req-42 foo=bar"),
+            extract_named_field_from_text("request_id=req-42 foo=bar", request_id),
             Some("req-42".to_string())
         );
-        assert_eq!(extract_request_id_from_text("foo=bar"), None);
+        assert_eq!(extract_named_field_from_text("foo=bar", request_id), None);
+    }
+
+    #[test]
+    fn span_field_regexes_extract_each_hydratable_field() {
+        // Pin the contract that every hydratable field has a working
+        // extraction regex. A new field added to HYDRATABLE_SPAN_FIELDS
+        // without a corresponding regex would be silently invisible at
+        // runtime (LazyLock would compile fine but no event would ever
+        // hydrate). This test compiles all regexes by touching the static
+        // and exercises one extraction per field.
+        let cases: &[(&str, &str, &str)] = &[
+            ("request_id", "request_id=req-1 other=x", "req-1"),
+            ("event_type", "event_type=mars other=x", "mars"),
+            ("topic", "topic=mars.od.0001 other=x", "mars.od.0001"),
+        ];
+        for (field, text, expected) in cases {
+            let regex = regex_for(field);
+            assert_eq!(
+                extract_named_field_from_text(text, regex).as_deref(),
+                Some(*expected),
+                "{field:?} extractor failed on {text:?}"
+            );
+        }
+        assert_eq!(SPAN_FIELD_REGEXES.len(), HYDRATABLE_SPAN_FIELDS.len());
+    }
+
+    #[test]
+    fn span_field_regex_word_boundary_rejects_prefix_collisions() {
+        // event_type pattern must not match aviso_event_type. Without the
+        // \b anchor, the substring would silently leak into hydration.
+        let event_type = regex_for("event_type");
+        assert_eq!(
+            extract_named_field_from_text("aviso_event_type=foo other=x", event_type),
+            None,
+            "regex must require a word boundary before the field name"
+        );
+        // The same check the other direction: a longer suffix match must
+        // also be rejected (event_type vs event_typeable).
+        assert_eq!(
+            extract_named_field_from_text("event_typeable=foo", event_type),
+            None,
+        );
+    }
+
+    #[test]
+    fn span_field_regex_handles_quoted_values_with_dots() {
+        // Topic values are dotted (mars.od.0001.g...), and Span::record on a
+        // string with whitespace would be quoted by the default formatter.
+        // Both forms must extract correctly; this is the failure-side log
+        // hydration use case.
+        let topic = regex_for("topic");
+        assert_eq!(
+            extract_named_field_from_text(
+                "topic=mars.od.0001.g.20260706.1200.enfo.1 other=x",
+                topic
+            ),
+            Some("mars.od.0001.g.20260706.1200.enfo.1".to_string())
+        );
+        assert_eq!(
+            extract_named_field_from_text(r#"topic="value with spaces" other=x"#, topic),
+            Some("value with spaces".to_string())
+        );
+    }
+
+    /// `MakeWriter` that captures all output into a shared buffer so a test
+    /// can install a real subscriber, emit events, and inspect the JSON
+    /// the formatter produced. Using `Arc<Mutex<Vec<u8>>>` keeps each test
+    /// self-contained: tests run in parallel under cargo's default and
+    /// would otherwise contend for `std::io::stdout`.
+    #[derive(Clone)]
+    struct CapturingWriter(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+
+    impl CapturingWriter {
+        fn new() -> Self {
+            Self(std::sync::Arc::new(std::sync::Mutex::new(Vec::new())))
+        }
+
+        fn captured_lines(&self) -> Vec<String> {
+            let bytes = self.0.lock().expect("test buffer poisoned");
+            std::str::from_utf8(&bytes)
+                .expect("captured output is utf-8")
+                .lines()
+                .map(str::to_string)
+                .collect()
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for CapturingWriter {
+        type Writer = CapturedHandle;
+        fn make_writer(&'a self) -> Self::Writer {
+            CapturedHandle(self.0.clone())
+        }
+    }
+
+    struct CapturedHandle(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
+    impl std::io::Write for CapturedHandle {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("test buffer poisoned")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn run_with_capturing_subscriber<F: FnOnce()>(body: F) -> Vec<Value> {
+        let writer = CapturingWriter::new();
+        let subscriber = get_subscriber("test-subscriber".to_string(), None, writer.clone());
+        tracing::subscriber::with_default(subscriber, body);
+        writer
+            .captured_lines()
+            .into_iter()
+            .map(|line| {
+                serde_json::from_str(&line)
+                    .unwrap_or_else(|error| panic!("invalid json line {line:?}: {error}"))
+            })
+            .collect()
+    }
+
+    fn first_event_attributes(records: &[Value]) -> &Map<String, Value> {
+        records
+            .first()
+            .expect("expected at least one captured event")
+            .get("attributes")
+            .and_then(|v| v.as_object())
+            .expect("event must carry attributes object")
+    }
+
+    #[test]
+    fn span_recorded_event_type_hydrates_onto_inner_event_json() {
+        // Failure-side logs in error.rs (e.g. api.request.validation.failed)
+        // emit inside the route handler's #[instrument] span and rely on the
+        // formatter to pull span-recorded event_type/topic onto the JSON
+        // attributes. This test pins that integration end-to-end so a
+        // tracing-subscriber upgrade or visitor refactor cannot silently
+        // drop the hydration.
+        let records = run_with_capturing_subscriber(|| {
+            let span = tracing::info_span!(
+                "test_route",
+                event_type = tracing::field::Empty,
+                topic = tracing::field::Empty,
+                request_id = "req-hydrate-1",
+            );
+            span.record("event_type", "diss");
+            span.record("topic", "diss.FOO.E1.od");
+            span.in_scope(|| {
+                tracing::warn!(event_name = "test.failure", "simulated failure event");
+            });
+        });
+
+        let attrs = first_event_attributes(&records);
+        assert_eq!(attrs.get("event_type"), Some(&json!("diss")));
+        assert_eq!(attrs.get("topic"), Some(&json!("diss.FOO.E1.od")));
+        assert_eq!(attrs.get("request_id"), Some(&json!("req-hydrate-1")));
+    }
+
+    #[test]
+    fn explicit_event_field_wins_over_span_value() {
+        // When a call site sets event_type=foo on the event itself, that
+        // explicit value must NOT be replaced by the span's value. This is
+        // the precedence rule documented at the call site: hydration only
+        // fills in absent fields.
+        let records = run_with_capturing_subscriber(|| {
+            let span = tracing::info_span!("test_route", event_type = tracing::field::Empty);
+            span.record("event_type", "from_span");
+            span.in_scope(|| {
+                tracing::warn!(
+                    event_name = "test.failure",
+                    event_type = "from_event",
+                    "event with explicit field"
+                );
+            });
+        });
+
+        let attrs = first_event_attributes(&records);
+        assert_eq!(
+            attrs.get("event_type"),
+            Some(&json!("from_event")),
+            "explicit event field must override span value"
+        );
+    }
+
+    #[test]
+    fn innermost_span_wins_when_multiple_spans_record_the_same_field() {
+        // Nested spans both recording event_type: the innermost is the most
+        // request-specific context, so its value must be the one hydrated.
+        let records = run_with_capturing_subscriber(|| {
+            let outer = tracing::info_span!("outer", event_type = tracing::field::Empty);
+            outer.record("event_type", "outer_value");
+            outer.in_scope(|| {
+                let inner = tracing::info_span!("inner", event_type = tracing::field::Empty);
+                inner.record("event_type", "inner_value");
+                inner.in_scope(|| {
+                    tracing::warn!(event_name = "test.event", "nested event");
+                });
+            });
+        });
+
+        let attrs = first_event_attributes(&records);
+        assert_eq!(attrs.get("event_type"), Some(&json!("inner_value")));
+    }
+
+    #[test]
+    fn unrecorded_span_field_does_not_hydrate() {
+        // A span that declares event_type=Empty but never calls record on it
+        // must not populate the attribute on child events. Otherwise the
+        // hydration would silently surface stale or sentinel values.
+        let records = run_with_capturing_subscriber(|| {
+            let span = tracing::info_span!("test_route", event_type = tracing::field::Empty);
+            // Intentionally NOT calling span.record("event_type", ...).
+            span.in_scope(|| {
+                tracing::warn!(event_name = "test.event", "no event_type recorded");
+            });
+        });
+
+        let attrs = first_event_attributes(&records);
+        assert!(
+            !attrs.contains_key("event_type"),
+            "unrecorded field must not hydrate, got attrs: {:?}",
+            attrs
+        );
     }
 
     #[test]
