@@ -2,8 +2,8 @@
 
 Authentication is optional. When enabled, Aviso supports two modes:
 
-- **Direct** — Aviso forwards `Bearer` or `Basic` credentials to [auth-o-tron](https://github.com/ecmwf/auth-o-tron), which returns a signed JWT.
-- **Trusted proxy** — an upstream reverse proxy authenticates the user and forwards a signed JWT; Aviso validates it locally.
+- **Direct.** Aviso forwards `Bearer` or `Basic` credentials to [auth-o-tron](https://github.com/ecmwf/auth-o-tron), which returns a signed JWT.
+- **Trusted proxy.** An upstream reverse proxy authenticates the user and forwards a signed JWT; Aviso validates it locally.
 
 ## How It Works
 
@@ -63,8 +63,8 @@ Roles are realm-scoped: `admin_roles` maps each realm name to its authorized rol
 
 Auth is now enforced for:
 
-- Admin endpoints (`/api/v1/admin/*`) — always require auth + admin role.
-- Stream endpoints (`/api/v1/notification`, `/api/v1/watch`, `/api/v1/replay`) — only when the target schema sets `auth.required: true`.
+- Admin endpoints (`/api/v1/admin/*`) always require auth and an admin role.
+- Stream endpoints (`/api/v1/notification`, `/api/v1/watch`, `/api/v1/replay`) require auth only when the target schema sets `auth.required: true`.
 
 For full field-level documentation, see the [`auth` section in Configuration Reference](./configuration-reference.md#auth).
 
@@ -72,7 +72,7 @@ For full field-level documentation, see the [`auth` section in Configuration Ref
 
 Use `trusted_proxy` when Aviso sits behind a reverse proxy or API gateway that handles authentication. The proxy authenticates the user (via OIDC, SAML, etc.) and forwards a signed JWT to Aviso.
 
-Aviso validates the forwarded `Authorization: Bearer <jwt>` locally using `jwt_secret`. Username and roles are read directly from JWT claims — no outbound call to auth-o-tron is made.
+Aviso validates the forwarded `Authorization: Bearer <jwt>` locally using `jwt_secret`. Username and roles are read directly from JWT claims; no outbound call to auth-o-tron is made.
 
 ```yaml
 auth:
@@ -93,14 +93,14 @@ Configure authentication per stream in your notification schema:
 
 ```yaml
 notification_schema:
-  # Public — no auth section means anonymous access
+  # Public: no auth section means anonymous access
   public_events:
     payload:
       required: true
     topic:
       base: "public"
 
-  # Authenticated — any valid user can read, only admins can write
+  # Authenticated: any valid user can read, only admins can write
   internal_events:
     payload:
       required: true
@@ -142,7 +142,7 @@ notification_schema:
 
 | `auth.required` | `read_roles` | `write_roles` | Read (watch/replay) | Write (notify) |
 |---|---|---|---|---|
-| `false` or omitted | — | — | Anyone | Anyone |
+| `false` or omitted | (any) | (any) | Anyone | Anyone |
 | `true` | omitted | omitted | Any authenticated user | Admins only |
 | `true` | set | omitted | Must match `read_roles` | Admins only |
 | `true` | omitted | set | Any authenticated user | Must match `write_roles` or be admin |
@@ -154,8 +154,8 @@ Admins (users matching global `admin_roles`) always have both read and write acc
 
 Both `read_roles` and `write_roles` map realm names to role lists. A user's `realm` claim from the JWT must match a key in the map, and the user must hold at least one of that realm's listed roles.
 
-- **Wildcard `"*"`** — use `["*"]` as the role list to grant access to all users from a realm, regardless of their specific roles.
-- **Omitted role list** — when `read_roles` is omitted, any authenticated user can read. When `write_roles` is omitted, only admins can write.
+- **Wildcard `"*"`.** Use `["*"]` as the role list to grant access to all users from a realm, regardless of their specific roles.
+- **Omitted role list.** When `read_roles` is omitted, any authenticated user can read. When `write_roles` is omitted, only admins can write.
 
 When a per-stream `auth` block is present, `auth.required` must be explicitly set to either `true` or `false`.
 

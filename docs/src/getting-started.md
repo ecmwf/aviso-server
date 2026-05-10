@@ -3,8 +3,7 @@
 This guide walks you through running Aviso Server locally and sending your first notification.
 It assumes you have already completed [Installation](./installation.md).
 
-If you haven't read [Key Concepts](./concepts.md) yet, do that first —
-it will make the commands below much easier to follow.
+If you haven't read [Key Concepts](./concepts.md) yet, do that first; it will make the commands below much easier to follow.
 
 ---
 
@@ -31,6 +30,7 @@ Open `configuration/config.yaml` and make sure it contains at minimum:
 application:
   host: "127.0.0.1"
   port: 8000
+  base_url: "http://localhost:8000"
 
 notification_backend:
   kind: in_memory
@@ -96,7 +96,7 @@ Expected response: `200 OK`
 ## 5. Open a Watch Stream
 
 Before publishing, open a terminal and start watching for events.
-This is a live SSE stream — keep it open while you proceed to step 6.
+This is a live SSE stream; keep it open while you proceed to step 6.
 
 ```bash
 curl -N -X POST "http://127.0.0.1:8000/api/v1/watch" \
@@ -113,8 +113,11 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/watch" \
 You will see the SSE connection frame immediately:
 
 ```
-data: {"type":"connection_established","timestamp":"2026-03-04T10:00:00Z"}
+event: live-notification
+data: {"connection_will_close_in_seconds":3600,"request_id":"a3f1d2c8-9b4e-4f7a-bd56-1c8e2a9d4e3f","timestamp":"2026-03-04T10:00:00Z","topic":"my_event.north.20250706","type":"connection_established"}
 ```
+
+The `request_id` here is unique to this watch request. Save it: you will compare it with the next request's `request_id` to confirm each call gets its own.
 
 The stream stays open and will print new events as they arrive.
 
@@ -140,17 +143,25 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
 Expected response:
 
 ```json
-{ "id": "my_event@1", "topic": "my_event.north.20250706" }
+{
+  "status": "success",
+  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6",
+  "processed_at": "2026-03-04T10:00:00.123456+00:00"
+}
 ```
 
-The `id` (`my_event@1`) is the backend sequence reference.
-You can use it later to replay from that point or delete that specific notification.
+`request_id` is the per-request UUID for this notify call. Note that it is **different** from the watch call's UUID above (`a3f1d2c8-...`); each HTTP request gets its own. The same value appears in the `X-Request-ID` HTTP response header and in the corresponding server log lines. Quote it when reporting issues.
 
-Switch back to the watch terminal — the notification should have arrived:
+Switch back to the watch terminal. The notification should have arrived as a CloudEvent body:
 
 ```
-data: {"specversion":"1.0","id":"my_event@1","type":"aviso.notification",...}
+event: live-notification
+data: {"data":{"identifier":{...},"payload":{"note":"data is ready"}},"datacontenttype":"application/json","dataschema":"http://localhost:8000/schema/my_event","id":"my_event@1","source":"http://localhost:8000","specversion":"1.0","time":"2026-03-04T10:00:00.123456Z","type":"int.ecmwf.aviso.my_event"}
 ```
+
+The `source` and `dataschema` fields are derived from the server's `application.base_url`. With the default config (no `base_url` set), they would use `http://localhost`; the example above matches the snippet in step 2 which sets it to `http://localhost:8000`. The CloudEvent body also includes the canonicalized identifier and the payload under `data`.
+
+The CloudEvent `id` (`my_event@1`) is the `<event_type>@<sequence>` reference for replay and admin delete. The replay endpoint takes only the numeric sequence (`"1"`), not the full string.
 
 ---
 
@@ -174,15 +185,18 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
 The stream will emit all matching historical notifications, then close with:
 
 ```
-data: {"type":"connection_closing","reason":"end_of_stream","timestamp":"..."}
+event: connection-closing
+data: {"message":"Stream completed","reason":"end_of_stream","request_id":"f7e8d910-2b3c-4d5a-9c8b-1234567890ab","timestamp":"...","topic":"my_event.north.20250706"}
 ```
+
+This `request_id` is yet another distinct UUID, since `/replay` is a separate HTTP request from `/watch` and `/notification`.
 
 ---
 
 ## Optional: Local JetStream Setup
 
 To test with the JetStream backend (persistent storage, more realistic), see
-[Installation — Local JetStream](./installation.md#local-jetstream-docker) for the full setup
+[Installation: Local JetStream](./installation.md#local-jetstream-docker) for the full setup
 including environment variables and token authentication.
 
 ---
@@ -197,7 +211,7 @@ cp configuration/config.yaml.example configuration/config.yaml
 cargo run
 ```
 
-**With auth (default)** — start auth-o-tron before running the smoke tests:
+**With auth (default).** Start auth-o-tron before running the smoke tests:
 
 ```bash
 python3 -m pip install httpx
@@ -205,7 +219,7 @@ python3 -m pip install httpx
 python3 scripts/smoke_test.py
 ```
 
-**Without auth** — set `auth.enabled: false` in your config (or remove the `auth` section), then:
+**Without auth.** Set `auth.enabled: false` in your config (or remove the `auth` section), then:
 
 ```bash
 AUTH_ENABLED=false python3 scripts/smoke_test.py

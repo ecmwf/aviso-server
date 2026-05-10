@@ -2,10 +2,7 @@
 
 Uses the shared generic schema from [Practical Examples](./overview.md).
 
-Constraint filtering lets subscribers express conditions over identifier fields instead of exact values.
-In practice, this is how you ask for ranges (`severity >= 5`), numeric bands, or enum subsets.
-This page starts with seed data, then shows valid constraint requests, then common failure cases.
-It is the best reference for building client-side filter payloads.
+Constraint filtering lets subscribers express conditions over identifier fields instead of exact values: ranges (`severity >= 5`), numeric bands, or enum subsets. This page covers seed data, valid constraint requests, and common failure cases.
 
 ## Seed Notifications
 
@@ -14,7 +11,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"north","run_time":"1200","severity":"3","anomaly":42.5},
+    "identifier":{"region":"north","run_time":"1200","severity":"3","anomaly":"42.5","polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"},
     "payload":{"note":"seed-a"}
   }'
 
@@ -22,7 +19,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":87.2},
+    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":"87.2","polygon":"(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"},
     "payload":{"note":"seed-b"}
   }'
 ```
@@ -38,7 +35,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
   -H "Content-Type: application/json" \
   -d '{
     "event_type":"extreme_event",
-    "identifier":{"region":"south","run_time":"1200","severity":6,"anomaly":87.2},
+    "identifier":{"region":"south","run_time":"1200","severity":"6","anomaly":"87.2"},
     "from_id":"1"
   }'
 ```
@@ -59,7 +56,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":{"in":["north","south"]},
       "run_time":"1200",
       "severity":{"gte":5},
-      "anomaly":87.2
+      "anomaly":"87.2"
     },
     "from_id":"1"
   }'
@@ -130,7 +127,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/watch" \
       "region":{"in":["south","west"]},
       "run_time":"1200",
       "severity":"6",
-      "anomaly":87.2
+      "anomaly":"87.2"
     }
   }'
 ```
@@ -151,7 +148,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":"north",
       "run_time":"1200",
       "severity":{"gte":4,"lt":7},
-      "anomaly":42.5
+      "anomaly":"42.5"
     },
     "from_id":"1"
   }'
@@ -164,6 +161,8 @@ Expected:
 
 ## Invalid: Constraint Object on `/notification`
 
+All five identifier keys are present so the request fails specifically on the constraint object, not on a missing key.
+
 ```bash
 curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   -H "Content-Type: application/json" \
@@ -173,7 +172,8 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "region":"north",
       "run_time":"1200",
       "severity":{"gte":4},
-      "anomaly":42.5
+      "anomaly":"42.5",
+      "polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
     },
     "payload":{"note":"should-fail"}
   }'

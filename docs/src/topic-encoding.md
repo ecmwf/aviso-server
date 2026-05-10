@@ -80,11 +80,11 @@ The decoder is **strict**: malformed `%HH` sequences (e.g. `%GG`) are rejected, 
 
 Watch and replay requests use a two-step filter:
 
-1. **Backend coarse filter** — operates on wire subjects (NATS wildcard matching)
-2. **App-level wildcard match** — operates on **decoded** logical tokens
+1. **Backend coarse filter**: operates on wire subjects (NATS wildcard matching).
+2. **App-level wildcard match**: operates on **decoded** logical tokens.
 
 Both steps are safe with reserved characters because the app layer always decodes before matching.
-Subscribers never need to think about encoding in their filter values — Aviso handles it transparently.
+Subscribers never need to think about encoding in their filter values; Aviso handles it transparently.
 
 ---
 

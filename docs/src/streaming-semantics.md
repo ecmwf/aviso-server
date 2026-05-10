@@ -54,7 +54,7 @@ live-only watches, or a `replay-control` event with `data.type =
 
 ## Reconnecting after disconnect
 
-If a stream drops (network blip, client restart, connection_closing with
+If a stream drops (network blip, client restart, `connection-closing` with
 reason `max_duration_reached`, etc.), the recommended reconnect protocol is:
 
 1. Remember the `sequence` field of the last `live-notification` or `replay`
@@ -92,7 +92,7 @@ stateDiagram-v2
     Closed --> [*]
 ```
 
-Close reasons emitted in the final `connection_closing` SSE event:
+Close reasons emitted in the final `connection-closing` SSE event:
 
 | Reason | Trigger |
 |---|---|
@@ -179,7 +179,7 @@ flowchart LR
 
 - `identifier.polygon`: keep notifications whose stored polygon intersects the request polygon.
 - `identifier.point`: keep notifications whose stored polygon contains the request point.
-- Both together: invalid — request is rejected.
+- Both together: invalid (the request is rejected).
 
 ---
 
@@ -189,7 +189,7 @@ For schema-backed event types, identifier fields in watch/replay requests accept
 **constraint objects** instead of (or in addition to) scalar values.
 A scalar value is treated as an implicit `eq` constraint.
 
-Constraint objects are **rejected on `/notification`** — notify only accepts scalar values.
+Constraint objects are **rejected on `/notification`**: notify only accepts scalar values.
 
 ### Supported operators by field type
 
@@ -202,9 +202,9 @@ Constraint objects are **rejected on `/notification`** — notify only accepts s
 ### Notes
 
 - `between` expects exactly two values `[min, max]` and is **inclusive** on both ends.
-- Float constraints reject `NaN` and `inf` — only finite values are valid.
+- Float constraints reject `NaN` and `inf`; only finite values are valid.
 - Float `eq` and `in` use **exact** numeric equality; no tolerance window is applied.
-- A constraint object must contain **exactly one operator** — combining operators in a single object is rejected.
+- A constraint object must contain **exactly one operator**; combining operators in a single object is rejected.
 
 ### Examples
 
@@ -242,7 +242,7 @@ Example: `2026-02-25T18:58:23Z`
 
 - Replay and watch CloudEvent output always includes `data.payload`.
 - If a notify request omitted payload (optional schema), replay returns `data.payload = null`.
-- Payload values are not reshaped — scalar strings remain strings, objects remain objects.
+- Payload values are not reshaped; scalar strings remain strings, objects remain objects.
 
 See [Payload Contract](./payload-contract.md) for the full input → storage → output mapping.
 

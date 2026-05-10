@@ -11,12 +11,14 @@ below.
 ```json
 {
   "code": "INVALID_REPLAY_REQUEST",
+  "details": "Replay endpoint requires either from_id or from_date parameter...",
   "error": "Invalid Replay Request",
   "message": "Replay endpoint requires either from_id or from_date parameter...",
-  "details": "Replay endpoint requires either from_id or from_date parameter...",
   "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
+
+Wire field order is alphabetical because `serde_json::Map` uses a `BTreeMap`. The examples below match what `curl` actually emits.
 
 Fields:
 
@@ -94,7 +96,7 @@ These `event_name` values are emitted in structured logs:
 Every event carries `request_id`. The formatter additionally propagates `event_type` and `topic` from the surrounding request span when the handler has recorded them on the span before emitting the error log. Whether they appear depends on which step failed:
 
 - `api.request.parse.failed` never carries `event_type` or `topic`. The request body is rejected before either is known.
-- `api.request.validation.failed` sometimes carries `event_type`. Validation steps that run after the handler has parsed the schema (notify-side `process_notification_request` failures) include it; steps that run before — the watch/replay request validator and the notify-side endpoint-mismatch check — do not.
+- `api.request.validation.failed` sometimes carries `event_type`. Validation steps that run after the handler has parsed the schema (notify-side `process_notification_request` failures) include it. Steps that run before, namely the watch/replay request validator and the notify-side endpoint-mismatch check, do not.
 - `api.request.processing.failed` carries `event_type`. Storage-write failures additionally carry `topic`.
 - `stream.sse.initialization.failed` carries both `event_type` and `topic`.
 
@@ -125,9 +127,9 @@ Invalid replay request:
 ```json
 {
   "code": "INVALID_REPLAY_REQUEST",
+  "details": "Cannot specify both from_id and from_date...",
   "error": "Invalid Replay Request",
   "message": "Cannot specify both from_id and from_date...",
-  "details": "Cannot specify both from_id and from_date...",
   "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
 }
 ```
@@ -149,11 +151,11 @@ SSE initialization failure:
 ```json
 {
   "code": "SSE_STREAM_INITIALIZATION_FAILED",
+  "details": "nats connect failed: timeout",
   "error": "SSE stream creation failed",
   "message": "Failed to create stream consumer",
-  "details": "nats connect failed: timeout",
-  "topic": "test_polygon.*.1200",
-  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6"
+  "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6",
+  "topic": "test_polygon.*.1200"
 }
 ```
 

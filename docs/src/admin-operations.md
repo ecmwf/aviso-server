@@ -74,6 +74,19 @@ curl -X DELETE "http://127.0.0.1:8000/api/v1/admin/notification/mars@1"
 - `404`: stream/sequence pair not found.
 - `400`: invalid ID format (`<name>@<positive-integer>` required).
 
+The response body has the shape:
+
+```json
+{
+  "success": true,
+  "message": "Notification deleted",
+  "notification_id": "mars@42",
+  "request_id": "<uuid>"
+}
+```
+
+Failure responses (`404`, `400`) keep the same fields with `success: false` and a descriptive `message`.
+
 Invalid examples:
 
 - `mars` (missing `@sequence`)
@@ -148,13 +161,26 @@ When to use:
 
 ## Wipe Response Shape
 
-Both wipe endpoints return:
+Both wipe endpoints return the same field set: `success`, `message`, `request_id`. The `message` value differs:
+
+`DELETE /api/v1/admin/wipe/stream`:
 
 ```json
 {
   "success": true,
-  "message": "..."
+  "message": "Successfully wiped stream: MARS",
+  "request_id": "<uuid>"
 }
 ```
 
-Failure responses keep the same shape with `success: false` and an error message.
+`DELETE /api/v1/admin/wipe/all`:
+
+```json
+{
+  "success": true,
+  "message": "Successfully wiped all data",
+  "request_id": "<uuid>"
+}
+```
+
+Failure responses keep the same fields with `success: false` and a descriptive `message`.

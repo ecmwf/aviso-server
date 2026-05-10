@@ -7,12 +7,9 @@
 
 # Introduction
 
-**Aviso Server** is a real-time notification and historical replay system built for data dissemination pipelines.
-It lets publishers announce data availability events and lets subscribers receive those events
-— either live as they happen, or replayed from a chosen point in history.
+**Aviso Server** is a real-time notification and historical replay system for data dissemination pipelines. Publishers announce data availability events; subscribers receive those events live as they happen, or replayed from a chosen point in history.
 
-It is designed for environments where timely, reliable notification of data availability is critical:
-scientific computing, operational weather forecasting pipelines, large-scale data distribution, and similar domains.
+It is designed for environments where timely, reliable notification is critical: scientific computing, operational weather forecasting, large-scale data distribution, and similar domains.
 
 ---
 
@@ -56,8 +53,7 @@ precise application-level filtering (constraints, spatial checks) on top.
 This keeps backend subscription counts low while delivering exact results.
 
 ### Spatial awareness
-Polygon and point identifiers are first-class — notifications can carry geographic polygons,
-and subscribers can filter by polygon intersection or point containment.
+Polygon and point identifiers are first-class: notifications can carry geographic polygons, and subscribers can filter by polygon intersection or point containment.
 
 ### Pluggable backends
 Aviso abstracts storage behind a `NotificationBackend` trait.
@@ -65,10 +61,7 @@ Today two backends ship: **JetStream** (NATS-backed, durable, production-ready)
 and **In-Memory** (single-process, for development and testing).
 
 ### Server-Sent Events (SSE)
-Watch and replay streams use SSE — a simple, firewall-friendly HTTP streaming protocol
-supported natively by browsers and all major HTTP clients.
-The stream includes typed control frames (connection established, replay started/completed,
-heartbeats, and graceful close reasons).
+Watch and replay streams use SSE, a simple HTTP streaming protocol supported natively by browsers and all major HTTP clients. The stream includes typed control frames (connection established, replay started/completed, heartbeats, and graceful close reasons).
 
 ### CloudEvents format
 All delivered notifications follow the [CloudEvents](https://cloudevents.io/) specification,
@@ -78,10 +71,10 @@ making them easy to integrate with other event-driven systems.
 
 ## Use Cases
 
-- **Data availability monitoring** — trigger downstream workflows the moment a dataset lands
-- **Operational pipelines** — coordinate processing steps across distributed services
-- **Audit and compliance** — replay historical events to reconstruct what was published and when
-- **System integration** — connect disparate systems through a standardized event interface
+- **Data availability monitoring**: trigger downstream workflows the moment a dataset lands.
+- **Operational pipelines**: coordinate processing steps across distributed services.
+- **Audit and compliance**: replay historical events to reconstruct what was published and when.
+- **System integration**: connect disparate systems through a standardized event interface.
 
 ---
 
@@ -89,10 +82,10 @@ making them easy to integrate with other event-driven systems.
 
 If you are new to Aviso, read these pages in order:
 
-1. [Key Concepts](./concepts.md) — understand the terminology before anything else
-2. [Installation](./installation.md) — get the server running
-3. [Getting Started](./getting-started.md) — send your first notification and watch it arrive
-4. [Practical Examples](./practical-examples/overview.md) — copy-paste workflows for common scenarios
+1. [Key Concepts](./concepts.md): understand the terminology before anything else.
+2. [Installation](./installation.md): get the server running.
+3. [Getting Started](./getting-started.md): send your first notification and watch it arrive.
+4. [Practical Examples](./practical-examples/overview.md): copy-paste workflows for common scenarios.
 
 If you are configuring for production:
 

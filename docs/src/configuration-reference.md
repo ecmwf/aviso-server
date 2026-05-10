@@ -36,9 +36,11 @@ RUST_LOG=warn,aviso_server::auth=trace
 RUST_LOG=info,aviso_server::sse=debug,actix_web=warn
 ```
 
-A malformed `RUST_LOG` value is reported on stderr at startup and the server falls back to `logging.level`. The most common parse failures are an empty target before `=` (e.g. `RUST_LOG==warn`) and a non-level value after `=` (e.g. `RUST_LOG=info,aviso_server=verbose`). A missing comma like `RUST_LOG=info aviso_server=debug` does **not** trigger this fallback because `EnvFilter` parses the whole string as a single target name with a space — the directive ends up matching nothing instead of failing loudly. If a `RUST_LOG` value looks correct but no logs appear, double-check the commas first.
+A malformed `RUST_LOG` value is reported on stderr at startup and the server falls back to `logging.level`. The most common parse failures are an empty target before `=` (for example `RUST_LOG==warn`) and a non-level value after `=` (for example `RUST_LOG=info,aviso_server=verbose`).
 
-`RUST_LOG=""` (empty string) is treated as if `RUST_LOG` were unset and falls back to `logging.level`. Without this guard `EnvFilter::try_new("")` would silently succeed with a filter that matches nothing and silence the entire process — a real failure mode under deployment systems that export unset variables as empty strings (Kubernetes downward API, docker-compose `${VAR:-}`).
+A missing comma like `RUST_LOG=info aviso_server=debug` does **not** trigger the fallback. `EnvFilter` parses the whole string as a single target name with a space, and the directive ends up matching nothing instead of failing loudly. If a `RUST_LOG` value looks correct but no logs appear, double-check the commas first.
+
+`RUST_LOG=""` (empty string) is treated as if `RUST_LOG` were unset and falls back to `logging.level`. Without this guard `EnvFilter::try_new("")` silently succeeds with a filter that matches nothing and silences the entire process. This is a real failure mode under deployment systems that export unset variables as empty strings, such as the Kubernetes downward API or docker-compose's `${VAR:-}`.
 
 When `RUST_LOG` is unset, the default filter combines `logging.level` with a small set of mute directives so that framework internals do not flood operational logs:
 
@@ -73,9 +75,9 @@ When enabled:
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
-| `required` | `bool` | — | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
-| `read_roles` | `map<string, string[]>` | — | Realm-scoped roles for read access (watch/replay). When omitted, any authenticated user can read. Use `["*"]` as the role list to grant realm-wide access. |
-| `write_roles` | `map<string, string[]>` | — | Realm-scoped roles for write access (notify). When omitted, only users matching global `admin_roles` can write. Use `["*"]` as the role list to grant realm-wide access. |
+| `required` | `bool` | (none) | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
+| `read_roles` | `map<string, string[]>` | (none) | Realm-scoped roles for read access (watch/replay). When omitted, any authenticated user can read. Use `["*"]` as the role list to grant realm-wide access. |
+| `write_roles` | `map<string, string[]>` | (none) | Realm-scoped roles for write access (notify). When omitted, only users matching global `admin_roles` can write. Use `["*"]` as the role list to grant realm-wide access. |
 | `plugins` | `string[]` | (none) | Optional list of authorization plugins to run after role-based checks. Currently supported: `"ecpds"` (requires `--features ecpds` build). On a build without the required feature, startup fails with a clear error pointing at the offending stream. (Silent skip would widen access.) Empty `plugins: []` is rejected; omit the field instead. Plugins only run when `auth.required` is `true`. |
 
 See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
