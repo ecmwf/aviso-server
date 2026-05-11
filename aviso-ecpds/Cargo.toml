@@ -1,6 +1,6 @@
 [package]
 name = "aviso-ecpds"
-version = "0.4.1"
+version = "0.5.0"
 edition = "2024"
 description = "ECPDS destination authorization plugin for aviso-server."
 license = "Apache-2.0"
