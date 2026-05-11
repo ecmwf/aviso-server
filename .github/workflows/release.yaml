@@ -167,11 +167,13 @@ jobs:
           IS_STABLE:       ${{ needs.release-setup.outputs.is_stable }}
           REPO: eccr.ecmwf.int/aviso/${{ matrix.image }}
         run: |
-          # Source tags from the per-arch build jobs are already manifest
-          # lists; `imagetools create` handles both image manifests and
-          # manifest lists. We attach multiple human-friendly tags to the
-          # same digest so consumers can pick the pinning level that
-          # matches their risk tolerance:
+          # Each per-arch build pushed a single-arch image manifest
+          # (<version>-amd64 from the Ubuntu runner, <version>-arm64
+          # from the macOS-arm64 runner). `imagetools create` combines
+          # those source manifests into a multi-arch manifest list and
+          # attaches every human-friendly tag below to the same digest,
+          # so consumers can pick the pinning level that matches their
+          # risk tolerance:
           #
           #   :<version>           always (e.g. 0.4.1) — exact pin
           #   :<version>-<sha>     always              — exact-build pin for incident response
