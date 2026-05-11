@@ -68,7 +68,7 @@ LABEL org.opencontainers.image.version=$VERSION
 LABEL org.opencontainers.image.title="aviso-server"
 LABEL org.opencontainers.image.source="https://github.com/ecmwf/aviso-server"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
-LABEL aviso.cargo.features=$CARGO_FEATURES
+LABEL aviso.cargo.features="$CARGO_FEATURES"
 WORKDIR /app
 COPY --from=builder /app/target/release/aviso_server /app/aviso_server
 COPY --from=builder /app/configuration/ /app/configuration/
@@ -86,7 +86,7 @@ LABEL org.opencontainers.image.version=$VERSION
 LABEL org.opencontainers.image.title="aviso-server-debug"
 LABEL org.opencontainers.image.source="https://github.com/ecmwf/aviso-server"
 LABEL org.opencontainers.image.licenses="Apache-2.0"
-LABEL aviso.cargo.features=$CARGO_FEATURES
+LABEL aviso.cargo.features="$CARGO_FEATURES"
 RUN apt-get update && apt-get install -y ca-certificates bash && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=builder /app/target/release/aviso_server /app/aviso_server
