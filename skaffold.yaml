@@ -26,9 +26,15 @@ build:
       docker:
         dockerfile: Dockerfile
         target: release
+        buildArgs:
+          VERSION: "{{.CARGO_VERSION}}"
+          CARGO_FEATURES: "ecpds"
 
     - image: "aviso_server-debug"
       context: .
       docker:
         dockerfile: Dockerfile
         target: debug
+        buildArgs:
+          VERSION: "{{.CARGO_VERSION}}"
+          CARGO_FEATURES: "ecpds"

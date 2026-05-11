@@ -1,7 +1,13 @@
 [package]
 name = "aviso-ecpds"
-version = "0.1.0"
+version = "0.4.1"
 edition = "2024"
+description = "ECPDS destination authorization plugin for aviso-server."
+license = "Apache-2.0"
+readme = "README.md"
+repository = "https://github.com/ecmwf/aviso-server"
+homepage = "https://github.com/ecmwf/aviso-server"
+documentation = "https://docs.rs/aviso-ecpds"
 
 [dependencies]
 serde = { version = "1", features = ["derive"] }
