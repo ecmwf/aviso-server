@@ -40,16 +40,16 @@ impl FloatHandler {
             );
         }
 
-        if let Some([min, max]) = range {
-            if parsed_value < *min || parsed_value > *max {
-                bail!(
-                    "Field '{}' value {} is outside allowed range [{}, {}]",
-                    field_name,
-                    parsed_value,
-                    min,
-                    max
-                );
-            }
+        if let Some([min, max]) = range
+            && (parsed_value < *min || parsed_value > *max)
+        {
+            bail!(
+                "Field '{}' value {} is outside allowed range [{}, {}]",
+                field_name,
+                parsed_value,
+                min,
+                max
+            );
         }
 
         Ok(parsed_value.to_string())
