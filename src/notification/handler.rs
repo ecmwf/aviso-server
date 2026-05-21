@@ -20,14 +20,18 @@ pub struct NotificationHandler {
 }
 
 impl NotificationHandler {
-    /// Create a new notification handler from configuration
+    /// Create a new notification handler from configuration.
+    ///
+    /// `strict` controls whether unknown event types are rejected
+    /// (true) or accepted via the legacy generic fallback (false).
     pub fn from_config(
         notification_schema: Option<&HashMap<String, crate::configuration::EventSchema>>,
+        strict: bool,
     ) -> Self {
         let registry = if let Some(schemas) = notification_schema {
-            NotificationRegistry::from_config(schemas)
+            NotificationRegistry::from_config_with_strict(schemas, strict)
         } else {
-            NotificationRegistry::new()
+            NotificationRegistry::from_config_with_strict(&HashMap::new(), strict)
         };
 
         Self { registry }

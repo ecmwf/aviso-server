@@ -12,6 +12,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 static GLOBAL_NOTIFICATION_SCHEMA: OnceLock<Option<HashMap<String, EventSchema>>> = OnceLock::new();
+static GLOBAL_NOTIFICATION_SCHEMA_STRICT: OnceLock<bool> = OnceLock::new();
 static GLOBAL_LOGGING_SETTINGS: OnceLock<Option<LoggingSettings>> = OnceLock::new();
 static GLOBAL_APPLICATION_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::new();
 static GLOBAL_WATCH_SETTINGS: OnceLock<WatchEndpointSettings> = OnceLock::new();
@@ -22,20 +23,49 @@ impl Settings {
     /// Invariant: call once during startup before any request handling path reads
     /// global settings (for example schema lookups in notification processing).
     pub fn init_global_config(&self) {
+        let effective_strict = self.resolve_notification_schema_strict();
         let _ = GLOBAL_NOTIFICATION_SCHEMA.set(self.notification_schema.clone());
+        let _ = GLOBAL_NOTIFICATION_SCHEMA_STRICT.set(effective_strict);
         let _ = GLOBAL_LOGGING_SETTINGS.set(self.logging.clone());
         let _ = GLOBAL_APPLICATION_SETTINGS.set(self.application.clone());
         let _ = GLOBAL_WATCH_SETTINGS.set(self.watch_endpoint.clone());
+
+        let schema_has_entries = self
+            .notification_schema
+            .as_ref()
+            .is_some_and(|m| !m.is_empty());
+
+        if schema_has_entries && matches!(self.notification_schema_strict, Some(false)) {
+            tracing::warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "configuration.schema_strict.explicit_disabled",
+                "notification_schema_strict=false with a non-empty notification_schema: \
+                 unknown event_types will be silently accepted via the generic fallback. \
+                 This is the legacy permissive behavior; consider unsetting the override \
+                 to use the secure default."
+            );
+        }
 
         tracing::info!(
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_name = "configuration.global.initialized",
             has_notification_schema = self.notification_schema.is_some(),
+            notification_schema_strict = effective_strict,
             has_logging_config = self.logging.is_some(),
             base_url = %self.application.base_url,
             "Global configuration initialized successfully"
         );
+    }
+
+    fn resolve_notification_schema_strict(&self) -> bool {
+        self.notification_schema_strict.unwrap_or_else(|| {
+            self.notification_schema
+                .as_ref()
+                .map(|m| !m.is_empty())
+                .unwrap_or(false)
+        })
     }
 
     /// Build the per-application ECPDS checker (if configured).
@@ -98,6 +128,12 @@ impl Settings {
             .expect("Global notification schema not initialized. Call Settings::init_global_config() first.")
     }
 
+    pub fn get_global_notification_schema_strict() -> bool {
+        *GLOBAL_NOTIFICATION_SCHEMA_STRICT.get().expect(
+            "Global notification_schema_strict not initialized. Call Settings::init_global_config() first.",
+        )
+    }
+
     /// Panics before startup initialization; this catches invalid init order.
     pub fn get_global_logging_settings() -> &'static Option<LoggingSettings> {
         GLOBAL_LOGGING_SETTINGS.get().expect(
@@ -121,6 +157,7 @@ impl Settings {
 
     pub fn is_global_config_initialized() -> bool {
         GLOBAL_NOTIFICATION_SCHEMA.get().is_some()
+            && GLOBAL_NOTIFICATION_SCHEMA_STRICT.get().is_some()
             && GLOBAL_LOGGING_SETTINGS.get().is_some()
             && GLOBAL_APPLICATION_SETTINGS.get().is_some()
             && GLOBAL_WATCH_SETTINGS.get().is_some()

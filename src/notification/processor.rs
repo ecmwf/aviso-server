@@ -71,24 +71,32 @@ impl<'a> NotificationProcessor<'a> {
         payload: &Option<serde_json::Value>,
         operation: OperationType,
     ) -> Result<ProcessingResult> {
-        // Schema-driven when available; generic fallback otherwise.
-        let (canonicalized_params, identifier_constraints, spatial_metadata) =
-            if self.registry.has_schema(event_type) {
-                let schema = self.registry.get_schema(event_type).unwrap();
-                match operation {
-                    OperationType::Notify => {
-                        self.process_notify_request(schema, request_params, payload)?
-                    }
-                    OperationType::Watch => self.process_watch_request(schema, request_params)?,
-                    OperationType::Replay => self.process_replay_request(schema, request_params)?,
+        let has_schema = self.registry.has_schema(event_type);
+
+        // Schema-driven when available. Strict mode rejects everything else.
+        // Non-strict mode preserves the legacy generic fallback for backward compat.
+        let (canonicalized_params, identifier_constraints, spatial_metadata) = if has_schema {
+            let schema = self.registry.get_schema(event_type).unwrap();
+            match operation {
+                OperationType::Notify => {
+                    self.process_notify_request(schema, request_params, payload)?
                 }
-            } else {
-                (
-                    self.process_generic_request(request_params, operation)?,
-                    HashMap::new(),
-                    None,
-                )
-            };
+                OperationType::Watch => self.process_watch_request(schema, request_params)?,
+                OperationType::Replay => self.process_replay_request(schema, request_params)?,
+            }
+        } else if self.registry.is_strict() {
+            bail!(
+                "unknown event type '{}'. Configured event types: {:?}",
+                event_type,
+                self.registry.get_schema_names()
+            );
+        } else {
+            (
+                self.process_generic_request(request_params, operation)?,
+                HashMap::new(),
+                None,
+            )
+        };
 
         // Topic always comes from canonicalized values.
         let topic = if let Some(schema) = self.registry.get_schema(event_type) {
@@ -103,6 +111,7 @@ impl<'a> NotificationProcessor<'a> {
             canonicalized_params,
             identifier_constraints,
             spatial_metadata,
+            from_schema: has_schema,
         })
     }
 
@@ -990,5 +999,157 @@ mod tests {
         assert!(result.is_ok());
         let processing_result = result.unwrap();
         assert!(processing_result.topic.starts_with("unknown_event."));
+    }
+
+    #[test]
+    fn from_schema_flag_set_when_event_type_matches_configured_schema() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), create_test_schema());
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("class".to_string(), "od".to_string());
+        params.insert("destination".to_string(), "SCL".to_string());
+        params.insert("optional_field".to_string(), "v".to_string());
+
+        let payload = Some(serde_json::Value::String("payload".to_string()));
+        let result = processor
+            .process_request("test_event", &params, &payload, OperationType::Notify)
+            .expect("configured event must process");
+        assert!(
+            result.from_schema,
+            "from_schema must be true for configured event_type"
+        );
+    }
+
+    #[test]
+    fn from_schema_flag_unset_when_generic_fallback_used() {
+        let registry = NotificationRegistry::new();
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("field1".to_string(), "value1".to_string());
+
+        let payload = None;
+        let result = processor
+            .process_request("unknown_event", &params, &payload, OperationType::Notify)
+            .expect("non-strict registry must accept unknown event_type");
+        assert!(
+            !result.from_schema,
+            "from_schema must be false for generic fallback"
+        );
+    }
+
+    #[test]
+    fn strict_registry_rejects_unknown_event_type_on_notify() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), create_test_schema());
+        let registry = NotificationRegistry::from_config_with_strict(&schemas, true);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("class".to_string(), "od".to_string());
+
+        let payload = None;
+        let result = processor.process_request(
+            "definitely_not_configured",
+            &params,
+            &payload,
+            OperationType::Notify,
+        );
+        let err = result.expect_err("strict registry must reject unknown event_type");
+        let message = err.to_string();
+        assert!(
+            message.contains("unknown event type"),
+            "expected 'unknown event type' substring, got: {message}"
+        );
+        assert!(
+            message.contains("test_event"),
+            "error should list configured event types"
+        );
+    }
+
+    #[test]
+    fn strict_registry_rejects_unknown_event_type_on_watch_and_replay() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), create_test_schema());
+        let registry = NotificationRegistry::from_config_with_strict(&schemas, true);
+        let processor = NotificationProcessor::new(&registry);
+
+        let params = HashMap::new();
+        let payload = None;
+
+        let watch_result =
+            processor.process_request("unknown", &params, &payload, OperationType::Watch);
+        assert!(
+            watch_result.is_err(),
+            "strict mode must reject unknown event_type on watch"
+        );
+
+        let replay_result =
+            processor.process_request("unknown", &params, &payload, OperationType::Replay);
+        assert!(
+            replay_result.is_err(),
+            "strict mode must reject unknown event_type on replay"
+        );
+    }
+
+    #[test]
+    fn strict_registry_accepts_configured_event_type() {
+        let mut schemas = HashMap::new();
+        schemas.insert("test_event".to_string(), create_test_schema());
+        let registry = NotificationRegistry::from_config_with_strict(&schemas, true);
+        let processor = NotificationProcessor::new(&registry);
+
+        let mut params = HashMap::new();
+        params.insert("class".to_string(), "od".to_string());
+        params.insert("destination".to_string(), "SCL".to_string());
+        params.insert("optional_field".to_string(), "v".to_string());
+
+        let payload = Some(serde_json::Value::String("payload".to_string()));
+        let result = processor
+            .process_request("test_event", &params, &payload, OperationType::Notify)
+            .expect("strict mode must accept configured event_type");
+        assert!(result.from_schema);
+    }
+
+    #[test]
+    fn strict_empty_registry_rejects_everything() {
+        let registry = NotificationRegistry::from_config_with_strict(&HashMap::new(), true);
+        let processor = NotificationProcessor::new(&registry);
+
+        let params = HashMap::new();
+        let payload = None;
+        let result =
+            processor.process_request("anything", &params, &payload, OperationType::Notify);
+        assert!(
+            result.is_err(),
+            "strict mode with empty schema must reject all event_types (drain mode)"
+        );
+    }
+
+    #[test]
+    fn error_message_uses_lowercase_substring_for_classifier_compatibility() {
+        let registry = NotificationRegistry::from_config_with_strict(&HashMap::new(), true);
+        let processor = NotificationProcessor::new(&registry);
+
+        let params = HashMap::new();
+        let payload = None;
+        let err = processor
+            .process_request("nope", &params, &payload, OperationType::Notify)
+            .expect_err("strict empty registry must reject");
+
+        let chained_lower = err
+            .chain()
+            .map(|c| c.to_string().to_ascii_lowercase())
+            .collect::<Vec<_>>()
+            .join(" | ");
+        assert!(
+            chained_lower.contains("unknown event type"),
+            "the classifier in handlers::notification_processor::is_notification_validation_error \
+             matches the substring 'unknown event type' to return 400 (not 500). \
+             Keep the wording in sync. Got chained: {chained_lower}"
+        );
     }
 }

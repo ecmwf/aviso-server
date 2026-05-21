@@ -46,8 +46,10 @@ pub fn process_notification_request(
     payload: &Option<serde_json::Value>,
     operation: OperationType,
 ) -> Result<ProcessingResult, NotificationProcessingError> {
-    let handler =
-        NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
+    let handler = NotificationHandler::from_config(
+        Settings::get_global_notification_schema().as_ref(),
+        Settings::get_global_notification_schema_strict(),
+    );
 
     match handler.process_request(event_type, request_params, payload, operation) {
         Ok(result) => Ok(result),

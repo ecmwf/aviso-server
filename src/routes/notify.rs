@@ -18,7 +18,7 @@ use crate::metrics::AppMetrics;
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::routes::streaming::{StreamOperation, enforce_stream_auth};
+use crate::routes::streaming::{StreamOperation, enforce_known_event_type, enforce_stream_auth};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -87,6 +87,15 @@ pub async fn notify(
     let event_type = &payload.event_type;
     let request_params = &payload.identifier;
 
+    // Strict-mode guard: reject unknown event_types BEFORE auth, span recording,
+    // and metric labels. This keeps user-controlled cardinality out of Prometheus
+    // / tracing in strict deployments. The function is a no-op when strict mode
+    // is off, preserving legacy permissive behavior.
+    if let Err(response) = enforce_known_event_type(&http_request, event_type) {
+        record_notification(&metrics, "unknown", "rejected");
+        return response;
+    }
+
     tracing::Span::current().record("event_type", event_type);
 
     // Reject unauthorized requests before validation/topic work.
@@ -96,8 +105,9 @@ pub async fn notify(
     }
 
     // Process notification request with payload validation.
-    // After this point, event_type is confirmed to exist in notification_schema
-    // and is safe to use as a Prometheus label (bounded cardinality).
+    // In strict mode the event_type is now known to be in notification_schema.
+    // In non-strict mode the processor may return from_schema=false; downstream
+    // code MUST gate user-controlled Prometheus labels on that flag.
     let notification_result = match process_notification_request(
         event_type,
         request_params,
@@ -141,6 +151,15 @@ pub async fn notify(
         .unwrap_or_else(|| "null".to_string());
     let payload_size = payload_string.len();
 
+    // Bound Prometheus label cardinality: only emit the raw event_type when it
+    // came from a configured schema entry. Unknown event_types reaching this
+    // point (legacy permissive mode) collapse to the literal "generic".
+    let metric_event_type: &str = if notification_result.from_schema {
+        event_type
+    } else {
+        "generic"
+    };
+
     if let Err(e) = save_to_backend(
         &notification_result,
         payload_string,
@@ -148,11 +167,11 @@ pub async fn notify(
     )
     .await
     {
-        record_notification(&metrics, event_type, "error");
+        record_notification(&metrics, metric_event_type, "error");
         return processing_error_response(ProcessingKind::NotificationStorage, e, &request_id_str);
     }
 
-    record_notification(&metrics, event_type, "success");
+    record_notification(&metrics, metric_event_type, "success");
 
     let response = NotificationResponse {
         status: "success".to_string(),

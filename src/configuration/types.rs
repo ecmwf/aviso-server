@@ -344,6 +344,21 @@ pub struct Settings {
     pub logging: Option<LoggingSettings>,
     /// Event schema definitions keyed by event type.
     pub notification_schema: Option<HashMap<String, EventSchema>>,
+    /// Reject requests whose `event_type` is not present in `notification_schema`.
+    ///
+    /// When unset (`None`), the effective behavior is resolved at startup:
+    /// - `Some(non_empty)` schema → strict mode is enabled (unknown event types
+    ///   are rejected with 400). This is the secure default for any deployment
+    ///   that has bothered to declare a schema.
+    /// - `None` or empty schema → strict mode is disabled, the historical
+    ///   generic fallback applies (any event type accepted, no validation).
+    ///
+    /// Operators may set this explicitly to:
+    /// - `true` with no/empty schema  → deny-all "drain" mode.
+    /// - `false` with a configured schema → preserve the legacy permissive
+    ///   behavior. A startup warning is emitted in that case.
+    #[serde(default)]
+    pub notification_schema_strict: Option<bool>,
     #[serde(default)]
     pub watch_endpoint: WatchEndpointSettings,
     #[serde(default)]

@@ -16,4 +16,5 @@ mod request_id;
 mod schema;
 mod streaming;
 mod streaming_jetstream;
+mod strict_schema;
 mod test_utils;

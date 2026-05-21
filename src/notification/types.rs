@@ -148,6 +148,10 @@ pub struct ProcessingResult {
     pub identifier_constraints: HashMap<String, IdentifierConstraint>,
     /// Optional spatial metadata from polygon fields.
     pub spatial_metadata: Option<SpatialMetadata>,
+    /// True when this request was processed against a configured schema entry;
+    /// false when it fell through to the generic permissive path. Callers MUST
+    /// gate user-controlled Prometheus / tracing labels on this flag.
+    pub from_schema: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

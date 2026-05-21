@@ -174,6 +174,36 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 
 See [JetStream Backend](./backend-jetstream.md#configuration-reference) for detailed behavior.
 
+## `notification_schema_strict`
+
+Controls how the server treats `event_type` values that are not declared in `notification_schema`.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `notification_schema_strict` | `bool?` | **derived** | When unset, the effective value is `true` if `notification_schema` is non-empty, `false` otherwise. Set to `true` to force strict rejection even with no schema (deny-all "drain" mode). Set to `false` to preserve the legacy permissive generic fallback even with a declared schema; a startup warning is emitted in that case. |
+
+In strict mode, `POST /api/v1/notification`, `/watch`, and `/replay` reject any
+`event_type` not present in `notification_schema` with `400 UNKNOWN_EVENT_TYPE`.
+The error body is:
+
+```json
+{
+  "code": "UNKNOWN_EVENT_TYPE",
+  "error": "unknown_event_type",
+  "message": "unknown event type 'X'",
+  "configured_event_types": ["dissemination", "mars", "test_polygon"],
+  "request_id": "<uuid>"
+}
+```
+
+`configured_event_types` is sorted for stable diffing in client tooling.
+
+The same flag also bounds Prometheus / tracing label cardinality: when a
+request reaches the generic-fallback path (only possible with
+`notification_schema_strict: false`), the recorded `event_type` label is
+collapsed to the literal `"generic"` instead of being recorded as
+user-controlled input.
+
 ## `notification_schema.<event_type>.payload`
 
 Schema-level payload contract for notify requests.

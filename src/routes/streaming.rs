@@ -7,16 +7,75 @@
 // does it submit to any jurisdiction.
 
 use crate::auth::middleware::{auth_mode, get_user, is_auth_enabled, unauthorized_response};
-use crate::configuration::{AuthMode, AuthSettings, Settings};
+use crate::configuration::{AuthMode, AuthSettings, EventSchema, Settings};
 use crate::notification_backend::replay::StartAt;
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde_json::json;
+use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Whether the request is a read (watch/replay) or write (notify) operation.
 pub enum StreamOperation {
     Read,
     Write,
+}
+
+/// Reject requests whose `event_type` is not in the configured `notification_schema`
+/// when strict mode is active.
+///
+/// This is the first line of defense against unknown event types: it runs before
+/// auth, span recording, metric labels, and any backend work. Returning `Err` short-
+/// circuits the request with a 400 response containing the sorted list of
+/// configured event types.
+///
+/// Truth table (strict, schema_present, event_known) → outcome:
+///   strict=false, *                        → Ok        (legacy permissive)
+///   strict=true,  schema_present=true,  known=true  → Ok
+///   strict=true,  schema_present=true,  known=false → Err 400
+///   strict=true,  schema_present=false → Err 400 (explicit deny-all "drain" mode)
+pub fn enforce_known_event_type(req: &HttpRequest, event_type: &str) -> Result<(), HttpResponse> {
+    let request_id = crate::middleware::request_id::request_id_from_request(req);
+    enforce_known_event_type_inner(
+        Settings::get_global_notification_schema_strict(),
+        Settings::get_global_notification_schema().as_ref(),
+        &request_id,
+        event_type,
+    )
+}
+
+/// Pure-logic core of `enforce_known_event_type`, factored out so unit tests
+/// can drive every cell of the truth table without touching the `OnceLock`
+/// globals.
+pub(crate) fn enforce_known_event_type_inner(
+    strict: bool,
+    schema_map: Option<&HashMap<String, EventSchema>>,
+    request_id: &str,
+    event_type: &str,
+) -> Result<(), HttpResponse> {
+    if !strict {
+        return Ok(());
+    }
+
+    let known = schema_map.is_some_and(|m| m.contains_key(event_type));
+    if known {
+        return Ok(());
+    }
+
+    let configured: Vec<String> = schema_map
+        .map(|m| {
+            let mut names: Vec<String> = m.keys().cloned().collect();
+            names.sort();
+            names
+        })
+        .unwrap_or_default();
+
+    Err(HttpResponse::BadRequest().json(json!({
+        "code": "UNKNOWN_EVENT_TYPE",
+        "error": "unknown_event_type",
+        "message": format!("unknown event type '{event_type}'"),
+        "configured_event_types": configured,
+        "request_id": request_id,
+    })))
 }
 
 pub fn record_start_at_span_fields(start_at: StartAt) {
@@ -337,5 +396,77 @@ pub async fn enforce_ecpds_auth(
                 "request_id": request_id,
             })))
         }
+    }
+}
+
+#[cfg(test)]
+mod enforce_known_event_type_tests {
+    use super::enforce_known_event_type_inner;
+    use crate::configuration::{EventSchema, IdentifierFieldConfig};
+    use aviso_validators::ValidationRules;
+    use std::collections::HashMap;
+
+    fn schema(event_types: &[&str]) -> HashMap<String, EventSchema> {
+        let mut map = HashMap::new();
+        for name in event_types {
+            map.insert(
+                (*name).to_string(),
+                EventSchema {
+                    payload: None,
+                    topic: None,
+                    endpoint: None,
+                    identifier: HashMap::from([(
+                        "class".to_string(),
+                        IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
+                            max_length: None,
+                            required: true,
+                        }),
+                    )]),
+                    storage_policy: None,
+                    auth: None,
+                },
+            );
+        }
+        map
+    }
+
+    #[test]
+    fn non_strict_always_passes_regardless_of_schema() {
+        let map = schema(&["mars"]);
+        assert!(enforce_known_event_type_inner(false, Some(&map), "req-1", "unknown").is_ok());
+        assert!(enforce_known_event_type_inner(false, None, "req-2", "anything").is_ok());
+    }
+
+    #[test]
+    fn strict_with_known_event_passes() {
+        let map = schema(&["mars", "dissemination"]);
+        assert!(enforce_known_event_type_inner(true, Some(&map), "req", "mars").is_ok());
+        assert!(enforce_known_event_type_inner(true, Some(&map), "req", "dissemination").is_ok());
+    }
+
+    #[test]
+    fn strict_with_unknown_event_returns_err() {
+        let map = schema(&["mars"]);
+        let result = enforce_known_event_type_inner(true, Some(&map), "req", "asadasdasd");
+        assert!(result.is_err(), "unknown event type must be rejected");
+    }
+
+    #[test]
+    fn strict_with_no_schema_is_deny_all() {
+        let result = enforce_known_event_type_inner(true, None, "req", "anything");
+        assert!(
+            result.is_err(),
+            "strict mode with no schema is a deny-all drain mode, not a permissive bypass"
+        );
+    }
+
+    #[test]
+    fn strict_with_empty_schema_is_deny_all() {
+        let map: HashMap<String, EventSchema> = HashMap::new();
+        let result = enforce_known_event_type_inner(true, Some(&map), "req", "anything");
+        assert!(
+            result.is_err(),
+            "strict mode with empty schema is a deny-all drain mode"
+        );
     }
 }

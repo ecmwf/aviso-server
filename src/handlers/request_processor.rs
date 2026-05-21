@@ -29,6 +29,10 @@ pub struct StreamingRequestContext {
     pub identifier_constraints: HashMap<String, IdentifierConstraint>,
     pub start_at: StartAt,
     pub request_id: RequestId,
+    /// True if the event_type came from a configured schema entry; false if
+    /// it fell through to the generic permissive path. Callers MUST gate
+    /// user-controlled Prometheus / tracing labels on this flag.
+    pub from_schema: bool,
 }
 
 /// Configuration for request validation requirements
@@ -86,8 +90,10 @@ impl StreamingRequestProcessor {
         let start_at = Self::validate_replay_parameters(request, &config)?;
 
         // Process notification request using schema
-        let notification_handler =
-            NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
+        let notification_handler = NotificationHandler::from_config(
+            Settings::get_global_notification_schema().as_ref(),
+            Settings::get_global_notification_schema_strict(),
+        );
 
         let notification_result = notification_handler.process_request(
             &request.event_type,
@@ -103,6 +109,7 @@ impl StreamingRequestProcessor {
             identifier_constraints: notification_result.identifier_constraints,
             start_at,
             request_id,
+            from_schema: notification_result.from_schema,
         })
     }
 
