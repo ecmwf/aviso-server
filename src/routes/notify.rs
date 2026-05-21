@@ -18,7 +18,10 @@ use crate::metrics::AppMetrics;
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::routes::streaming::{StreamOperation, enforce_known_event_type, enforce_stream_auth};
+use crate::routes::streaming::{
+    StreamOperation, bucket_event_type_for_observability, enforce_known_event_type,
+    enforce_stream_auth,
+};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -96,7 +99,12 @@ pub async fn notify(
         return response;
     }
 
-    tracing::Span::current().record("event_type", event_type);
+    // Single source of truth for observability labels: bucket to "generic" when
+    // the event_type is not in the schema (only reachable in non-strict mode).
+    // Use this for BOTH the tracing span field and Prometheus metric labels so
+    // the two stay in sync and neither leaks user-controlled cardinality.
+    let event_type_label = bucket_event_type_for_observability(event_type);
+    tracing::Span::current().record("event_type", event_type_label);
 
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
@@ -104,10 +112,6 @@ pub async fn notify(
         return response;
     }
 
-    // Process notification request with payload validation.
-    // In strict mode the event_type is now known to be in notification_schema.
-    // In non-strict mode the processor may return from_schema=false; downstream
-    // code MUST gate user-controlled Prometheus labels on that flag.
     let notification_result = match process_notification_request(
         event_type,
         request_params,
@@ -151,15 +155,6 @@ pub async fn notify(
         .unwrap_or_else(|| "null".to_string());
     let payload_size = payload_string.len();
 
-    // Bound Prometheus label cardinality: only emit the raw event_type when it
-    // came from a configured schema entry. Unknown event_types reaching this
-    // point (legacy permissive mode) collapse to the literal "generic".
-    let metric_event_type: &str = if notification_result.from_schema {
-        event_type
-    } else {
-        "generic"
-    };
-
     if let Err(e) = save_to_backend(
         &notification_result,
         payload_string,
@@ -167,11 +162,11 @@ pub async fn notify(
     )
     .await
     {
-        record_notification(&metrics, metric_event_type, "error");
+        record_notification(&metrics, event_type_label, "error");
         return processing_error_response(ProcessingKind::NotificationStorage, e, &request_id_str);
     }
 
-    record_notification(&metrics, metric_event_type, "success");
+    record_notification(&metrics, event_type_label, "success");
 
     let response = NotificationResponse {
         status: "success".to_string(),

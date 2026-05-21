@@ -16,7 +16,8 @@ use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::streaming::{
-    StreamOperation, enforce_known_event_type, enforce_stream_auth, record_start_at_span_fields,
+    StreamOperation, bucket_event_type_for_observability, enforce_known_event_type,
+    enforce_stream_auth, record_start_at_span_fields,
 };
 use crate::sse::replay::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
@@ -79,6 +80,12 @@ pub async fn replay(
         return response;
     }
 
+    // Single source of truth for observability labels: bucket to "generic" when
+    // the event_type is not in the schema (only reachable in non-strict mode).
+    // Used for BOTH the tracing span field and Prometheus SSE metric labels so
+    // the two stay in sync and neither leaks user-controlled cardinality.
+    let event_type_label = bucket_event_type_for_observability(&notification_request.event_type);
+
     // Enforce schema-level auth before replay setup to fail fast.
     if let Err(response) = enforce_stream_auth(
         &http_request,
@@ -99,7 +106,7 @@ pub async fn replay(
         }
     };
 
-    tracing::Span::current().record("event_type", &context.event_type);
+    tracing::Span::current().record("event_type", event_type_label);
     record_start_at_span_fields(context.start_at);
 
     #[cfg(feature = "ecpds")]
@@ -121,16 +128,9 @@ pub async fn replay(
     let filtering_constraints = Arc::new(context.identifier_constraints.clone());
 
     // See watch.rs for why the guard is created before stream setup.
-    // Bound Prometheus label cardinality: only emit the raw event_type when it
-    // came from a configured schema entry; otherwise collapse to "generic".
-    let metric_event_type: &str = if context.from_schema {
-        context.event_type.as_str()
-    } else {
-        "generic"
-    };
     let sse_guard = metrics.as_ref().map(|m| {
         let username = get_username(&http_request);
-        m.track_sse_connection("replay", metric_event_type, username.as_deref())
+        m.track_sse_connection("replay", event_type_label, username.as_deref())
     });
 
     match create_replay_only_stream(

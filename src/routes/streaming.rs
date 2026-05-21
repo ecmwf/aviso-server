@@ -43,6 +43,35 @@ pub fn enforce_known_event_type(req: &HttpRequest, event_type: &str) -> Result<(
     )
 }
 
+/// Reduces a user-supplied `event_type` to a bounded label suitable for use in
+/// Prometheus metrics and tracing span fields.
+///
+/// - If the value is present in the configured `notification_schema`, returns
+///   it verbatim (cardinality is bounded by the number of declared event
+///   types — typically single digits).
+/// - Otherwise returns the literal `"generic"`. This branch is only reachable
+///   in non-strict mode (`notification_schema_strict: false`), because
+///   `enforce_known_event_type` rejects unknown event_types upstream in strict
+///   mode. Collapsing the label here prevents the unbounded cardinality bomb
+///   that the legacy generic-fallback path would otherwise expose to
+///   observability sinks.
+///
+/// Callers MUST use the returned value for any place that writes the
+/// `event_type` into a Prometheus label or a tracing span field on the live
+/// request path. The raw `event_type` is still safe to use inside the request
+/// body / topic name / backend routing — only observability sinks need this
+/// bucketing.
+pub fn bucket_event_type_for_observability(event_type: &str) -> &str {
+    if Settings::get_global_notification_schema()
+        .as_ref()
+        .is_some_and(|m| m.contains_key(event_type))
+    {
+        event_type
+    } else {
+        "generic"
+    }
+}
+
 /// Pure-logic core of `enforce_known_event_type`, factored out so unit tests
 /// can drive every cell of the truth table without touching the `OnceLock`
 /// globals.

@@ -17,7 +17,8 @@ use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::notification_backend::replay::StartAt;
 use crate::routes::streaming::{
-    StreamOperation, enforce_known_event_type, enforce_stream_auth, record_start_at_span_fields,
+    StreamOperation, bucket_event_type_for_observability, enforce_known_event_type,
+    enforce_stream_auth, record_start_at_span_fields,
 };
 use crate::sse::live::create_watch_sse_stream;
 use crate::sse::replay::create_historical_then_live_stream;
@@ -87,6 +88,12 @@ pub async fn watch(
         return response;
     }
 
+    // Single source of truth for observability labels: bucket to "generic" when
+    // the event_type is not in the schema (only reachable in non-strict mode).
+    // Used for BOTH the tracing span field and Prometheus SSE metric labels so
+    // the two stay in sync and neither leaks user-controlled cardinality.
+    let event_type_label = bucket_event_type_for_observability(&notification_request.event_type);
+
     // Enforce schema-level auth before stream setup to fail fast.
     if let Err(response) = enforce_stream_auth(
         &http_request,
@@ -107,7 +114,7 @@ pub async fn watch(
     };
 
     // Update tracing context
-    tracing::Span::current().record("event_type", &context.event_type);
+    tracing::Span::current().record("event_type", event_type_label);
     record_start_at_span_fields(context.start_at);
 
     #[cfg(feature = "ecpds")]
@@ -128,16 +135,9 @@ pub async fn watch(
     // Guard is created before stream setup so it can be moved into the SSE
     // response body. On setup failure the guard drops immediately, causing a
     // brief +1/-1 on the active gauge — acceptable for production metrics.
-    // Bound Prometheus label cardinality: only emit the raw event_type when it
-    // came from a configured schema entry; otherwise collapse to "generic".
-    let metric_event_type: &str = if context.from_schema {
-        context.event_type.as_str()
-    } else {
-        "generic"
-    };
     let sse_guard = metrics.as_ref().map(|m| {
         let username = get_username(&http_request);
-        m.track_sse_connection("watch", metric_event_type, username.as_deref())
+        m.track_sse_connection("watch", event_type_label, username.as_deref())
     });
 
     // Determine streaming mode and create appropriate stream
