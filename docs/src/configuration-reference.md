@@ -182,8 +182,9 @@ Controls how the server treats `event_type` values that are not declared in `not
 |---|---|---|---|
 | `notification_schema_strict` | `bool?` | **derived** | When unset, the effective value is `true` if `notification_schema` is non-empty, `false` otherwise. Set to `true` to force strict rejection even with no schema (deny-all "drain" mode). Set to `false` to preserve the legacy permissive generic fallback even with a declared schema; a startup warning is emitted in that case. |
 
-In strict mode, `POST /api/v1/notification`, `/watch`, and `/replay` reject any
-`event_type` not present in `notification_schema` with `400 UNKNOWN_EVENT_TYPE`.
+In strict mode, `POST /api/v1/notification`, `POST /api/v1/watch`, and
+`POST /api/v1/replay` reject any `event_type` not present in
+`notification_schema` with `400 UNKNOWN_EVENT_TYPE`.
 The error body is:
 
 ```json

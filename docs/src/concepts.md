@@ -21,8 +21,8 @@ The server uses the event type to:
 
 When a `notification_schema` is configured, Aviso is **strict by default**: any
 `event_type` that is not in the schema is rejected with `400 UNKNOWN_EVENT_TYPE`
-on `/notification`, `/watch`, and `/replay`. The error body lists the configured
-event types so clients can self-correct.
+on `/api/v1/notification`, `/api/v1/watch`, and `/api/v1/replay`. The error
+body lists the configured event types so clients can self-correct.
 
 When `notification_schema` is empty or absent (no schema declared at all), Aviso
 falls back to **generic behavior**: any event type is accepted, fields are
