@@ -178,7 +178,7 @@ pub async fn notify(
     let response = NotificationResponse {
         status: "success".to_string(),
         request_id: request_id_str,
-        processed_at: chrono::Utc::now().to_rfc3339(),
+        processed_at: chrono::Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
     };
 
     // This single info event is now the canonical per-notification log line.

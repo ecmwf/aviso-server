@@ -131,6 +131,120 @@ async fn live_watch_emits_cloudevent_carrying_the_producer_polygon_in_data_ident
     );
 }
 
+#[tokio::test]
+async fn unclosed_polygon_returns_400_with_clear_validation_message() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/api/v1/notification", &app.address))
+        .json(&json!({
+            "event_type": "test_polygon",
+            "identifier": {
+                "date": "20260522",
+                "time": "1200",
+                "polygon": "(50.0,10.0,52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0"
+            },
+            "payload": {"sender": "you"}
+        }))
+        .send()
+        .await
+        .expect("failed to call notification endpoint");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "syntactically broken polygon must be classified as a client validation error, not 500"
+    );
+    let body: Value = response
+        .json()
+        .await
+        .expect("error response must be valid JSON");
+    let message = body.get("message").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        message.contains("field 'polygon'") && message.contains("must be a valid polygon"),
+        "error message must point at the offending field; got: {message}"
+    );
+    assert!(
+        message.contains("missing the closing"),
+        "error message must pinpoint the specific cause; got: {message}"
+    );
+}
+
+#[tokio::test]
+async fn polygon_with_extra_parens_returns_400_not_500() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{}/api/v1/notification", &app.address))
+        .json(&json!({
+            "event_type": "test_polygon",
+            "identifier": {
+                "date": "20260522",
+                "time": "1200",
+                "polygon": "(50.0,10.0),52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0)"
+            },
+            "payload": {"sender": "you"}
+        }))
+        .send()
+        .await
+        .expect("failed to call notification endpoint");
+
+    assert_eq!(
+        response.status(),
+        StatusCode::BAD_REQUEST,
+        "polygon with malformed parens must NOT be a 500; this regressed in 0.6.0 (HTTP 500 with 'Invalid longitude value: 10.0)')"
+    );
+    let body: Value = response
+        .json()
+        .await
+        .expect("error response must be valid JSON");
+    let message = body.get("message").and_then(Value::as_str).unwrap_or("");
+    assert!(
+        message.contains("field 'polygon'") && message.contains("must be a valid polygon"),
+        "error message must name the field; got: {message}"
+    );
+    assert!(
+        !message.contains("Invalid longitude"),
+        "error message must not surface the parser's internal 'Invalid longitude' \
+         leak when the actual root cause is misplaced parens; got: {message}"
+    );
+}
+
+#[tokio::test]
+async fn notification_response_processed_at_is_compact_rfc3339_utc() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let note = format!("PROCESSED_AT_FORMAT_{}", unique_suffix());
+    let polygon = "(50.0,10.0,52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0)";
+    let response =
+        post_test_polygon_notification_with_polygon(&client, &app.address, &note, polygon).await;
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let body: Value = response.json().await.expect("response must be valid JSON");
+    let processed_at = body
+        .get("processed_at")
+        .and_then(Value::as_str)
+        .expect("processed_at must be a string");
+
+    assert!(
+        processed_at.ends_with('Z'),
+        "processed_at must use 'Z' suffix for UTC; got: {processed_at}"
+    );
+    assert!(
+        !processed_at.contains('.'),
+        "processed_at must be second-precision, no sub-second component; got: {processed_at}"
+    );
+    assert!(
+        !processed_at.contains("+00:00"),
+        "processed_at must use the compact 'Z' UTC marker, not '+00:00'; got: {processed_at}"
+    );
+    assert_eq!(
+        processed_at.len(),
+        "2026-05-22T20:36:48Z".len(),
+        "processed_at must be RFC 3339 second-precision UTC (20 chars); got: {processed_at}"
+    );
+}
+
 /// Scan an SSE response body for the first CloudEvent of type
 /// `int.ecmwf.aviso.test_polygon` whose serialized payload contains `marker`.
 /// Returns the parsed CloudEvent JSON, or `None` if no such event is present.
