@@ -649,6 +649,7 @@ fn base_test_settings() -> Settings {
         },
         logging: None,
         notification_schema: None,
+        notification_schema_strict: None,
         watch_endpoint: WatchEndpointSettings::default(),
         auth: AuthSettings::default(),
         metrics: MetricsSettings::default(),

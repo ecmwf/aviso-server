@@ -606,6 +606,7 @@ mod tests {
                     ("extreme".to_string(), extreme_schema),
                     ("dissemination".to_string(), dissemination_schema),
                 ])),
+                notification_schema_strict: None,
                 watch_endpoint: WatchEndpointSettings::default(),
                 auth: AuthSettings::default(),
                 metrics: MetricsSettings::default(),

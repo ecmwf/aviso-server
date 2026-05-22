@@ -200,6 +200,7 @@ fn init_benchmark_schema() {
             },
             logging: None,
             notification_schema: Some(notification_schema),
+            notification_schema_strict: None,
             watch_endpoint: WatchEndpointSettings::default(),
             auth: AuthSettings::default(),
             metrics: MetricsSettings::default(),

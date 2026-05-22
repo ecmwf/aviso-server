@@ -1,6 +1,6 @@
 [package]
 name = "aviso-validators"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 description = "Validation primitives used by aviso-server for identifier and payload checks."
 license = "Apache-2.0"
@@ -10,13 +10,13 @@ homepage = "https://github.com/ecmwf/aviso-server"
 documentation = "https://docs.rs/aviso-validators"
 
 [dependencies]
-anyhow = "1.0.100"
-chrono = { version = "0.4.42", features = ["serde"] }
-regex = "1.11"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+anyhow = "1"
+chrono = { version = "0.4", features = ["serde"] }
+regex = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 tracing = "0.1"
-utoipa = { version = "5.4.0", optional = true }
+utoipa = { version = "5.5", optional = true }
 
 [features]
 openapi = ["utoipa"]

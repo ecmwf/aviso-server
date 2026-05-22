@@ -148,6 +148,15 @@ pub struct ProcessingResult {
     pub identifier_constraints: HashMap<String, IdentifierConstraint>,
     /// Optional spatial metadata from polygon fields.
     pub spatial_metadata: Option<SpatialMetadata>,
+    /// True when this request was processed against a configured schema entry;
+    /// false when it fell through to the generic permissive path.
+    ///
+    /// Informational. The canonical way to bound user-controlled cardinality
+    /// in Prometheus labels and tracing fields is
+    /// [`crate::routes::streaming::bucket_event_type_for_observability`],
+    /// which performs the same schema-membership check at the route entry
+    /// before any observability sink is touched.
+    pub from_schema: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]

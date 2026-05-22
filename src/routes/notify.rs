@@ -18,7 +18,10 @@ use crate::metrics::AppMetrics;
 use crate::notification::OperationType;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
-use crate::routes::streaming::{StreamOperation, enforce_stream_auth};
+use crate::routes::streaming::{
+    StreamOperation, bucket_event_type_for_observability, enforce_known_event_type,
+    enforce_stream_auth,
+};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::{NotificationRequest, NotificationResponse};
 use actix_web::{HttpRequest, HttpResponse, web};
@@ -73,8 +76,34 @@ pub async fn notify(
             return request_parse_error_response(RequestKind::Notification, e, &request_id_str);
         }
     };
+
+    let event_type = &payload.event_type;
+    let request_params = &payload.identifier;
+
+    // Strict-mode guard: reject unknown event_types BEFORE any endpoint-specific
+    // request-shape checks, auth, and any sink that would record the
+    // user-controlled `event_type` value into a Prometheus label or a tracing
+    // span field. The rejection branch below does emit a notification metric,
+    // but with the fixed `"unknown"` label — bounded cardinality, so safe.
+    //
+    // This also makes UNKNOWN_EVENT_TYPE the canonical first-line rejection:
+    // clients see one stable error type for any unknown event_type, independent
+    // of whether they also got the identifier shape wrong. The function is a
+    // no-op when strict mode is off.
+    if let Err(response) = enforce_known_event_type(&http_request, event_type) {
+        record_notification(&metrics, "unknown", "rejected");
+        return response;
+    }
+
+    // Single source of truth for observability labels: bucket to "generic" when
+    // the event_type is not in the schema (only reachable in non-strict mode).
+    // Use this for BOTH the tracing span field and Prometheus metric labels so
+    // the two stay in sync and neither leaks user-controlled cardinality.
+    let event_type_label = bucket_event_type_for_observability(event_type);
+    tracing::Span::current().record("event_type", event_type_label);
+
     if payload.identifier.contains_key("point") {
-        record_notification(&metrics, "unknown", "error");
+        record_notification(&metrics, event_type_label, "error");
         return request_validation_error_response(
             RequestKind::Notification,
             anyhow::anyhow!(
@@ -84,20 +113,12 @@ pub async fn notify(
         );
     }
 
-    let event_type = &payload.event_type;
-    let request_params = &payload.identifier;
-
-    tracing::Span::current().record("event_type", event_type);
-
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
-        record_notification(&metrics, "unknown", "rejected");
+        record_notification(&metrics, event_type_label, "rejected");
         return response;
     }
 
-    // Process notification request with payload validation.
-    // After this point, event_type is confirmed to exist in notification_schema
-    // and is safe to use as a Prometheus label (bounded cardinality).
     let notification_result = match process_notification_request(
         event_type,
         request_params,
@@ -107,7 +128,7 @@ pub async fn notify(
         Ok(result) => result,
         Err(e) => match e.kind {
             NotificationErrorKind::Validation => {
-                record_notification(&metrics, "unknown", "error");
+                record_notification(&metrics, event_type_label, "error");
                 return request_validation_error_response(
                     RequestKind::Notification,
                     e.source,
@@ -115,7 +136,7 @@ pub async fn notify(
                 );
             }
             NotificationErrorKind::Processing => {
-                record_notification(&metrics, "unknown", "error");
+                record_notification(&metrics, event_type_label, "error");
                 return processing_error_response(
                     ProcessingKind::NotificationProcessing,
                     e.source,
@@ -148,11 +169,11 @@ pub async fn notify(
     )
     .await
     {
-        record_notification(&metrics, event_type, "error");
+        record_notification(&metrics, event_type_label, "error");
         return processing_error_response(ProcessingKind::NotificationStorage, e, &request_id_str);
     }
 
-    record_notification(&metrics, event_type, "success");
+    record_notification(&metrics, event_type_label, "success");
 
     let response = NotificationResponse {
         status: "success".to_string(),

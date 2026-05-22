@@ -19,8 +19,33 @@ The server uses the event type to:
 { "event_type": "extreme_event", ... }
 ```
 
-If no schema is configured for an event type, Aviso falls back to generic behavior:
-fields are accepted as-is and the topic is built from sorted keys.
+When a `notification_schema` is configured, Aviso is **strict by default**: any
+`event_type` that is not in the schema is rejected with `400 UNKNOWN_EVENT_TYPE`
+on `/api/v1/notification`, `/api/v1/watch`, and `/api/v1/replay`. The error
+body lists the configured event types so clients can self-correct.
+
+When `notification_schema` is empty or absent (no schema declared at all), Aviso
+falls back to **generic behavior**: any event type is accepted, fields are
+treated as-is, and the topic is built from sorted keys. This mode is intended
+for local development and quick experiments.
+
+Operators may flip the behavior with `notification_schema_strict`:
+
+| `notification_schema` | `notification_schema_strict` | Effective behavior |
+|---|---|---|
+| non-empty               | `None` (unset)  | **strict** — unknown event types return 400 |
+| empty / absent          | `None` (unset)  | permissive generic fallback |
+| any                     | `false`         | permissive generic fallback (legacy mode; a startup warning is emitted when the schema is non-empty) |
+| any                     | `true`          | strict — unknown event types return 400; with no schema this is deny-all |
+
+Independent of the strict-mode knob, the `event_type` value that ends up on
+Prometheus labels and tracing span fields is always bounded: requests whose
+`event_type` is not in the configured schema have their observability label
+collapsed to the literal `"generic"`. In strict mode this collapsing is rarely
+exercised because unknown event_types are already rejected upstream with
+`400 UNKNOWN_EVENT_TYPE`; in permissive (legacy generic-fallback) mode it is
+the main mechanism preventing unbounded label cardinality from
+user-controlled input.
 
 ---
 

@@ -18,6 +18,9 @@ use crate::configuration::EventSchema;
 pub struct NotificationRegistry {
     /// Event type -> schema.
     schemas: HashMap<String, EventSchema>,
+    /// When true, the registry rejects event types that are not in `schemas`.
+    /// When false, callers fall back to generic processing for unknown event types.
+    strict: bool,
 }
 
 impl Default for NotificationRegistry {
@@ -27,17 +30,26 @@ impl Default for NotificationRegistry {
 }
 
 impl NotificationRegistry {
-    /// Create an empty registry.
+    /// Create an empty, non-strict registry.
     pub fn new() -> Self {
         Self {
             schemas: HashMap::new(),
+            strict: false,
         }
     }
 
-    /// Build registry from config schemas.
+    /// Build registry from config schemas without strict enforcement.
+    /// Prefer `from_config_with_strict` in production code paths so callers
+    /// stay explicit about the policy.
     pub fn from_config(schemas: &HashMap<String, EventSchema>) -> Self {
+        Self::from_config_with_strict(schemas, false)
+    }
+
+    /// Build registry from config schemas with an explicit strict-mode flag.
+    pub fn from_config_with_strict(schemas: &HashMap<String, EventSchema>, strict: bool) -> Self {
         Self {
             schemas: schemas.clone(),
+            strict,
         }
     }
 
@@ -51,9 +63,17 @@ impl NotificationRegistry {
         self.schemas.contains_key(event_type)
     }
 
-    /// List configured event types.
+    /// Whether unknown event types must be rejected instead of falling back
+    /// to generic processing.
+    pub fn is_strict(&self) -> bool {
+        self.strict
+    }
+
+    /// List configured event types in a deterministic (sorted) order.
     pub fn get_schema_names(&self) -> Vec<String> {
-        self.schemas.keys().cloned().collect()
+        let mut names: Vec<String> = self.schemas.keys().cloned().collect();
+        names.sort();
+        names
     }
 
     /// Get identifier field names for an event type.

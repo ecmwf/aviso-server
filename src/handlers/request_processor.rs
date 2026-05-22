@@ -29,6 +29,15 @@ pub struct StreamingRequestContext {
     pub identifier_constraints: HashMap<String, IdentifierConstraint>,
     pub start_at: StartAt,
     pub request_id: RequestId,
+    /// True if the event_type came from a configured schema entry; false if
+    /// it fell through to the generic permissive path.
+    ///
+    /// Informational. The canonical way to bound user-controlled cardinality
+    /// in Prometheus labels and tracing fields is
+    /// [`crate::routes::streaming::bucket_event_type_for_observability`],
+    /// which performs the same schema-membership check at the route entry
+    /// before any observability sink is touched.
+    pub from_schema: bool,
 }
 
 /// Configuration for request validation requirements
@@ -86,8 +95,10 @@ impl StreamingRequestProcessor {
         let start_at = Self::validate_replay_parameters(request, &config)?;
 
         // Process notification request using schema
-        let notification_handler =
-            NotificationHandler::from_config(Settings::get_global_notification_schema().as_ref());
+        let notification_handler = NotificationHandler::from_config(
+            Settings::get_global_notification_schema().as_ref(),
+            Settings::get_global_notification_schema_strict(),
+        );
 
         let notification_result = notification_handler.process_request(
             &request.event_type,
@@ -103,6 +114,7 @@ impl StreamingRequestProcessor {
             identifier_constraints: notification_result.identifier_constraints,
             start_at,
             request_id,
+            from_schema: notification_result.from_schema,
         })
     }
 
