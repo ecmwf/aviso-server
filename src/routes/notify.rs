@@ -81,12 +81,15 @@ pub async fn notify(
     let request_params = &payload.identifier;
 
     // Strict-mode guard: reject unknown event_types BEFORE any endpoint-specific
-    // request-shape checks, auth, span recording, and metric labels. This keeps
-    // user-controlled cardinality out of Prometheus / tracing in strict
-    // deployments and makes UNKNOWN_EVENT_TYPE the canonical first-line
-    // rejection: clients see one stable error type for any unknown event_type,
-    // independent of whether they also got the identifier shape wrong. The
-    // function is a no-op when strict mode is off.
+    // request-shape checks, auth, and any sink that would record the
+    // user-controlled `event_type` value into a Prometheus label or a tracing
+    // span field. The rejection branch below does emit a notification metric,
+    // but with the fixed `"unknown"` label — bounded cardinality, so safe.
+    //
+    // This also makes UNKNOWN_EVENT_TYPE the canonical first-line rejection:
+    // clients see one stable error type for any unknown event_type, independent
+    // of whether they also got the identifier shape wrong. The function is a
+    // no-op when strict mode is off.
     if let Err(response) = enforce_known_event_type(&http_request, event_type) {
         record_notification(&metrics, "unknown", "rejected");
         return response;
