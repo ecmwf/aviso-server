@@ -12,6 +12,7 @@ mod auth;
 mod ecpds_auth;
 mod health_check;
 mod helpers;
+mod polygon_roundtrip;
 mod request_id;
 mod schema;
 mod streaming;

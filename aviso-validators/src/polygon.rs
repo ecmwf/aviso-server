@@ -6,7 +6,7 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-use anyhow::{Result, bail};
+use anyhow::{Result, anyhow, bail};
 use tracing::debug;
 
 /// Polygon coordinate validator
@@ -22,45 +22,74 @@ impl PolygonHandler {
             field_name, value
         );
 
-        // Parse the coordinate string
-        let coordinates = Self::parse_polygon_coordinates(value)?;
+        let coordinates = Self::parse_polygon_coordinates(value).map_err(|e| {
+            anyhow!("field '{}' must be a valid polygon: {}", field_name, e)
+        })?;
         debug!(
             "Parsed {} coordinate pairs for field '{}'",
             coordinates.len(),
             field_name
         );
 
-        // Validate the polygon
-        Self::validate_polygon_geometry(&coordinates)?;
+        Self::validate_polygon_geometry(&coordinates).map_err(|e| {
+            anyhow!("field '{}' must be a valid polygon: {}", field_name, e)
+        })?;
         debug!(
             "Polygon geometry validation passed for field '{}'",
             field_name
         );
 
-        // Return the original validated string
-        // (JSON conversion will happen elsewhere when building the payload)
         Ok(value.to_string())
     }
 
-    /// Parse a string of coordinates "(lat,lon,lat,lon,...)" into a vector of (lat, lon) tuples.
+    /// Parse a polygon coordinate string into a vector of `(lat, lon)` tuples.
     ///
-    /// This function ALWAYS returns (lat, lon)
-    /// DO NOT swap here. Only swap to (lon, lat) when passing to geo crate.
+    /// Accepted forms (whitespace tolerated everywhere):
+    ///   * `"(lat1,lon1,...,lat1,lon1)"` — parenthesised, balanced
+    ///   * `"lat1,lon1,...,lat1,lon1"`   — no parentheses
+    ///
+    /// Rejected forms (each with a specific error message):
+    ///   * Opening `(` without a matching closing `)` (or vice versa)
+    ///   * Embedded `(` or `)` anywhere except as the single outer pair
+    ///   * Empty string or `()`
+    ///   * Odd number of comma-separated values
+    ///   * Any value that does not parse as `f64`
+    ///
+    /// This function ALWAYS returns `(lat, lon)` pairs. DO NOT swap here; only
+    /// swap to `(lon, lat)` when passing to the `geo` crate.
     pub fn parse_polygon_coordinates(coord_string: &str) -> Result<Vec<(f64, f64)>> {
-        let trimmed = coord_string
-            .trim()
-            .trim_start_matches('(')
-            .trim_end_matches(')')
-            .trim();
-
-        if trimmed.is_empty() {
-            bail!("Empty polygon coordinate string");
+        let raw = coord_string.trim();
+        if raw.is_empty() {
+            bail!("polygon coordinate string is empty");
         }
 
-        let coord_parts: Vec<&str> = trimmed.split(',').collect();
+        let inner = match (raw.starts_with('('), raw.ends_with(')')) {
+            (true, true) => &raw[1..raw.len() - 1],
+            (false, false) => raw,
+            (true, false) => bail!(
+                "polygon coordinate string has opening '(' but is missing the closing ')'"
+            ),
+            (false, true) => bail!(
+                "polygon coordinate string has closing ')' but is missing the opening '('"
+            ),
+        };
+
+        if inner.contains('(') || inner.contains(')') {
+            bail!(
+                "polygon coordinate string must have at most one outer pair of parentheses; \
+                 nested '(' or ')' are not allowed"
+            );
+        }
+
+        let inner = inner.trim();
+        if inner.is_empty() {
+            bail!("polygon coordinate string is empty between parentheses");
+        }
+
+        let coord_parts: Vec<&str> = inner.split(',').collect();
 
         if !coord_parts.len().is_multiple_of(2) {
-            bail!("Polygon coordinates must be in pairs (lat,lon)");
+            bail!("polygon coordinates must be in lat,lon pairs (got an odd number of values)");
         }
 
         let mut coordinates = Vec::new();
@@ -72,12 +101,12 @@ impl PolygonHandler {
             let lat: f64 = lat_str
                 .trim()
                 .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid latitude value: {}", lat_str))?;
+                .map_err(|_| anyhow!("could not parse latitude '{}' as a number", lat_str.trim()))?;
 
             let lon: f64 = lon_str
                 .trim()
                 .parse()
-                .map_err(|_| anyhow::anyhow!("Invalid longitude value: {}", lon_str))?;
+                .map_err(|_| anyhow!("could not parse longitude '{}' as a number", lon_str.trim()))?;
 
             coordinates.push((lat, lon));
         }
@@ -87,16 +116,18 @@ impl PolygonHandler {
 
     /// Validates polygon geometry requirements
     fn validate_polygon_geometry(coordinates: &[(f64, f64)]) -> Result<()> {
-        if coordinates.len() < 3 {
-            bail!("Polygon must have at least 3 coordinate pairs");
+        if coordinates.len() < 4 {
+            bail!(
+                "polygon must have at least 4 coordinate pairs (3 unique vertices plus a \
+                 closing repeat of the first vertex)"
+            );
         }
 
-        // Check if polygon is closed (first and last coordinates are the same)
         let first = coordinates.first().unwrap();
         let last = coordinates.last().unwrap();
 
         if first != last {
-            bail!("Polygon must be closed (first and last coordinates must be identical)");
+            bail!("polygon must be closed (first and last coordinates must be identical)");
         }
 
         Ok(())
@@ -258,6 +289,58 @@ mod tests {
     }
 
     #[test]
+    fn rejects_polygon_with_opening_paren_but_no_closing_paren() {
+        let coord_string = "(50.0,10.0,52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0";
+        let err = PolygonHandler::parse_polygon_coordinates(coord_string)
+            .expect_err("unbalanced parens must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("opening") && msg.contains("missing the closing"),
+            "error should pinpoint the missing closing paren; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_polygon_with_closing_paren_but_no_opening_paren() {
+        let coord_string = "50.0,10.0,52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0)";
+        let err = PolygonHandler::parse_polygon_coordinates(coord_string)
+            .expect_err("unbalanced parens must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("closing") && msg.contains("missing the opening"),
+            "error should pinpoint the missing opening paren; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_polygon_with_extra_nested_parens() {
+        let coord_string = "(50.0,10.0),52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0)";
+        let err = PolygonHandler::parse_polygon_coordinates(coord_string)
+            .expect_err("nested parens must be rejected, not produce a confusing parse error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("nested") || msg.contains("outer pair"),
+            "error should mention parentheses placement, not e.g. a number-parse failure; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn validate_and_canonicalize_wraps_errors_with_field_name_and_validation_marker() {
+        // The classifier in handlers::notification_processor matches "field '" and
+        // "must be a valid" to route polygon errors to a 400 response. This test
+        // pins both substrings so the public error-classification contract does
+        // not silently drift.
+        let bad = "(50.0,10.0,52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0";
+        let err = PolygonHandler::validate_and_canonicalize(bad, "polygon")
+            .expect_err("unbalanced polygon must error");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("field 'polygon'") && msg.contains("must be a valid"),
+            "error must carry the validation-classifier markers; got: {msg}"
+        );
+    }
+
+    #[test]
     fn test_validate_polygon_geometry_valid_triangle() {
         let coordinates = vec![(0.0, 0.0), (1.0, 0.0), (0.5, 1.0), (0.0, 0.0)];
         let result = PolygonHandler::validate_polygon_geometry(&coordinates);
@@ -285,6 +368,22 @@ mod tests {
         let result = PolygonHandler::validate_polygon_geometry(&coordinates);
 
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn rejects_three_pair_closed_line_segment_as_degenerate_polygon() {
+        // Three pairs is two unique vertices closed back on the first, i.e. a line
+        // segment, not a polygon. The downstream geo conversion in
+        // src/notification/spatial.rs requires 4+ pairs; without rejecting here
+        // the request silently degraded to a 500 NOTIFICATION_PROCESSING_FAILED.
+        let coordinates = vec![(0.0, 0.0), (1.0, 0.0), (0.0, 0.0)];
+        let err = PolygonHandler::validate_polygon_geometry(&coordinates)
+            .expect_err("3-pair closed line segment must be rejected as a polygon");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("at least 4 coordinate pairs"),
+            "error must specify the new minimum; got: {msg}"
+        );
     }
 
     #[test]

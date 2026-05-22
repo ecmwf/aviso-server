@@ -14,6 +14,37 @@ use geo_types::{Polygon, Rect};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
 
+/// Backend-message-metadata key under which the raw polygon string is stored
+/// when a notification declares a polygon identifier field.
+///
+/// Writer: [`crate::handlers::storage::save_to_backend`].
+/// Readers:
+///   * [`crate::cloudevents::CloudEventCreator`] (re-injects the polygon into
+///     `data.identifier` on emit so watch/replay subscribers see what the
+///     producer sent)
+///   * [`crate::notification::wildcard_matcher::try_polygon_from_metadata`]
+///     (the watch/replay spatial intersection filter)
+///
+/// Centralised here so the writer and the readers cannot drift apart silently.
+pub const SPATIAL_GEOMETRY_METADATA_KEY: &str = "spatial_geometry";
+
+/// Backend-message-metadata key under which the normalised bounding box
+/// (`min_lat,min_lon,max_lat,max_lon`) is stored as a coarse spatial index.
+///
+/// Writer: [`crate::handlers::storage::save_to_backend`].
+/// Reader: [`crate::notification::wildcard_matcher::extract_candidate_bbox`]
+/// (point-in-bbox prefilter on the watch/replay path).
+///
+/// Centralised here for the same reason as [`SPATIAL_GEOMETRY_METADATA_KEY`].
+pub const SPATIAL_BBOX_METADATA_KEY: &str = "spatial_bbox";
+
+/// Identifier field name conventionally used for the polygon-typed field in
+/// a notification schema. The storage layer extracts the polygon string by
+/// this exact key, and the CloudEvent builder re-injects it under the same
+/// key on emit. Making this per-schema-configurable would require loosening
+/// both sides together and is tracked as a follow-up.
+pub const POLYGON_IDENTIFIER_FIELD: &str = "polygon";
+
 /// Spatial metadata derived from polygon fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpatialMetadata {

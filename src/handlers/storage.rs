@@ -7,7 +7,10 @@
 // does it submit to any jurisdiction.
 
 use crate::notification::ProcessingResult;
-use crate::notification::decode_subject_for_display;
+use crate::notification::{
+    POLYGON_IDENTIFIER_FIELD, SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY,
+    decode_subject_for_display,
+};
 use crate::notification_backend::NotificationBackend;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::Result;
@@ -47,12 +50,15 @@ pub async fn save_to_backend(
         // Create headers for spatial data (backend doesn't know what spatial_bbox means)
         let mut headers = HashMap::new();
         headers.insert(
-            "spatial_bbox".to_string(),
+            SPATIAL_BBOX_METADATA_KEY.to_string(),
             spatial_metadata.bounding_box.clone(),
         );
         let polygon_geometry = find_polygon_geometry(&result.canonicalized_params);
         if let Some((polygon_geometry, _)) = &polygon_geometry {
-            headers.insert("spatial_geometry".to_string(), polygon_geometry.clone());
+            headers.insert(
+                SPATIAL_GEOMETRY_METADATA_KEY.to_string(),
+                polygon_geometry.clone(),
+            );
         }
 
         // Keep payload unchanged and attach spatial metadata via headers.
@@ -90,7 +96,7 @@ pub async fn save_to_backend(
 fn find_polygon_geometry(
     canonicalized_params: &HashMap<String, String>,
 ) -> Option<(String, Vec<(f64, f64)>)> {
-    let polygon = canonicalized_params.get("polygon")?;
+    let polygon = canonicalized_params.get(POLYGON_IDENTIFIER_FIELD)?;
     let coordinates = PolygonHandler::parse_polygon_coordinates(polygon).ok()?;
     Some((polygon.clone(), coordinates))
 }

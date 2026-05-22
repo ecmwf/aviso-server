@@ -7,9 +7,12 @@
 // does it submit to any jurisdiction.
 
 use crate::configuration::Settings;
+use crate::telemetry::SERVICE_VERSION;
 use actix_web::{HttpResponse, Result};
 use std::fs;
 use std::path::PathBuf;
+
+const SERVER_VERSION_PLACEHOLDER: &str = "{{SERVER_VERSION}}";
 
 #[utoipa::path(
     get,
@@ -29,7 +32,9 @@ pub async fn homepage() -> Result<HttpResponse> {
             .to_string()
     });
 
+    let rendered = html.replace(SERVER_VERSION_PLACEHOLDER, SERVICE_VERSION);
+
     Ok(HttpResponse::Ok()
         .content_type("text/html; charset=utf-8")
-        .body(html))
+        .body(rendered))
 }

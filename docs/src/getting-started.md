@@ -146,7 +146,7 @@ Expected response:
 {
   "status": "success",
   "request_id": "0d4f6758-1ce3-4dda-a0f3-0ccf5fcb50d6",
-  "processed_at": "2026-03-04T10:00:00.123456+00:00"
+  "processed_at": "2026-03-04T10:00:00Z"
 }
 ```
 
