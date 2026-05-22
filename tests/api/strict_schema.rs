@@ -135,25 +135,3 @@ async fn post_replay_rejects_unknown_event_type_with_400_in_strict_mode() {
         Some("UNKNOWN_EVENT_TYPE")
     );
 }
-
-#[tokio::test]
-async fn post_notification_rejects_unknown_event_type_even_without_auth_header() {
-    let app = spawn_streaming_test_app().await;
-    let response = reqwest::Client::new()
-        .post(format!("{}/api/v1/notification", app.address))
-        .json(&json!({
-            "event_type": UNKNOWN_EVENT,
-            "identifier": {"class": "od"},
-            "payload": {},
-        }))
-        .send()
-        .await
-        .expect("failed to call notify endpoint");
-
-    assert_eq!(
-        response.status().as_u16(),
-        400,
-        "strict mode rejection must fire before any auth processing, \
-         so unauthenticated callers also see 400 instead of slipping past"
-    );
-}

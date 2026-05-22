@@ -38,10 +38,14 @@ Operators may flip the behavior with `notification_schema_strict`:
 | any                     | `false`         | permissive generic fallback (legacy mode; a startup warning is emitted when the schema is non-empty) |
 | any                     | `true`          | strict — unknown event types return 400; with no schema this is deny-all |
 
-In strict mode, the user-controlled `event_type` is also bucketed to
-`"generic"` in Prometheus labels and tracing fields if a request somehow
-reaches the generic fallback path, so unbounded label cardinality is prevented
-regardless of how the knob is configured.
+Independent of the strict-mode knob, the `event_type` value that ends up on
+Prometheus labels and tracing span fields is always bounded: requests whose
+`event_type` is not in the configured schema have their observability label
+collapsed to the literal `"generic"`. In strict mode this collapsing is rarely
+exercised because unknown event_types are already rejected upstream with
+`400 UNKNOWN_EVENT_TYPE`; in permissive (legacy generic-fallback) mode it is
+the main mechanism preventing unbounded label cardinality from
+user-controlled input.
 
 ---
 
