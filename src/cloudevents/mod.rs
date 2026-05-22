@@ -25,6 +25,21 @@ use crate::notification_backend::NotificationMessage;
 use cloudevents::AttributesReader;
 use tracing::debug;
 
+/// Backend metadata key carrying the raw polygon string for spatial events.
+/// Mirrors the constant used by `handlers::storage::save_to_backend` when it
+/// attaches spatial headers to a stored notification. Round-tripping the
+/// polygon through this key is what lets watch/replay subscribers see the
+/// same identifier the producer sent, even though the polygon is not part of
+/// the topic-routing key.
+const SPATIAL_GEOMETRY_METADATA_KEY: &str = "spatial_geometry";
+
+/// Identifier field name used for the polygon. The storage layer already
+/// hard-codes the same convention when extracting the polygon for backend
+/// headers, so we use the same name on the reverse path. (Making this
+/// per-schema-configurable is tracked as a follow-up: it also requires
+/// loosening the same hard-coded lookup in `handlers::storage`.)
+const POLYGON_IDENTIFIER_FIELD: &str = "polygon";
+
 /// CloudEvent creator for watch endpoint streaming
 ///
 /// This struct provides methods to convert NotificationMessage instances
@@ -67,7 +82,11 @@ impl CloudEventCreator {
             .context("Failed to reconstruct request parameters from topic")?;
 
         // Build CloudEvent data structure with canonical payload JSON.
-        let data = self.build_cloud_event_data(&request_params, &notification.payload)?;
+        let data = self.build_cloud_event_data(
+            &request_params,
+            &notification.payload,
+            notification.metadata.as_ref(),
+        )?;
 
         // Create CloudEvent with all required fields
         let cloud_event = EventBuilderV10::new()
@@ -96,24 +115,31 @@ impl CloudEventCreator {
 
     /// Build CloudEvent data structure.
     ///
-    /// # Arguments
-    /// * `request_params` - Reconstructed request parameters
-    /// * `payload` - The notification payload string
-    ///
-    /// # Returns
-    /// * `Ok(serde_json::Value)` - CloudEvent data structure
-    /// * `Err(anyhow::Error)` - Payload parsing failed
+    /// The polygon identifier field (when the schema declares one) is not part
+    /// of the NATS subject and therefore is NOT recovered by `topic_to_request`.
+    /// We re-attach it from the stored `spatial_geometry` backend header so the
+    /// CloudEvent's `data.identifier` matches the identifier the producer sent.
     fn build_cloud_event_data(
         &self,
         identifier_params: &HashMap<String, String>,
         payload: &str,
+        metadata: Option<&HashMap<String, String>>,
     ) -> Result<serde_json::Value> {
         let payload_json = self
             .parse_payload_to_json(payload)
             .context("Failed to parse notification payload as JSON")?;
 
+        let mut identifier: HashMap<String, String> = identifier_params.clone();
+        if let Some(meta) = metadata
+            && let Some(polygon) = meta.get(SPATIAL_GEOMETRY_METADATA_KEY)
+        {
+            identifier
+                .entry(POLYGON_IDENTIFIER_FIELD.to_string())
+                .or_insert_with(|| polygon.clone());
+        }
+
         Ok(json!({
-            "identifier": identifier_params,
+            "identifier": identifier,
             "payload": payload_json
         }))
     }
@@ -244,6 +270,89 @@ mod tests {
         let empty_payload = "";
         let result = creator.parse_payload_to_json(empty_payload).unwrap();
         assert!(result.is_null());
+    }
+
+    #[test]
+    fn build_cloud_event_data_reinjects_polygon_from_spatial_geometry_metadata() {
+        let creator = CloudEventCreator::new("http://test.com".to_string());
+
+        let mut identifier_params = HashMap::new();
+        identifier_params.insert("date".to_string(), "20260522".to_string());
+        identifier_params.insert("time".to_string(), "1200".to_string());
+
+        let mut metadata = HashMap::new();
+        let polygon = "(50.0,10.0,52.0,10.0,52.0,12.0,50.0,12.0,50.0,10.0)";
+        metadata.insert(
+            SPATIAL_GEOMETRY_METADATA_KEY.to_string(),
+            polygon.to_string(),
+        );
+
+        let data = creator
+            .build_cloud_event_data(&identifier_params, r#"{"hello":"world"}"#, Some(&metadata))
+            .expect("data builder must succeed");
+
+        let identifier = data
+            .get("identifier")
+            .and_then(|v| v.as_object())
+            .expect("identifier must be a JSON object");
+        assert_eq!(
+            identifier.get("date").and_then(|v| v.as_str()),
+            Some("20260522")
+        );
+        assert_eq!(
+            identifier.get("time").and_then(|v| v.as_str()),
+            Some("1200")
+        );
+        assert_eq!(
+            identifier
+                .get(POLYGON_IDENTIFIER_FIELD)
+                .and_then(|v| v.as_str()),
+            Some(polygon),
+            "polygon must be re-injected from spatial_geometry metadata header"
+        );
+    }
+
+    #[test]
+    fn build_cloud_event_data_leaves_identifier_alone_when_no_metadata() {
+        let creator = CloudEventCreator::new("http://test.com".to_string());
+
+        let mut identifier_params = HashMap::new();
+        identifier_params.insert("class".to_string(), "od".to_string());
+
+        let data = creator
+            .build_cloud_event_data(&identifier_params, r#"{}"#, None)
+            .expect("data builder must succeed");
+
+        let identifier = data
+            .get("identifier")
+            .and_then(|v| v.as_object())
+            .expect("identifier must be a JSON object");
+        assert_eq!(identifier.len(), 1, "no extra fields when no metadata");
+        assert!(
+            !identifier.contains_key(POLYGON_IDENTIFIER_FIELD),
+            "must not invent a polygon field when none was sent"
+        );
+    }
+
+    #[test]
+    fn build_cloud_event_data_ignores_metadata_without_spatial_geometry() {
+        let creator = CloudEventCreator::new("http://test.com".to_string());
+
+        let mut identifier_params = HashMap::new();
+        identifier_params.insert("class".to_string(), "od".to_string());
+
+        let mut metadata = HashMap::new();
+        metadata.insert("some_other_header".to_string(), "value".to_string());
+
+        let data = creator
+            .build_cloud_event_data(&identifier_params, r#"{}"#, Some(&metadata))
+            .expect("data builder must succeed");
+
+        let identifier = data.get("identifier").and_then(|v| v.as_object()).unwrap();
+        assert!(
+            !identifier.contains_key(POLYGON_IDENTIFIER_FIELD),
+            "must not inject polygon when metadata has no spatial_geometry"
+        );
     }
 
     #[test]
