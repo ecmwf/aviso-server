@@ -485,9 +485,14 @@ async fn jetstream_concurrent_watches_each_receive_all_matching_notifications() 
         assert_status_ok_or_panic(resp, "publish during concurrent-watch test").await;
     }
 
+    // Read both watches concurrently under a single shared deadline so neither
+    // watcher starves the other: if A took all 10s sequentially, B would get
+    // ~0s to observe its events, flaking the test on loaded CI.
     let deadline = Instant::now() + Duration::from_secs(10);
-    let a_body = read_watch_until_all_notes_present(&mut watch_a, &notes, deadline).await;
-    let b_body = read_watch_until_all_notes_present(&mut watch_b, &notes, deadline).await;
+    let (a_body, b_body) = tokio::join!(
+        read_watch_until_all_notes_present(&mut watch_a, &notes, deadline),
+        read_watch_until_all_notes_present(&mut watch_b, &notes, deadline),
+    );
 
     for note in &notes {
         assert!(
