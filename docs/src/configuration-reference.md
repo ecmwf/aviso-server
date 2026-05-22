@@ -200,12 +200,12 @@ The error body is:
 `configured_event_types` is sorted for stable diffing in client tooling.
 
 The same flag also bounds Prometheus / tracing label cardinality. Whenever
-**effective** strict mode is off — `notification_schema_strict` explicitly
-`false`, OR unset with an empty/absent `notification_schema` so the startup
-default resolves to non-strict — a request whose `event_type` is not in the
-schema reaches the generic-fallback path and has its recorded `event_type`
-label collapsed to the literal `"generic"` instead of being persisted as
-user-controlled input.
+**effective** strict mode is off (either `notification_schema_strict` is
+explicitly `false`, or it is unset with an empty/absent `notification_schema`
+so the startup default resolves to non-strict), a request whose `event_type`
+is not in the schema reaches the generic-fallback path and has its recorded
+`event_type` label collapsed to the literal `"generic"` instead of being
+persisted as user-controlled input.
 
 ## `notification_schema.<event_type>.payload`
 
