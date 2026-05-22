@@ -19,26 +19,13 @@ use serde_json::json;
 use std::collections::HashMap;
 
 use crate::configuration::Settings;
-use crate::notification::decode_subject_for_display;
 use crate::notification::topic_parser::{derive_event_type_from_topic, topic_to_request};
+use crate::notification::{
+    POLYGON_IDENTIFIER_FIELD, SPATIAL_GEOMETRY_METADATA_KEY, decode_subject_for_display,
+};
 use crate::notification_backend::NotificationMessage;
 use cloudevents::AttributesReader;
 use tracing::debug;
-
-/// Backend metadata key carrying the raw polygon string for spatial events.
-/// Mirrors the constant used by `handlers::storage::save_to_backend` when it
-/// attaches spatial headers to a stored notification. Round-tripping the
-/// polygon through this key is what lets watch/replay subscribers see the
-/// same identifier the producer sent, even though the polygon is not part of
-/// the topic-routing key.
-const SPATIAL_GEOMETRY_METADATA_KEY: &str = "spatial_geometry";
-
-/// Identifier field name used for the polygon. The storage layer already
-/// hard-codes the same convention when extracting the polygon for backend
-/// headers, so we use the same name on the reverse path. (Making this
-/// per-schema-configurable is tracked as a follow-up: it also requires
-/// loosening the same hard-coded lookup in `handlers::storage`.)
-const POLYGON_IDENTIFIER_FIELD: &str = "polygon";
 
 /// CloudEvent creator for watch endpoint streaming
 ///

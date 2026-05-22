@@ -18,6 +18,7 @@ use crate::configuration::{EventSchema, Settings};
 use crate::notification::IdentifierConstraint;
 use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
 use crate::notification::topic_parser::topic_to_request;
+use crate::notification::{SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY};
 
 /// Build backend coarse pattern plus decoded full pattern.
 pub fn analyze_watch_pattern(watch_topic: &str) -> Result<(String, Vec<String>)> {
@@ -395,7 +396,7 @@ fn bbox_contains_point(bbox: &geo::Rect<f64>, lon: f64, lat: f64) -> bool {
 
 fn extract_candidate_bbox(metadata: Option<&HashMap<String, String>>) -> Option<geo::Rect<f64>> {
     metadata
-        .and_then(|m| m.get("spatial_bbox"))
+        .and_then(|m| m.get(SPATIAL_BBOX_METADATA_KEY))
         .and_then(|bbox| parse_bbox(bbox))
 }
 
@@ -443,7 +444,7 @@ fn try_polygon_from_metadata(
     metadata: Option<&HashMap<String, String>>,
 ) -> Option<geo::Polygon<f64>> {
     metadata
-        .and_then(|m| m.get("spatial_geometry"))
+        .and_then(|m| m.get(SPATIAL_GEOMETRY_METADATA_KEY))
         .and_then(|geom_str| parse_polygon_geometry_str(geom_str))
 }
 
