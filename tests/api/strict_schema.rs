@@ -11,6 +11,25 @@ use serde_json::{Value, json};
 
 const UNKNOWN_EVENT: &str = "asadasdasd-this-is-not-in-the-schema";
 
+/// Event types `set_streaming_test_notification_schema` configures and that
+/// MUST appear in the strict-mode rejection error body. Asserting their
+/// presence catches the regression where the schema silently drops an expected
+/// event type (the most important case Copilot flagged).
+///
+/// We deliberately do NOT assert exact equality here: Rust integration tests
+/// share a single `OnceLock`-stored global `notification_schema`, so the actual
+/// list at runtime is the UNION of every test scaffolding that races to
+/// initialize the global. That cross-pollution would make an exact-set
+/// assertion flaky across test execution orderings.
+const REQUIRED_CONFIGURED_EVENT_TYPES: &[&str] = &[
+    "dissemination",
+    "extreme",
+    "mars",
+    "test_polygon",
+    "test_polygon_js",
+    "test_polygon_optional",
+];
+
 #[tokio::test]
 async fn post_notification_rejects_unknown_event_type_with_400_in_strict_mode() {
     let app = spawn_streaming_test_app().await;
@@ -42,16 +61,21 @@ async fn post_notification_rejects_unknown_event_type_with_400_in_strict_mode() 
         .get("configured_event_types")
         .and_then(Value::as_array)
         .expect("error body must include configured_event_types list");
-    assert!(
-        !configured.is_empty(),
-        "configured_event_types must list the schema entries the test app has"
-    );
-    let sorted: Vec<&str> = configured.iter().filter_map(Value::as_str).collect();
-    let mut sorted_copy = sorted.clone();
-    sorted_copy.sort();
+    let names: Vec<&str> = configured.iter().filter_map(Value::as_str).collect();
+
+    for required in REQUIRED_CONFIGURED_EVENT_TYPES {
+        assert!(
+            names.contains(required),
+            "configured_event_types {names:?} must include {required:?} \
+             (regression: an expected event type went missing from the schema)"
+        );
+    }
+
+    let mut sorted = names.clone();
+    sorted.sort();
     assert_eq!(
-        sorted, sorted_copy,
-        "configured_event_types must be sorted for deterministic output"
+        names, sorted,
+        "configured_event_types must be sorted for deterministic client tooling"
     );
 }
 

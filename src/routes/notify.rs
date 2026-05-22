@@ -108,7 +108,7 @@ pub async fn notify(
 
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
-        record_notification(&metrics, "unknown", "rejected");
+        record_notification(&metrics, event_type_label, "rejected");
         return response;
     }
 
@@ -121,7 +121,7 @@ pub async fn notify(
         Ok(result) => result,
         Err(e) => match e.kind {
             NotificationErrorKind::Validation => {
-                record_notification(&metrics, "unknown", "error");
+                record_notification(&metrics, event_type_label, "error");
                 return request_validation_error_response(
                     RequestKind::Notification,
                     e.source,
@@ -129,7 +129,7 @@ pub async fn notify(
                 );
             }
             NotificationErrorKind::Processing => {
-                record_notification(&metrics, "unknown", "error");
+                record_notification(&metrics, event_type_label, "error");
                 return processing_error_response(
                     ProcessingKind::NotificationProcessing,
                     e.source,

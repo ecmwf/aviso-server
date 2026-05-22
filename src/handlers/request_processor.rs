@@ -30,8 +30,13 @@ pub struct StreamingRequestContext {
     pub start_at: StartAt,
     pub request_id: RequestId,
     /// True if the event_type came from a configured schema entry; false if
-    /// it fell through to the generic permissive path. Callers MUST gate
-    /// user-controlled Prometheus / tracing labels on this flag.
+    /// it fell through to the generic permissive path.
+    ///
+    /// Informational. The canonical way to bound user-controlled cardinality
+    /// in Prometheus labels and tracing fields is
+    /// [`crate::routes::streaming::bucket_event_type_for_observability`],
+    /// which performs the same schema-membership check at the route entry
+    /// before any observability sink is touched.
     pub from_schema: bool,
 }
 
