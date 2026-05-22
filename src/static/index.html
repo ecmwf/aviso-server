@@ -64,6 +64,19 @@
             font-weight: 700;
         }
 
+        .version-badge {
+            display: inline-block;
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: #2c5282;
+            background: rgba(107, 166, 205, 0.18);
+            padding: 0.25rem 0.7rem;
+            border-radius: 999px;
+            vertical-align: middle;
+            margin-left: 0.6rem;
+            letter-spacing: 0.02em;
+        }
+
         .subtitle {
             font-size: 1.2rem;
             color: #4a90b8;
@@ -185,7 +198,7 @@
 <div class="container">
     <div class="header">
         <img src="/static/logo.png" alt="Aviso" class="logo">
-        <h1>Aviso</h1>
+        <h1>Aviso <span class="version-badge">v{{SERVER_VERSION}}</span></h1>
     </div>
 
     <div class="subtitle">Real-time Data Notification Service</div>
@@ -200,13 +213,13 @@
     </div>
 
     <div class="buttons">
-        <a href="#" class="btn btn-secondary">
+        <a href="https://github.com/ecmwf/aviso-server" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
             📚 GitHub Repository
         </a>
         <a href="swagger-ui/" class="btn btn-secondary">
             📋 API Schema
         </a>
-        <a href="#" class="btn btn-secondary">
+        <a href="https://sites.ecmwf.int/docs/aviso-server/main/" target="_blank" rel="noopener noreferrer" class="btn btn-secondary">
             📖 Documentation
         </a>
     </div>
