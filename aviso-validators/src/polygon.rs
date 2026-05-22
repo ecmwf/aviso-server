@@ -108,6 +108,16 @@ impl PolygonHandler {
                 .parse()
                 .map_err(|_| anyhow!("could not parse longitude '{}' as a number", lon_str.trim()))?;
 
+            // Range check after parse. `f64::contains` rejects NaN automatically
+            // (every NaN comparison is false) and rejects infinities (out of
+            // range), so this single guard covers all non-finite inputs too.
+            if !(-90.0..=90.0).contains(&lat) {
+                bail!("latitude {} is outside the valid range [-90, 90]", lat);
+            }
+            if !(-180.0..=180.0).contains(&lon) {
+                bail!("longitude {} is outside the valid range [-180, 180]", lon);
+            }
+
             coordinates.push((lat, lon));
         }
 
@@ -321,6 +331,73 @@ mod tests {
         assert!(
             msg.contains("nested") || msg.contains("outer pair"),
             "error should mention parentheses placement, not e.g. a number-parse failure; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_latitude_above_90() {
+        let coord_string = "(91.0,10.0,50.0,10.0,50.0,11.0,91.0,10.0)";
+        let err = PolygonHandler::parse_polygon_coordinates(coord_string)
+            .expect_err("latitude > 90 must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("latitude") && msg.contains("-90") && msg.contains("90"),
+            "error should pinpoint the latitude range; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_latitude_below_minus_90() {
+        let coord_string = "(-90.5,10.0,50.0,10.0,50.0,11.0,-90.5,10.0)";
+        let err = PolygonHandler::parse_polygon_coordinates(coord_string)
+            .expect_err("latitude < -90 must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("latitude") && msg.contains("-90.5"));
+    }
+
+    #[test]
+    fn rejects_longitude_above_180() {
+        let coord_string = "(50.0,181.0,50.0,10.0,50.0,11.0,50.0,181.0)";
+        let err = PolygonHandler::parse_polygon_coordinates(coord_string)
+            .expect_err("longitude > 180 must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("longitude") && msg.contains("-180") && msg.contains("180"),
+            "error should pinpoint the longitude range; got: {msg}"
+        );
+    }
+
+    #[test]
+    fn rejects_longitude_below_minus_180() {
+        let coord_string = "(50.0,-180.5,50.0,10.0,50.0,11.0,50.0,-180.5)";
+        let err = PolygonHandler::parse_polygon_coordinates(coord_string)
+            .expect_err("longitude < -180 must be rejected");
+        let msg = err.to_string();
+        assert!(msg.contains("longitude") && msg.contains("-180.5"));
+    }
+
+    #[test]
+    fn rejects_non_finite_coordinates_via_range_check() {
+        // NaN and ±inf parse as valid f64 but fall outside any finite range, so
+        // the existing range check rejects them without a separate is_finite() guard.
+        for bad_value in &["NaN", "inf", "-inf"] {
+            let coord_string =
+                format!("({bad_value},10.0,50.0,10.0,50.0,11.0,{bad_value},10.0)");
+            assert!(
+                PolygonHandler::parse_polygon_coordinates(&coord_string).is_err(),
+                "non-finite coordinate `{bad_value}` must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn accepts_exact_boundary_coordinates() {
+        let polygon = "(90.0,-180.0,89.0,-180.0,89.0,-179.0,90.0,-180.0)";
+        let result = PolygonHandler::parse_polygon_coordinates(polygon);
+        assert!(
+            result.is_ok(),
+            "lat=90 and lon=-180 are valid (inclusive) boundary values: {:?}",
+            result.err()
         );
     }
 
