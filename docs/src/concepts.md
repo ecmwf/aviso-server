@@ -33,10 +33,10 @@ Operators may flip the behavior with `notification_schema_strict`:
 
 | `notification_schema` | `notification_schema_strict` | Effective behavior |
 |---|---|---|
-| non-empty               | `None` (unset)  | **strict** — unknown event types return 400 |
+| non-empty               | `None` (unset)  | **strict**: unknown event types return 400 |
 | empty / absent          | `None` (unset)  | permissive generic fallback |
 | any                     | `false`         | permissive generic fallback (legacy mode; a startup warning is emitted when the schema is non-empty) |
-| any                     | `true`          | strict — unknown event types return 400; with no schema this is deny-all |
+| any                     | `true`          | strict: unknown event types return 400; with no schema this is deny-all |
 
 Independent of the strict-mode knob, the `event_type` value that ends up on
 Prometheus labels and tracing span fields is always bounded: requests whose
