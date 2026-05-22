@@ -34,21 +34,23 @@ pub enum StreamOperation {
 ///   strict=true,  schema_present=true,  known=false → Err 400
 ///   strict=true,  schema_present=false → Err 400 (explicit deny-all "drain" mode)
 pub fn enforce_known_event_type(req: &HttpRequest, event_type: &str) -> Result<(), HttpResponse> {
-    // Fast path: when strict mode is disabled this function is a guaranteed
-    // no-op, so skip the request-id extraction (which allocates a String) to
-    // keep the legacy permissive path allocation-free on the hot per-request
-    // call site.
-    let strict = Settings::get_global_notification_schema_strict();
-    if !strict {
+    // Fast paths short-circuit the per-request String allocation for
+    // `request_id`, which is only needed when we are actually going to build
+    // a 400 response body. Two zero-allocation early returns:
+    //   1. Non-strict deployments: function is a guaranteed no-op.
+    //   2. Strict + the event_type IS in the schema (the happy path that
+    //      runs on every legitimate notify/watch/replay call): no error
+    //      response will be built, so no request_id needed.
+    // Only the actual rejection path (strict + unknown event_type) allocates.
+    if !Settings::get_global_notification_schema_strict() {
+        return Ok(());
+    }
+    let schema_map = Settings::get_global_notification_schema().as_ref();
+    if schema_map.is_some_and(|m| m.contains_key(event_type)) {
         return Ok(());
     }
     let request_id = crate::middleware::request_id::request_id_from_request(req);
-    enforce_known_event_type_inner(
-        strict,
-        Settings::get_global_notification_schema().as_ref(),
-        &request_id,
-        event_type,
-    )
+    enforce_known_event_type_inner(true, schema_map, &request_id, event_type)
 }
 
 /// Reduces a user-supplied `event_type` to a bounded label suitable for use in
