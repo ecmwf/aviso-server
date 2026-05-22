@@ -11,21 +11,42 @@ use serde_json::{Value, json};
 
 const UNKNOWN_EVENT: &str = "asadasdasd-this-is-not-in-the-schema";
 
-/// Event types `set_streaming_test_notification_schema` configures and that
-/// MUST appear in the strict-mode rejection error body. Asserting their
-/// presence catches the regression where the schema silently drops an expected
-/// event type (the most important case Copilot flagged).
+/// The exact, sorted set of event types the integration-test global schema
+/// produces. The harness initializes it once via the
+/// `TEST_GLOBAL_CONFIG.get_or_init` gate in `tests/api/helpers.rs` by calling
+/// `ensure_test_notification_schema(.., include_auth_schemas = true)`, then
+/// (under `--features ecpds`) appending the ECPDS entries. The same superset
+/// is produced regardless of which test runs first, so we can pin it exactly.
 ///
-/// We deliberately do NOT assert exact equality here: Rust integration tests
-/// share a single `OnceLock`-stored global `notification_schema`, so the actual
-/// list at runtime is the UNION of every test scaffolding that races to
-/// initialize the global. That cross-pollution would make an exact-set
-/// assertion flaky across test execution orderings.
-const REQUIRED_CONFIGURED_EVENT_TYPES: &[&str] = &[
+/// Pinning exact equality (rather than a superset check) catches BOTH
+/// regression classes Copilot flagged: an expected entry silently goes
+/// missing, OR an unrelated entry leaks in.
+#[cfg(not(feature = "ecpds"))]
+const EXPECTED_CONFIGURED_EVENT_TYPES: &[&str] = &[
     "dissemination",
     "extreme",
     "mars",
     "test_polygon",
+    "test_polygon_auth_admin",
+    "test_polygon_auth_any",
+    "test_polygon_auth_optional",
+    "test_polygon_auth_write",
+    "test_polygon_js",
+    "test_polygon_optional",
+];
+
+#[cfg(feature = "ecpds")]
+const EXPECTED_CONFIGURED_EVENT_TYPES: &[&str] = &[
+    "dissemination",
+    "dissemination_ecpds",
+    "dissemination_ecpds_writable",
+    "extreme",
+    "mars",
+    "test_polygon",
+    "test_polygon_auth_admin",
+    "test_polygon_auth_any",
+    "test_polygon_auth_optional",
+    "test_polygon_auth_write",
     "test_polygon_js",
     "test_polygon_optional",
 ];
@@ -62,20 +83,10 @@ async fn post_notification_rejects_unknown_event_type_with_400_in_strict_mode() 
         .and_then(Value::as_array)
         .expect("error body must include configured_event_types list");
     let names: Vec<&str> = configured.iter().filter_map(Value::as_str).collect();
-
-    for required in REQUIRED_CONFIGURED_EVENT_TYPES {
-        assert!(
-            names.contains(required),
-            "configured_event_types {names:?} must include {required:?} \
-             (regression: an expected event type went missing from the schema)"
-        );
-    }
-
-    let mut sorted = names.clone();
-    sorted.sort();
     assert_eq!(
-        names, sorted,
-        "configured_event_types must be sorted for deterministic client tooling"
+        names, EXPECTED_CONFIGURED_EVENT_TYPES,
+        "configured_event_types must match exactly (and be sorted): both \
+         missing-entry and leaked-entry regressions are caught by this check"
     );
 }
 

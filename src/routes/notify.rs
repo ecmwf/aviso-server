@@ -76,24 +76,17 @@ pub async fn notify(
             return request_parse_error_response(RequestKind::Notification, e, &request_id_str);
         }
     };
-    if payload.identifier.contains_key("point") {
-        record_notification(&metrics, "unknown", "error");
-        return request_validation_error_response(
-            RequestKind::Notification,
-            anyhow::anyhow!(
-                "identifier.point is only supported for watch/replay endpoints, not /notification"
-            ),
-            &request_id_str,
-        );
-    }
 
     let event_type = &payload.event_type;
     let request_params = &payload.identifier;
 
-    // Strict-mode guard: reject unknown event_types BEFORE auth, span recording,
-    // and metric labels. This keeps user-controlled cardinality out of Prometheus
-    // / tracing in strict deployments. The function is a no-op when strict mode
-    // is off, preserving legacy permissive behavior.
+    // Strict-mode guard: reject unknown event_types BEFORE any endpoint-specific
+    // request-shape checks, auth, span recording, and metric labels. This keeps
+    // user-controlled cardinality out of Prometheus / tracing in strict
+    // deployments and makes UNKNOWN_EVENT_TYPE the canonical first-line
+    // rejection: clients see one stable error type for any unknown event_type,
+    // independent of whether they also got the identifier shape wrong. The
+    // function is a no-op when strict mode is off.
     if let Err(response) = enforce_known_event_type(&http_request, event_type) {
         record_notification(&metrics, "unknown", "rejected");
         return response;
@@ -105,6 +98,17 @@ pub async fn notify(
     // the two stay in sync and neither leaks user-controlled cardinality.
     let event_type_label = bucket_event_type_for_observability(event_type);
     tracing::Span::current().record("event_type", event_type_label);
+
+    if payload.identifier.contains_key("point") {
+        record_notification(&metrics, event_type_label, "error");
+        return request_validation_error_response(
+            RequestKind::Notification,
+            anyhow::anyhow!(
+                "identifier.point is only supported for watch/replay endpoints, not /notification"
+            ),
+            &request_id_str,
+        );
+    }
 
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
