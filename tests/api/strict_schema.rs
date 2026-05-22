@@ -18,9 +18,9 @@ const UNKNOWN_EVENT: &str = "asadasdasd-this-is-not-in-the-schema";
 /// (under `--features ecpds`) appending the ECPDS entries. The same superset
 /// is produced regardless of which test runs first, so we can pin it exactly.
 ///
-/// Pinning exact equality (rather than a superset check) catches BOTH
-/// regression classes Copilot flagged: an expected entry silently goes
-/// missing, OR an unrelated entry leaks in.
+/// Pinning exact equality (rather than a superset check) catches both
+/// regression classes: an expected event type silently goes missing from
+/// the configured schema, OR an unrelated entry leaks into it.
 #[cfg(not(feature = "ecpds"))]
 const EXPECTED_CONFIGURED_EVENT_TYPES: &[&str] = &[
     "dissemination",

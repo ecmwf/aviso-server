@@ -34,9 +34,17 @@ pub enum StreamOperation {
 ///   strict=true,  schema_present=true,  known=false → Err 400
 ///   strict=true,  schema_present=false → Err 400 (explicit deny-all "drain" mode)
 pub fn enforce_known_event_type(req: &HttpRequest, event_type: &str) -> Result<(), HttpResponse> {
+    // Fast path: when strict mode is disabled this function is a guaranteed
+    // no-op, so skip the request-id extraction (which allocates a String) to
+    // keep the legacy permissive path allocation-free on the hot per-request
+    // call site.
+    let strict = Settings::get_global_notification_schema_strict();
+    if !strict {
+        return Ok(());
+    }
     let request_id = crate::middleware::request_id::request_id_from_request(req);
     enforce_known_event_type_inner(
-        Settings::get_global_notification_schema_strict(),
+        strict,
         Settings::get_global_notification_schema().as_ref(),
         &request_id,
         event_type,
@@ -50,11 +58,13 @@ pub fn enforce_known_event_type(req: &HttpRequest, event_type: &str) -> Result<(
 ///   it verbatim (cardinality is bounded by the number of declared event
 ///   types — typically single digits).
 /// - Otherwise returns the literal `"generic"`. This branch is only reachable
-///   in non-strict mode (`notification_schema_strict: false`), because
-///   `enforce_known_event_type` rejects unknown event_types upstream in strict
-///   mode. Collapsing the label here prevents the unbounded cardinality bomb
-///   that the legacy generic-fallback path would otherwise expose to
-///   observability sinks.
+///   when **effective** strict mode is off — either `notification_schema_strict`
+///   is explicitly `false`, or it is unset and `notification_schema` is
+///   absent/empty so the startup default resolves to non-strict. In strict
+///   mode `enforce_known_event_type` rejects unknown event_types upstream and
+///   this branch is unreachable. Collapsing the label here prevents the
+///   unbounded cardinality bomb that the legacy generic-fallback path would
+///   otherwise expose to observability sinks.
 ///
 /// Callers MUST use the returned value for any place that writes the
 /// `event_type` into a Prometheus label or a tracing span field on the live
