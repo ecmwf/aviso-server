@@ -210,11 +210,14 @@ async fn create_pull_consumer(
 
     let deliver_policy = determine_deliver_policy(start_at)?;
 
-    // Create consumer configuration for batch retrieval
+    // Create consumer configuration for batch retrieval.
+    // UUID suffix prevents collision on concurrent same-event_type replays
+    // (same root cause as the watch consumer naming, see subscriber_utils.rs).
     let consumer_config = async_nats::jetstream::consumer::pull::Config {
         name: Some(format!(
-            "replay_consumer_{}",
-            chrono::Utc::now().timestamp_millis()
+            "replay_consumer_{}_{}",
+            chrono::Utc::now().timestamp_millis(),
+            uuid::Uuid::new_v4().simple()
         )),
         durable_name: None, // Ephemeral consumer
         description: Some(format!("Replay consumer for pattern: {}", backend_pattern)),

@@ -75,10 +75,16 @@ pub fn build_jetstream_consumer_config(
     config: &ConsumerConfig,
     backend_pattern: &str,
 ) -> async_nats::jetstream::consumer::pull::Config {
+    // Consumer names must be unique per subscription: same-name pull consumers
+    // share one server-side cursor and split messages between callers instead
+    // of fanning out, so two concurrent same-event watches would silently lose
+    // messages. Timestamp is human-readable only; the UUID is the uniqueness
+    // guarantee.
     let consumer_name = Some(format!(
-        "{}_{}",
+        "{}_{}_{}",
         config.name_prefix,
-        Utc::now().timestamp_millis()
+        Utc::now().timestamp_millis(),
+        uuid::Uuid::new_v4().simple()
     ));
 
     let durable_name = if config.durable {
@@ -232,5 +238,33 @@ pub fn apply_message_filter(
             "Message filtered out by application-level wildcard matching"
         );
         None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+
+    #[test]
+    fn build_jetstream_consumer_config_produces_unique_names_under_tight_loop() {
+        // Catches the same-millisecond consumer-name collision without needing
+        // a NATS server: the UUID4 suffix must guarantee 1000 back-to-back
+        // calls all produce distinct names even when timestamp_millis() repeats.
+        let config = ConsumerConfig::for_subscription("MARS", "MARS.>");
+        let names: HashSet<String> = (0..1000)
+            .map(|_| {
+                build_jetstream_consumer_config(&config, "MARS.>")
+                    .name
+                    .expect("consumer name must always be set")
+            })
+            .collect();
+        assert_eq!(
+            names.len(),
+            1000,
+            "every call to build_jetstream_consumer_config must produce a \
+             unique consumer name; collision count: {}",
+            1000 - names.len()
+        );
     }
 }

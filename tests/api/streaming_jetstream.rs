@@ -402,3 +402,134 @@ async fn jetstream_schema_storage_policy_overrides_backend_defaults() {
         "schema storage_policy.compression=true should override backend default"
     );
 }
+
+/// Regression test for the JetStream same-event_type concurrent-watch bug.
+///
+/// Before the fix, two `/api/v1/watch` subscriptions opened in the same
+/// millisecond on the same event_type generated the same JetStream consumer
+/// name (`watch_consumer_<stream>_<timestamp_millis>`). JetStream returned the
+/// existing consumer to the second caller, so both subscribers' `.messages()`
+/// streams competed off a single underlying pull consumer. With `AckPolicy::None`
+/// and `max_deliver: 1`, every published message was delivered to ONE of the
+/// two subscribers (round-robin), and from the client's view some messages
+/// silently vanished.
+///
+/// The fix appends a UUID to the consumer name so concurrent same-event_type
+/// subscribers get independent consumers. Each watcher must then receive a
+/// full copy of every matching message. This test enforces that contract.
+#[tokio::test]
+async fn jetstream_concurrent_watches_each_receive_all_matching_notifications() {
+    if !should_run_nats_tests() {
+        return;
+    }
+    let _guard = JETSTREAM_TEST_LOCK.lock().await;
+    reset_test_stream(JETSTREAM_TEST_STREAM).await;
+
+    let app = spawn_jetstream_test_app().await;
+    let client = reqwest::Client::new();
+    assert_jetstream_test_schema_is_available(&client, &app.address).await;
+    let suffix = unique_suffix();
+
+    let watch_body = json!({
+        "event_type": JETSTREAM_TEST_EVENT_TYPE,
+        "identifier": {
+            "time": JETSTREAM_WATCH_TEST_TIME,
+            "polygon": test_polygon(),
+        }
+    });
+
+    // Open both watches in parallel: the previous bug required the two
+    // create_consumer calls to land in the same millisecond, so sequential
+    // POSTs would not reliably reproduce the collision.
+    let (watch_a_result, watch_b_result) = tokio::join!(
+        client
+            .post(format!("{}/api/v1/watch", &app.address))
+            .header("Content-Type", "application/json")
+            .json(&watch_body)
+            .send(),
+        client
+            .post(format!("{}/api/v1/watch", &app.address))
+            .header("Content-Type", "application/json")
+            .json(&watch_body)
+            .send(),
+    );
+    let mut watch_a = watch_a_result.expect("failed to open watch A");
+    let mut watch_b = watch_b_result.expect("failed to open watch B");
+    assert_eq!(
+        watch_a.status(),
+        StatusCode::OK,
+        "watch A must accept the subscription"
+    );
+    assert_eq!(
+        watch_b.status(),
+        StatusCode::OK,
+        "watch B must accept the subscription"
+    );
+
+    sleep(Duration::from_millis(400)).await;
+
+    let notes: Vec<String> = (0..3)
+        .map(|i| format!("CONCURRENT_WATCH_{suffix}_{i}"))
+        .collect();
+    for note in &notes {
+        let resp = post_polygon_notification_for_event_with_identifier(
+            &client,
+            &app.address,
+            JETSTREAM_TEST_EVENT_TYPE,
+            note,
+            test_polygon(),
+            JETSTREAM_TEST_DATE,
+            JETSTREAM_WATCH_TEST_TIME,
+        )
+        .await;
+        assert_status_ok_or_panic(resp, "publish during concurrent-watch test").await;
+    }
+
+    // Read both watches concurrently under a single shared deadline so neither
+    // watcher starves the other: if A took all 10s sequentially, B would get
+    // ~0s to observe its events, flaking the test on loaded CI.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let (a_body, b_body) = tokio::join!(
+        read_watch_until_all_notes_present(&mut watch_a, &notes, deadline),
+        read_watch_until_all_notes_present(&mut watch_b, &notes, deadline),
+    );
+
+    for note in &notes {
+        assert!(
+            a_body.contains(note),
+            "watcher A must independently see every published note; \
+             missing {note}; received: {a_body}"
+        );
+        assert!(
+            b_body.contains(note),
+            "watcher B must independently see every published note; \
+             missing {note}; received: {b_body}"
+        );
+    }
+}
+
+async fn read_watch_until_all_notes_present(
+    response: &mut reqwest::Response,
+    notes: &[String],
+    deadline: Instant,
+) -> String {
+    let mut observed = String::new();
+    while Instant::now() < deadline {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let next_chunk_result = tokio::time::timeout(remaining, response.chunk()).await;
+        let chunk = match next_chunk_result {
+            Err(_) => break,
+            Ok(chunk_result) => chunk_result.expect("failed to read watch response chunk"),
+        };
+        match chunk {
+            Some(c) => {
+                observed.push_str(&String::from_utf8_lossy(&c));
+                if notes.iter().all(|n| observed.contains(n)) {
+                    return observed;
+                }
+            }
+            None => break,
+        }
+    }
+    observed
+}
