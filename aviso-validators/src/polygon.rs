@@ -108,9 +108,10 @@ impl PolygonHandler {
                 .parse()
                 .map_err(|_| anyhow!("could not parse longitude '{}' as a number", lon_str.trim()))?;
 
-            // Range check after parse. `f64::contains` rejects NaN automatically
-            // (every NaN comparison is false) and rejects infinities (out of
-            // range), so this single guard covers all non-finite inputs too.
+            // Range check after parse. `RangeInclusive::contains` uses f64's
+            // PartialOrd comparisons, so this single guard rejects NaN (every
+            // ordering comparison against NaN is false) and rejects ±inf (out
+            // of any finite range) without a separate is_finite() check.
             if !(-90.0..=90.0).contains(&lat) {
                 bail!("latitude {} is outside the valid range [-90, 90]", lat);
             }
