@@ -136,11 +136,13 @@ jobs:
               RAW_ID="manual-$RUN_ID"
             fi
           fi
-          # Multiline-safe output format to avoid output injection.
+          # Random delimiter: a value containing a literal `EOF` line
+          # cannot terminate the block early and inject extra outputs.
+          DELIM="raw_id-$(uuidgen)"
           {
-            echo "raw_id<<EOF"
+            echo "raw_id<<$DELIM"
             printf '%s\n' "$RAW_ID"
-            echo "EOF"
+            echo "$DELIM"
           } >> "$GITHUB_OUTPUT"
 
       - name: Sanitize publish id
