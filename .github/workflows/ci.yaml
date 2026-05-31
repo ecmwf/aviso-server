@@ -109,11 +109,33 @@ jobs:
         if: always()
         run: rm -rf "$TMPDIR" target aviso-validators/target aviso-ecpds/target
 
+  # ── Guard: the consumed image tag must track .github/ci/VERSION ──
+  # ci-image.yml builds the image from VERSION, but this workflow and
+  # docs-sites.yaml pin the tag literally. Fail loud if they drift so a
+  # VERSION bump cannot silently keep running on the old image.
+  image-pin:
+    name: image pin
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: CI image tag matches .github/ci/VERSION
+        run: |
+          version="$(tr -d '[:space:]' < .github/ci/VERSION)"
+          expected="image: eccr.ecmwf.int/aviso/server-ci:${version}"
+          rc=0
+          for wf in .github/workflows/ci.yaml .github/workflows/docs-sites.yaml; do
+            if ! grep -qF "$expected" "$wf"; then
+              echo "::error file=$wf::expected '$expected' (from .github/ci/VERSION) not found"
+              rc=1
+            fi
+          done
+          exit "$rc"
+
   # ── Aggregate gate: the single required status check ────────────
   ci-pass:
     name: ci-pass
     if: always()
-    needs: [rust]
+    needs: [rust, image-pin]
     runs-on: ubuntu-latest
     steps:
       - name: Verify every required job succeeded
