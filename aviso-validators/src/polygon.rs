@@ -22,18 +22,16 @@ impl PolygonHandler {
             field_name, value
         );
 
-        let coordinates = Self::parse_polygon_coordinates(value).map_err(|e| {
-            anyhow!("field '{}' must be a valid polygon: {}", field_name, e)
-        })?;
+        let coordinates = Self::parse_polygon_coordinates(value)
+            .map_err(|e| anyhow!("field '{}' must be a valid polygon: {}", field_name, e))?;
         debug!(
             "Parsed {} coordinate pairs for field '{}'",
             coordinates.len(),
             field_name
         );
 
-        Self::validate_polygon_geometry(&coordinates).map_err(|e| {
-            anyhow!("field '{}' must be a valid polygon: {}", field_name, e)
-        })?;
+        Self::validate_polygon_geometry(&coordinates)
+            .map_err(|e| anyhow!("field '{}' must be a valid polygon: {}", field_name, e))?;
         debug!(
             "Polygon geometry validation passed for field '{}'",
             field_name
@@ -66,12 +64,12 @@ impl PolygonHandler {
         let inner = match (raw.starts_with('('), raw.ends_with(')')) {
             (true, true) => &raw[1..raw.len() - 1],
             (false, false) => raw,
-            (true, false) => bail!(
-                "polygon coordinate string has opening '(' but is missing the closing ')'"
-            ),
-            (false, true) => bail!(
-                "polygon coordinate string has closing ')' but is missing the opening '('"
-            ),
+            (true, false) => {
+                bail!("polygon coordinate string has opening '(' but is missing the closing ')'")
+            }
+            (false, true) => {
+                bail!("polygon coordinate string has closing ')' but is missing the opening '('")
+            }
         };
 
         if inner.contains('(') || inner.contains(')') {
@@ -98,15 +96,13 @@ impl PolygonHandler {
         while let Some(lat_str) = iter.next() {
             let lon_str = iter.next().unwrap(); // Already checked length above
 
-            let lat: f64 = lat_str
-                .trim()
-                .parse()
-                .map_err(|_| anyhow!("could not parse latitude '{}' as a number", lat_str.trim()))?;
+            let lat: f64 = lat_str.trim().parse().map_err(|_| {
+                anyhow!("could not parse latitude '{}' as a number", lat_str.trim())
+            })?;
 
-            let lon: f64 = lon_str
-                .trim()
-                .parse()
-                .map_err(|_| anyhow!("could not parse longitude '{}' as a number", lon_str.trim()))?;
+            let lon: f64 = lon_str.trim().parse().map_err(|_| {
+                anyhow!("could not parse longitude '{}' as a number", lon_str.trim())
+            })?;
 
             // Range check after parse. `RangeInclusive::contains` uses f64's
             // PartialOrd comparisons, so this single guard rejects NaN (every
@@ -382,8 +378,7 @@ mod tests {
         // NaN and ±inf parse as valid f64 but fall outside any finite range, so
         // the existing range check rejects them without a separate is_finite() guard.
         for bad_value in &["NaN", "inf", "-inf"] {
-            let coord_string =
-                format!("({bad_value},10.0,50.0,10.0,50.0,11.0,{bad_value},10.0)");
+            let coord_string = format!("({bad_value},10.0,50.0,10.0,50.0,11.0,{bad_value},10.0)");
             assert!(
                 PolygonHandler::parse_polygon_coordinates(&coord_string).is_err(),
                 "non-finite coordinate `{bad_value}` must be rejected"

@@ -1,0 +1,4 @@
+self-hosted-runner:
+  labels:
+    - platform-builder-docker-xl
+    - platform-builder-Ubuntu-22.04

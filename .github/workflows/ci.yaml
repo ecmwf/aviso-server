@@ -2,55 +2,128 @@ name: CI
 
 on:
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: "1"
 
 jobs:
-  build-and-test:
-    runs-on: ubuntu-latest
+  # ── Rust: fmt, clippy, build, test, lockfiles ───────────────────
+  rust:
+    name: Rust
+    # Trusted path only: self-hosted runners must never run fork code.
+    # Fork PRs skip every trusted job; ci-pass then stays red so they
+    # cannot merge. A maintainer lands the work on a repo branch to gate it.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, platform-builder-docker-xl, platform-builder-Ubuntu-22.04]
+    container:
+      image: eccr.ecmwf.int/aviso/server-ci:0.1.0
+      credentials:
+        username: ${{ secrets.ECMWF_DOCKER_REGISTRY_USERNAME }}
+        password: ${{ secrets.ECMWF_DOCKER_REGISTRY_ACCESS_TOKEN }}
+    env:
+      RUSTC_WRAPPER: sccache
+      CARGO_INCREMENTAL: "0"
+      SCCACHE_BUCKET: aviso-server-ci-cache
+      SCCACHE_ENDPOINT: "https://object-store.os-api.cci1.ecmwf.int"
+      SCCACHE_REGION: us-east-1
+      SCCACHE_S3_USE_SSL: "true"
+      SCCACHE_S3_KEY_PREFIX: aviso-server/
+      SCCACHE_BASEDIRS: ${{ github.workspace }}
+      SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+      AWS_ACCESS_KEY_ID: ${{ secrets.S3_ACCESS_KEY_ID }}
+      AWS_SECRET_ACCESS_KEY: ${{ secrets.S3_SECRET_ACCESS_KEY }}
+      TMPDIR: ${{ github.workspace }}/.tmp
+      # Tests bind 127.0.0.1 only and must never traverse a proxy.
+      NO_PROXY: "127.0.0.1,localhost"
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
+      - run: mkdir -p "$TMPDIR"
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-
-      - name: Cache cargo + target
-        uses: Swatinem/rust-cache@v2
-
-      - name: Check code formatting (root)
+      - name: Format check (aviso-server)
         run: cargo fmt -- --check
 
-      - name: Check code formatting (aviso-ecpds subcrate)
+      - name: Format check (aviso-validators subcrate)
+        run: cargo fmt --manifest-path aviso-validators/Cargo.toml -- --check
+
+      - name: Format check (aviso-ecpds subcrate)
         run: cargo fmt --manifest-path aviso-ecpds/Cargo.toml -- --check
 
-      - name: Run tests (default features)
-        env:
-          NO_PROXY: "127.0.0.1,localhost"
-        run: |
-          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
-          cargo test -- --test-threads=1
-
-      - name: Run tests (--features ecpds)
-        env:
-          NO_PROXY: "127.0.0.1,localhost"
-        run: |
-          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
-          cargo test --features ecpds -- --test-threads=1
-
-      - name: Run aviso-ecpds subcrate tests
-        env:
-          NO_PROXY: "127.0.0.1,localhost"
-        run: |
-          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
-          cargo test --manifest-path aviso-ecpds/Cargo.toml -- --test-threads=1
-
       - name: Clippy (default features)
-        run: cargo clippy --all-targets -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       - name: Clippy (--features ecpds)
-        run: cargo clippy --features ecpds --all-targets -- -D warnings
+        run: cargo clippy --locked --features ecpds --all-targets -- -D warnings
+
+      - name: Clippy (aviso-validators subcrate)
+        run: cargo clippy --locked --manifest-path aviso-validators/Cargo.toml --all-targets -- -D warnings
 
       - name: Clippy (aviso-ecpds subcrate)
-        run: cargo clippy --manifest-path aviso-ecpds/Cargo.toml --all-targets -- -D warnings
+        run: cargo clippy --locked --manifest-path aviso-ecpds/Cargo.toml --all-targets -- -D warnings
+
+      - name: Build (default + ecpds)
+        run: |
+          cargo build --locked --all-targets
+          cargo build --locked --features ecpds --all-targets
+
+      - name: Test (default features)
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test --locked -- --test-threads=1
+
+      - name: Test (--features ecpds)
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test --locked --features ecpds -- --test-threads=1
+
+      - name: Test (aviso-validators subcrate)
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test --locked --manifest-path aviso-validators/Cargo.toml -- --test-threads=1
+
+      - name: Test (aviso-ecpds subcrate)
+        run: |
+          unset HTTP_PROXY http_proxy HTTPS_PROXY https_proxy ALL_PROXY all_proxy
+          cargo test --locked --manifest-path aviso-ecpds/Cargo.toml -- --test-threads=1
+
+      - name: Lockfiles unchanged
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          git diff --exit-code Cargo.lock aviso-validators/Cargo.lock aviso-ecpds/Cargo.lock
+
+      - name: sccache stats
+        if: always()
+        run: sccache --show-adv-stats
+
+      - name: Cleanup
+        if: always()
+        run: rm -rf "$TMPDIR" target aviso-validators/target aviso-ecpds/target
+
+  # ── Aggregate gate: the single required status check ────────────
+  ci-pass:
+    name: ci-pass
+    if: always()
+    needs: [rust]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify every required job succeeded
+        run: |
+          results='${{ join(needs.*.result, ',') }}'
+          echo "needs results: $results"
+          case ",$results," in
+            *,failure,*|*,cancelled,*|*,skipped,*)
+              echo "::error::a required job did not succeed (fork PRs skip the trusted jobs by design)"
+              exit 1
+              ;;
+          esac
+          echo "all required jobs succeeded"

@@ -1,0 +1,76 @@
+name: CI Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/ci/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-image.yml"
+  pull_request:
+    paths:
+      - ".github/ci/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: eccr.ecmwf.int/aviso/server-ci
+
+jobs:
+  build-and-push:
+    name: Build CI image
+    # Never build a fork's Dockerfile on ECMWF self-hosted runners: its
+    # RUN steps are arbitrary code. Fork PRs skip this; a maintainer
+    # validates image changes from a branch in the canonical repo.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, platform-builder-docker-xl, platform-builder-Ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read version and pinned toolchain
+        id: version
+        run: |
+          VERSION=$(tr -d '[:space:]' < .github/ci/VERSION)
+          # Drive the image's Rust from rust-toolchain.toml so a channel
+          # bump (which triggers this workflow) actually rebakes the
+          # toolchain instead of silently reusing the Dockerfile default.
+          RUST=$(grep -oP 'channel\s*=\s*"\K[^"]+' rust-toolchain.toml)
+          {
+            echo "full=$VERSION"
+            echo "major=$(echo "$VERSION" | cut -d. -f1)"
+            echo "minor=$(echo "$VERSION" | cut -d. -f1-2)"
+            echo "rust=$RUST"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to ECCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: eccr.ecmwf.int
+          username: ${{ secrets.ECMWF_DOCKER_REGISTRY_USERNAME }}
+          password: ${{ secrets.ECMWF_DOCKER_REGISTRY_ACCESS_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .github/ci/
+          build-args: |
+            RUST_VERSION=${{ steps.version.outputs.rust }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.version.outputs.full }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.minor }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.major }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
