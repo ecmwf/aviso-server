@@ -25,6 +25,43 @@ env:
   IMAGE: eccr.ecmwf.int/aviso/server-ci
 
 jobs:
+  # The image tag is pinned in ci.yaml / docs-sites.yaml but rebuilt from
+  # these inputs, so changing them without a new tag would silently mutate
+  # an existing tag. Require a VERSION bump on any image-input change; the
+  # ci.yaml image-pin job then forces the consumers onto the new tag.
+  # Bump procedure: change the inputs + .github/ci/VERSION + the image refs
+  # in ci.yaml/docs-sites.yaml, then push the new tag once (locally or via
+  # this workflow's workflow_dispatch on a repo branch) so the pinned pull
+  # resolves before merge.
+  require-version-bump:
+    name: require VERSION bump
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Image-input changes must bump .github/ci/VERSION
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          version_bumped=false
+          content_changed=false
+          for f in "${changed[@]}"; do
+            case "$f" in
+              .github/ci/VERSION) version_bumped=true ;;
+              .github/ci/*|rust-toolchain.toml) content_changed=true ;;
+            esac
+          done
+          if $content_changed && ! $version_bumped; then
+            echo "::error::CI image inputs changed without bumping .github/ci/VERSION"
+            exit 1
+          fi
+          echo "ok: image inputs and VERSION are consistent"
+
   build-and-push:
     name: Build CI image
     # Never build a fork's Dockerfile on ECMWF self-hosted runners: its
