@@ -151,8 +151,9 @@ jobs:
           RAW_ID: ${{ steps.raw.outputs.raw_id }}
         run: |
           set -euo pipefail
-          # Keep only URL/path-safe chars and normalize repeated separators.
-          SANITIZED="$(printf '%s' "$RAW_ID" | sed -E 's|/+|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|\.+|.|g; s|^[.-]+||; s|[.-]+$||')"
+          # tr first: sed is line-oriented, so collapse CR/LF to a separator
+          # up front, then keep only URL/path-safe chars and squeeze repeats.
+          SANITIZED="$(printf '%s' "$RAW_ID" | tr '\r\n' '--' | sed -E 's|/+|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|\.+|.|g; s|^[.-]+||; s|[.-]+$||')"
           if [ -z "$SANITIZED" ]; then
             echo "::error::sanitized publish id is empty; refusing to publish"
             exit 1
