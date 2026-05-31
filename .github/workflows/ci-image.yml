@@ -1,0 +1,113 @@
+name: CI Image
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - ".github/ci/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-image.yml"
+  pull_request:
+    paths:
+      - ".github/ci/**"
+      - "rust-toolchain.toml"
+      - ".github/workflows/ci-image.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: ci-image-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  IMAGE: eccr.ecmwf.int/aviso/server-ci
+
+jobs:
+  # The image tag is pinned in ci.yaml / docs-sites.yaml but rebuilt from
+  # these inputs, so changing them without a new tag would silently mutate
+  # an existing tag. Require a VERSION bump on any image-input change; the
+  # ci.yaml image-pin job then forces the consumers onto the new tag.
+  # Bump procedure: change the inputs + .github/ci/VERSION + the image refs
+  # in ci.yaml/docs-sites.yaml, then push the new tag once (locally or via
+  # this workflow's workflow_dispatch on a repo branch) so the pinned pull
+  # resolves before merge.
+  require-version-bump:
+    name: require VERSION bump
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Image-input changes must bump .github/ci/VERSION
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          mapfile -t changed < <(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+          version_bumped=false
+          content_changed=false
+          for f in "${changed[@]}"; do
+            case "$f" in
+              .github/ci/VERSION) version_bumped=true ;;
+              .github/ci/*|rust-toolchain.toml) content_changed=true ;;
+            esac
+          done
+          if $content_changed && ! $version_bumped; then
+            echo "::error::CI image inputs changed without bumping .github/ci/VERSION"
+            exit 1
+          fi
+          echo "ok: image inputs and VERSION are consistent"
+
+  build-and-push:
+    name: Build CI image
+    # Never build a fork's Dockerfile on ECMWF self-hosted runners: its
+    # RUN steps are arbitrary code. Fork PRs skip this; a maintainer
+    # validates image changes from a branch in the canonical repo.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, Linux, platform-builder-docker-xl, platform-builder-Ubuntu-22.04]
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Read version and pinned toolchain
+        id: version
+        run: |
+          VERSION=$(tr -d '[:space:]' < .github/ci/VERSION)
+          # Drive the image's Rust from rust-toolchain.toml so a channel
+          # bump (which triggers this workflow) actually rebakes the
+          # toolchain instead of silently reusing the Dockerfile default.
+          RUST=$(grep -oP 'channel\s*=\s*"\K[^"]+' rust-toolchain.toml)
+          {
+            echo "full=$VERSION"
+            echo "major=$(echo "$VERSION" | cut -d. -f1)"
+            echo "minor=$(echo "$VERSION" | cut -d. -f1-2)"
+            echo "rust=$RUST"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@v4
+
+      - name: Login to ECCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v4
+        with:
+          registry: eccr.ecmwf.int
+          username: ${{ secrets.ECMWF_DOCKER_REGISTRY_USERNAME }}
+          password: ${{ secrets.ECMWF_DOCKER_REGISTRY_ACCESS_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v7
+        with:
+          context: .github/ci/
+          build-args: |
+            RUST_VERSION=${{ steps.version.outputs.rust }}
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE }}:${{ steps.version.outputs.full }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.minor }}
+            ${{ env.IMAGE }}:${{ steps.version.outputs.major }}
+            ${{ env.IMAGE }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

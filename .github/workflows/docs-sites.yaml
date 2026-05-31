@@ -27,80 +27,55 @@ on:
         type: string
 
 concurrency:
-  # Keep only the latest run per PR/ref to avoid stale docs publishes.
+  # One run per PR or ref. cancel-in-progress is on for PRs only, so rapid PR
+  # pushes drop their own stale rebuilds, while a push to main or a tag never
+  # cancels an in-flight canonical publish (no half-uploaded site).
   group: docs-sites-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref || github.run_id }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
-  # Build docs for push/manual and all open PRs (including forks).
-  # Fork PRs do not publish previews because secrets are unavailable there.
-  # This artifact is consumed by preview/publish jobs when eligible.
+  # Build the publish artifact in the pinned CI image. The image bakes
+  # mdbook + mdbook-mermaid, so their versions live in one place
+  # (.github/ci/Dockerfile), not duplicated here. No sccache or S3 creds:
+  # mdbook renders Markdown and runs the mermaid preprocessor, it compiles
+  # no Rust, so there is nothing to cache.
   build-docs:
-    if: ${{ github.event_name == 'push' || github.event_name == 'workflow_dispatch' || (github.event_name == 'pull_request' && github.event.action != 'closed') }}
-    runs-on: ubuntu-latest
-    env:
-      MDBOOK_VERSION: "0.4.52"
-      MDBOOK_MERMAID_VERSION: "0.14.0"
+    # Trusted context only: the image is private and the runners are
+    # self-hosted, so fork PRs cannot build here. Skip on PR close.
+    if: >-
+      ${{
+        (github.event_name == 'push' || github.event_name == 'workflow_dispatch' ||
+         (github.event_name == 'pull_request' && github.event.action != 'closed'))
+        && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      }}
+    runs-on: [self-hosted, Linux, platform-builder-docker-xl, platform-builder-Ubuntu-22.04]
+    permissions:
+      contents: read
+    container:
+      # Pinned full tag, never :latest.
+      image: eccr.ecmwf.int/aviso/server-ci:0.1.0
+      credentials:
+        username: ${{ secrets.ECMWF_DOCKER_REGISTRY_USERNAME }}
+        password: ${{ secrets.ECMWF_DOCKER_REGISTRY_ACCESS_TOKEN }}
     outputs:
       artifact-id: ${{ steps.upload-docs.outputs.artifact-id }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@stable
-
-      # Cache cargo install artifacts for mdBook tooling.
-      # Key includes pinned versions so tool upgrades refresh cache automatically.
-      - name: Cache cargo install artifacts
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/bin
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: ${{ runner.os }}-docs-tools-${{ env.MDBOOK_VERSION }}-${{ env.MDBOOK_MERMAID_VERSION }}
-          restore-keys: |
-            ${{ runner.os }}-docs-tools-
-
-      - name: Build docs toolchain
-        run: |
-          ensure_tool() {
-            local bin="$1"
-            local crate="$2"
-            local version="$3"
-
-            if command -v "${bin}" >/dev/null 2>&1; then
-              local current
-              # mdbook tools report versions like `v0.4.x`; normalize to `0.4.x`.
-              current="$("${bin}" --version | awk '{print $2}')"
-              current="${current#v}"
-              if [ "${current}" = "${version}" ]; then
-                echo "${bin} ${version} already present; skipping install."
-                return 0
-              fi
-            fi
-
-            cargo install --locked "${crate}" --version "${version}" --force
-          }
-
-          ensure_tool mdbook mdbook "${MDBOOK_VERSION}"
-          ensure_tool mdbook-mermaid mdbook-mermaid "${MDBOOK_MERMAID_VERSION}"
-
-      - name: Build mdBook
-        run: |
-          mdbook build docs
+      - name: Build docs
+        run: mdbook build docs
 
       - name: Archive documentation
         id: upload-docs
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: aviso-server-docs
           path: docs/book
+          if-no-files-found: error
+          overwrite: true
 
   # Publish PR preview docs and attach preview link to the PR.
   preview-publish:
@@ -145,40 +120,45 @@ jobs:
     steps:
       - name: Compute raw publish id
         id: raw
+        # Refs and the manual input arrive through env, never inline ${{ }}
+        # in the shell, so they cannot run as code.
+        env:
+          REF_NAME: ${{ github.ref_name }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PUBLISH_ID: ${{ github.event.inputs.publish_id }}
+          RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
-
-          RAW_ID="${{ github.ref_name }}"
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW_ID="${{ github.event.inputs.publish_id }}"
+          RAW_ID="$REF_NAME"
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            RAW_ID="$INPUT_PUBLISH_ID"
             if [ -z "$RAW_ID" ]; then
-              RAW_ID="manual-${{ github.run_id }}"
+              RAW_ID="manual-$RUN_ID"
             fi
           fi
-
-          # Use multiline-safe output format to avoid output injection.
+          # Random delimiter: a value containing a literal `EOF` line
+          # cannot terminate the block early and inject extra outputs.
+          DELIM="raw_id-$(uuidgen)"
           {
-            echo "raw_id<<EOF"
+            echo "raw_id<<$DELIM"
             printf '%s\n' "$RAW_ID"
-            echo "EOF"
+            echo "$DELIM"
           } >> "$GITHUB_OUTPUT"
 
       - name: Sanitize publish id
         id: sanitize
+        env:
+          RAW_ID: ${{ steps.raw.outputs.raw_id }}
         run: |
           set -euo pipefail
-          RAW_ID="${{ steps.raw.outputs.raw_id }}"
-
-          # Keep only URL/path-safe chars and normalize repeated separators.
-          SANITIZED="$(printf '%s' "$RAW_ID" | sed -E 's|/+|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|\.+|.|g; s|^[.-]+||; s|[.-]+$||')"
-
+          # tr first: sed is line-oriented, so collapse CR/LF to a separator
+          # up front, then keep only URL/path-safe chars and squeeze repeats.
+          SANITIZED="$(printf '%s' "$RAW_ID" | tr '\r\n' '--' | sed -E 's|/+|-|g; s|[^A-Za-z0-9._-]|-|g; s|-+|-|g; s|\.+|.|g; s|^[.-]+||; s|[.-]+$||')"
           if [ -z "$SANITIZED" ]; then
-            echo "Sanitized publish id is empty; refusing to publish." >&2
+            echo "::error::sanitized publish id is empty; refusing to publish"
             exit 1
           fi
-
-          echo "publish_id=${SANITIZED}" >> "$GITHUB_OUTPUT"
+          echo "publish_id=$SANITIZED" >> "$GITHUB_OUTPUT"
 
   # Publish canonical docs on:
   # - push to main/tags, or
