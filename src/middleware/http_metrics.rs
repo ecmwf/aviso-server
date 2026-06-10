@@ -244,6 +244,46 @@ mod tests {
     }
 
     #[actix_web::test]
+    async fn inner_service_err_records_error_endpoint_with_derived_status() {
+        use actix_web::body::BoxBody;
+        use actix_web::dev::{Service, ServiceRequest, ServiceResponse, Transform};
+        use std::future::{Ready, ready};
+        use std::task::{Context, Poll};
+
+        struct AlwaysErr;
+
+        impl Service<ServiceRequest> for AlwaysErr {
+            type Response = ServiceResponse<BoxBody>;
+            type Error = actix_web::Error;
+            type Future = Ready<Result<Self::Response, Self::Error>>;
+
+            fn poll_ready(&self, _: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+                Poll::Ready(Ok(()))
+            }
+
+            fn call(&self, _req: ServiceRequest) -> Self::Future {
+                ready(Err(actix_web::error::ErrorImATeapot("boom")))
+            }
+        }
+
+        let metrics = AppMetrics::new();
+        let mw = HttpMetrics
+            .new_transform(AlwaysErr)
+            .await
+            .expect("transform must build");
+
+        let req = TestRequest::get()
+            .uri("/whatever")
+            .app_data(web::Data::new(metrics.clone()))
+            .to_srv_request();
+        let result = mw.call(req).await;
+
+        assert!(result.is_err(), "error must propagate unchanged");
+        assert_eq!(requests_count(&metrics, "error", "GET", "418"), 1);
+        assert_eq!(duration_sample_count(&metrics, "error", "GET"), 1);
+    }
+
+    #[actix_web::test]
     async fn passthrough_when_metrics_are_absent() {
         let app = init_service(
             App::new()
