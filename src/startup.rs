@@ -20,6 +20,7 @@ use crate::configuration::validate_ecpds_settings;
 use crate::configuration::{AuthSettings, validate_metrics_settings};
 use crate::metrics::AppMetrics;
 use crate::middleware::access_log::AvisoRootSpanBuilder;
+use crate::middleware::http_metrics::HttpMetrics;
 use crate::middleware::request_id::RequestIdHeader;
 use crate::openapi::ApiDoc;
 use crate::routes::admin::{delete_notification, wipe_all, wipe_stream};
@@ -349,6 +350,7 @@ pub fn run(
     let ecpds_data = ecpds_checker.map(web::Data::new);
     let server = HttpServer::new(move || {
         let mut app = App::new()
+            .wrap(HttpMetrics)
             .wrap(RequestIdHeader)
             .wrap(TracingLogger::<AvisoRootSpanBuilder>::new())
             .service(

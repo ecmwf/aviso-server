@@ -11,8 +11,9 @@ use crate::middleware::request_id::RequestIdHeader;
 use crate::telemetry::SERVICE_VERSION;
 use actix_web::{App, HttpResponse, HttpServer, dev::Server, web};
 use prometheus::{
-    Encoder, IntCounterVec, IntGaugeVec, Registry, TextEncoder, opts,
-    register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
+    Encoder, HistogramVec, IntCounterVec, IntGaugeVec, Registry, TextEncoder, histogram_opts,
+    opts, register_histogram_vec_with_registry, register_int_counter_vec_with_registry,
+    register_int_gauge_vec_with_registry,
 };
 #[cfg(feature = "ecpds")]
 use prometheus::{
@@ -45,6 +46,8 @@ pub struct EcpdsMetrics {
 pub struct AppMetrics {
     pub registry: Registry,
     pub build_info: IntGaugeVec,
+    pub http_requests_total: IntCounterVec,
+    pub http_request_duration_seconds: HistogramVec,
     pub notifications_total: IntCounterVec,
     pub sse_connections_active: IntGaugeVec,
     pub sse_connections_total: IntCounterVec,
@@ -78,6 +81,26 @@ impl AppMetrics {
         )
         .expect("metric must register");
         build_info.with_label_values(&[SERVICE_VERSION]).set(1);
+
+        let http_requests_total = register_int_counter_vec_with_registry!(
+            opts!(
+                "aviso_http_requests_total",
+                "HTTP requests by matched route pattern, method, and status code. Unrouted requests (404 scans) are collapsed into endpoint=\"unmatched\" to bound label cardinality."
+            ),
+            &["endpoint", "method", "status_code"],
+            registry
+        )
+        .expect("metric must register");
+
+        let http_request_duration_seconds = register_histogram_vec_with_registry!(
+            histogram_opts!(
+                "aviso_http_request_duration_seconds",
+                "HTTP request duration in seconds by matched route pattern and method, measured until response headers are ready. For SSE endpoints (watch/replay) this is stream setup latency, NOT connection lifetime; see aviso_sse_connection_duration_seconds for that."
+            ),
+            &["endpoint", "method"],
+            registry
+        )
+        .expect("metric must register");
 
         let notifications_total = register_int_counter_vec_with_registry!(
             opts!(
@@ -223,6 +246,8 @@ impl AppMetrics {
         Self {
             registry,
             build_info,
+            http_requests_total,
+            http_request_duration_seconds,
             notifications_total,
             sse_connections_active,
             sse_connections_total,
