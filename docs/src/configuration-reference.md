@@ -123,7 +123,7 @@ Exposed metrics:
 | `aviso_sse_connections_total` | counter | `endpoint`, `event_type` | Total SSE connections opened. |
 | `aviso_sse_unique_users_active` | gauge | `endpoint` | Distinct users with active SSE connections. |
 | `aviso_sse_events_sent_total` | counter | `endpoint`, `event_type` | Notification events delivered to SSE clients. Heartbeats, control events, and close frames are not counted. |
-| `aviso_sse_stream_errors_total` | counter | `endpoint`, `event_type` | Error frames emitted into SSE streams after the response started; these are invisible to `aviso_http_requests_total` because the stream already returned `200`. |
+| `aviso_sse_stream_errors_total` | counter | `endpoint`, `event_type` | Error events emitted into SSE streams after the response started (typed stream errors and notification rendering failures); these are invisible to `aviso_http_requests_total` because the stream already returned `200`. |
 | `aviso_sse_connection_duration_seconds` | histogram | `endpoint` | SSE connection lifetime, observed when the connection closes (buckets 1s-24h). Long-lived open connections appear in `aviso_sse_connections_active`, not here, until they close. |
 | `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. `mode` ∈ {`direct`, `trusted_proxy`}; `outcome` ∈ {`success`, `unauthorized`, `forbidden`, `service_unavailable`}. |
 

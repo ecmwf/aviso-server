@@ -167,7 +167,7 @@ impl AppMetrics {
         let sse_stream_errors_total = register_int_counter_vec_with_registry!(
             opts!(
                 "aviso_sse_stream_errors_total",
-                "Error frames emitted into SSE streams after the response started. These failures are invisible to HTTP status metrics because the stream already returned 200."
+                "Error events emitted into SSE streams after the response started (typed stream errors and notification rendering failures). These failures are invisible to HTTP status metrics because the stream already returned 200."
             ),
             &["endpoint", "event_type"],
             registry

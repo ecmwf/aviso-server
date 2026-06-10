@@ -8,7 +8,7 @@
 
 use std::{net::TcpListener, sync::Arc};
 
-use actix_web::{App, HttpServer, dev::Server, web};
+use actix_web::{App, HttpServer, dev::Server, middleware::Condition, web};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -350,7 +350,7 @@ pub fn run(
     let ecpds_data = ecpds_checker.map(web::Data::new);
     let server = HttpServer::new(move || {
         let mut app = App::new()
-            .wrap(HttpMetrics)
+            .wrap(Condition::new(metrics_data.is_some(), HttpMetrics))
             .wrap(RequestIdHeader)
             .wrap(TracingLogger::<AvisoRootSpanBuilder>::new())
             .service(
