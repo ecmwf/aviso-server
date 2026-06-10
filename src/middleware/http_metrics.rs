@@ -25,9 +25,10 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use actix_web::{
-    Error, web,
+    Error,
     dev::{Service, ServiceRequest, ServiceResponse, Transform, forward_ready},
     http::Method,
+    web,
 };
 use futures_util::future::LocalBoxFuture;
 
