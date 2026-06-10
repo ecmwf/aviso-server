@@ -8,6 +8,7 @@
 
 use crate::middleware::access_log::AvisoRootSpanBuilder;
 use crate::middleware::request_id::RequestIdHeader;
+use crate::telemetry::SERVICE_VERSION;
 use actix_web::{App, HttpResponse, HttpServer, dev::Server, web};
 use prometheus::{
     Encoder, IntCounterVec, IntGaugeVec, Registry, TextEncoder, opts,
@@ -43,6 +44,7 @@ pub struct EcpdsMetrics {
 #[derive(Clone, Debug)]
 pub struct AppMetrics {
     pub registry: Registry,
+    pub build_info: IntGaugeVec,
     pub notifications_total: IntCounterVec,
     pub sse_connections_active: IntGaugeVec,
     pub sse_connections_total: IntCounterVec,
@@ -63,6 +65,20 @@ impl AppMetrics {
     pub fn new() -> Self {
         let registry = Registry::new();
 
+        // Constant-1 gauge carrying the crate version as a label. Dashboards
+        // join on it to annotate deploys and correlate behaviour changes with
+        // rollouts (standard Prometheus `*_build_info` convention).
+        let build_info = register_int_gauge_vec_with_registry!(
+            opts!(
+                "aviso_build_info",
+                "Build information; constant 1 with the server version as a label"
+            ),
+            &["version"],
+            registry
+        )
+        .expect("metric must register");
+        build_info.with_label_values(&[SERVICE_VERSION]).set(1);
+
         let notifications_total = register_int_counter_vec_with_registry!(
             opts!(
                 "aviso_notifications_total",
@@ -72,6 +88,16 @@ impl AppMetrics {
             registry
         )
         .expect("metric must register");
+        // Pre-initialise the bounded label values so the series exist at zero
+        // from process startup; see the ECPDS pre-init comment below for why
+        // missing series break `rate(...) > 0` alert rules. Requests that fail
+        // before schema validation are recorded under event_type="unknown" and
+        // can only be errors or auth rejections, never successes. Per-stream
+        // series are pre-initialised via `preinit_notification_series` once
+        // the schema is loaded.
+        for status in ["error", "rejected"] {
+            let _ = notifications_total.with_label_values(&["unknown", status]);
+        }
 
         let sse_connections_active = register_int_gauge_vec_with_registry!(
             opts!(
@@ -112,6 +138,11 @@ impl AppMetrics {
             registry
         )
         .expect("metric must register");
+        for mode in ["direct", "trusted_proxy"] {
+            for outcome in ["success", "unauthorized", "forbidden", "service_unavailable"] {
+                let _ = auth_requests_total.with_label_values(&[mode, outcome]);
+            }
+        }
 
         #[cfg(feature = "ecpds")]
         let ecpds = {
@@ -191,6 +222,7 @@ impl AppMetrics {
 
         Self {
             registry,
+            build_info,
             notifications_total,
             sse_connections_active,
             sse_connections_total,
@@ -199,6 +231,22 @@ impl AppMetrics {
             #[cfg(feature = "ecpds")]
             ecpds,
             unique_users: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Pre-initialise per-stream notification series at zero so alert rules
+    /// evaluate against existing series from startup (same rationale as the
+    /// ECPDS pre-init in `new`). Call once after the schema is loaded.
+    pub fn preinit_notification_series<'a>(
+        &self,
+        event_types: impl IntoIterator<Item = &'a str>,
+    ) {
+        for event_type in event_types {
+            for status in ["success", "error"] {
+                let _ = self
+                    .notifications_total
+                    .with_label_values(&[event_type, status]);
+            }
         }
     }
 
@@ -218,7 +266,13 @@ impl AppMetrics {
             .inc();
 
         if let Some(u) = username {
-            let mut users = self.unique_users.lock().expect("metrics lock poisoned");
+            // Recover from poisoning instead of panicking: the map only holds
+            // refcounts, and a panic here (or in Drop, where it would abort
+            // the process during unwind) is worse than a skewed gauge.
+            let mut users = self
+                .unique_users
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let count = users
                 .entry(endpoint.to_string())
                 .or_default()
@@ -257,11 +311,13 @@ impl Drop for SseConnectionGuard {
             .dec();
 
         if let Some(username) = &self.username {
+            // See track_sse_connection: poisoning recovery avoids a
+            // panic-in-Drop, which would abort the process mid-unwind.
             let mut users = self
                 .metrics
                 .unique_users
                 .lock()
-                .expect("metrics lock poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(endpoint_users) = users.get_mut(&self.endpoint)
                 && let Some(count) = endpoint_users.get_mut(username)
             {
@@ -531,6 +587,40 @@ mod tests {
             output.contains(r#"event_type="mars""#),
             "output should contain label"
         );
+    }
+
+    #[test]
+    fn build_info_and_preinitialized_series_appear_in_scrape_at_startup() {
+        let m = AppMetrics::new();
+        m.preinit_notification_series(["mars"]);
+
+        let encoder = TextEncoder::new();
+        let mut buf = Vec::new();
+        encoder
+            .encode(&m.registry.gather(), &mut buf)
+            .expect("encode ok");
+        let output = String::from_utf8(buf).expect("valid utf8");
+
+        assert!(
+            output.contains(&format!(
+                r#"aviso_build_info{{version="{}"}} 1"#,
+                env!("CARGO_PKG_VERSION")
+            )),
+            "build_info should carry the crate version: {output}"
+        );
+        for series in [
+            r#"aviso_auth_requests_total{mode="direct",outcome="unauthorized"} 0"#,
+            r#"aviso_auth_requests_total{mode="trusted_proxy",outcome="success"} 0"#,
+            r#"aviso_notifications_total{event_type="unknown",status="rejected"} 0"#,
+            r#"aviso_notifications_total{event_type="unknown",status="error"} 0"#,
+            r#"aviso_notifications_total{event_type="mars",status="success"} 0"#,
+            r#"aviso_notifications_total{event_type="mars",status="error"} 0"#,
+        ] {
+            assert!(
+                output.contains(series),
+                "series should be pre-initialised at zero: {series}\n{output}"
+            );
+        }
     }
 
     #[test]

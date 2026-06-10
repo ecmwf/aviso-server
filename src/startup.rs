@@ -168,6 +168,9 @@ impl Application {
         let (app_metrics, metrics_server) = if configuration.metrics.enabled {
             let metrics = AppMetrics::new();
             crate::metrics::register_process_metrics(&metrics.registry);
+            if let Some(schema) = Settings::get_global_notification_schema() {
+                metrics.preinit_notification_series(schema.keys().map(String::as_str));
+            }
 
             let metrics_port = configuration.metrics.port.expect("validated above");
             let metrics_host = &configuration.metrics.host;
