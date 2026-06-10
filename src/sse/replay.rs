@@ -20,8 +20,7 @@ use tokio_util::sync::CancellationToken;
 use tracing::{debug, warn};
 
 use super::helpers::{
-    apply_stream_lifecycle, create_heartbeat_stream, create_sse_response, frame_to_sse_bytes,
-    record_frame_delivery,
+    apply_stream_lifecycle, create_heartbeat_stream, create_sse_response, frames_to_sse_byte_stream,
 };
 use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
@@ -277,15 +276,12 @@ pub(crate) async fn create_historical_then_live_stream(
         )),
         request_id.clone(),
     );
-    let base_url = app_settings.base_url.clone();
-    let request_id_for_bytes = request_id.clone();
-    let delivery = sse_guard
-        .as_ref()
-        .map(crate::metrics::SseConnectionGuard::delivery_metrics);
-    let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
-        record_frame_delivery(&delivery, &frame);
-        frame_to_sse_bytes(frame, &base_url, &request_id_for_bytes)
-    });
+    let byte_stream = frames_to_sse_byte_stream(
+        stream_with_lifecycle,
+        app_settings.base_url.clone(),
+        request_id.clone(),
+        sse_guard.as_ref(),
+    );
 
     tracing::info!(
         service_name = SERVICE_NAME,
@@ -361,15 +357,12 @@ pub(crate) async fn create_replay_only_stream(
         request_id.clone(),
     );
     let app_settings = Settings::get_global_application_settings();
-    let base_url = app_settings.base_url.clone();
-    let request_id_for_bytes = request_id.clone();
-    let delivery = sse_guard
-        .as_ref()
-        .map(crate::metrics::SseConnectionGuard::delivery_metrics);
-    let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
-        record_frame_delivery(&delivery, &frame);
-        frame_to_sse_bytes(frame, &base_url, &request_id_for_bytes)
-    });
+    let byte_stream = frames_to_sse_byte_stream(
+        stream_with_lifecycle,
+        app_settings.base_url.clone(),
+        request_id.clone(),
+        sse_guard.as_ref(),
+    );
 
     tracing::info!(
         service_name = SERVICE_NAME,

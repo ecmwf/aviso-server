@@ -324,7 +324,7 @@ where
 /// Counts notification frames as delivered events and error frames as
 /// stream errors; heartbeats, control, and close frames are intentionally
 /// not counted (see the `aviso_sse_events_sent_total` HELP text).
-pub(crate) fn record_frame_delivery(
+fn record_frame_delivery(
     delivery: &Option<crate::metrics::SseDeliveryMetrics>,
     frame: &StreamFrame,
 ) {
@@ -334,6 +334,26 @@ pub(crate) fn record_frame_delivery(
         StreamFrame::Error { .. } => d.inc_stream_errors(),
         StreamFrame::Control(_) | StreamFrame::Heartbeat { .. } | StreamFrame::Close { .. } => {}
     }
+}
+
+/// Convert a typed frame stream into SSE wire bytes, recording delivery
+/// metrics per frame. The single conversion point for every SSE endpoint:
+/// new stream builders go through here so delivered-event accounting cannot
+/// be forgotten.
+pub(crate) fn frames_to_sse_byte_stream<S>(
+    frames: S,
+    base_url: String,
+    request_id: String,
+    sse_guard: Option<&crate::metrics::SseConnectionGuard>,
+) -> impl tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>> + use<S>
+where
+    S: tokio_stream::Stream<Item = StreamFrame>,
+{
+    let delivery = sse_guard.map(crate::metrics::SseConnectionGuard::delivery_metrics);
+    futures_util::StreamExt::map(frames, move |frame| {
+        record_frame_delivery(&delivery, &frame);
+        frame_to_sse_bytes(frame, &base_url, &request_id)
+    })
 }
 
 /// Create a standardized SSE HttpResponse with proper headers.
