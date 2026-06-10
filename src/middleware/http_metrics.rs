@@ -20,6 +20,7 @@
 //! are disabled, mirroring how route handlers treat
 //! `Option<web::Data<AppMetrics>>`.
 
+use std::borrow::Cow;
 use std::future::{Ready, ready};
 use std::rc::Rc;
 use std::time::Instant;
@@ -114,21 +115,21 @@ where
             if let Some(m) = metrics {
                 // Route matching happens inside the inner service, so the
                 // pattern is only available on the response's request.
-                let (endpoint, status_code) = match &result {
+                let (endpoint, status_code): (Cow<'static, str>, _) = match &result {
                     Ok(res) => (
                         res.request()
                             .match_pattern()
-                            .unwrap_or_else(|| "unmatched".to_string()),
+                            .map_or(Cow::Borrowed("unmatched"), Cow::Owned),
                         res.status(),
                     ),
-                    Err(e) => ("error".to_string(), e.as_response_error().status_code()),
+                    Err(e) => (Cow::Borrowed("error"), e.as_response_error().status_code()),
                 };
 
                 m.http_requests_total
-                    .with_label_values(&[&endpoint, method, status_code.as_str()])
+                    .with_label_values(&[endpoint.as_ref(), method, status_code.as_str()])
                     .inc();
                 m.http_request_duration_seconds
-                    .with_label_values(&[&endpoint, method])
+                    .with_label_values(&[endpoint.as_ref(), method])
                     .observe(started_at.elapsed().as_secs_f64());
             }
 
