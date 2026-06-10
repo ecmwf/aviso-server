@@ -8,7 +8,7 @@
 
 use std::{net::TcpListener, sync::Arc};
 
-use actix_web::{App, HttpServer, dev::Server, web};
+use actix_web::{App, HttpServer, dev::Server, middleware::Condition, web};
 use tokio::task;
 use tokio_util::sync::CancellationToken;
 use tracing::{error, info};
@@ -20,6 +20,7 @@ use crate::configuration::validate_ecpds_settings;
 use crate::configuration::{AuthSettings, validate_metrics_settings};
 use crate::metrics::AppMetrics;
 use crate::middleware::access_log::AvisoRootSpanBuilder;
+use crate::middleware::http_metrics::HttpMetrics;
 use crate::middleware::request_id::RequestIdHeader;
 use crate::openapi::ApiDoc;
 use crate::routes::admin::{delete_notification, wipe_all, wipe_stream};
@@ -168,6 +169,9 @@ impl Application {
         let (app_metrics, metrics_server) = if configuration.metrics.enabled {
             let metrics = AppMetrics::new();
             crate::metrics::register_process_metrics(&metrics.registry);
+            if let Some(schema) = Settings::get_global_notification_schema() {
+                metrics.preinit_notification_series(schema.keys().map(String::as_str));
+            }
 
             let metrics_port = configuration.metrics.port.expect("validated above");
             let metrics_host = &configuration.metrics.host;
@@ -346,6 +350,7 @@ pub fn run(
     let ecpds_data = ecpds_checker.map(web::Data::new);
     let server = HttpServer::new(move || {
         let mut app = App::new()
+            .wrap(Condition::new(metrics_data.is_some(), HttpMetrics))
             .wrap(RequestIdHeader)
             .wrap(TracingLogger::<AvisoRootSpanBuilder>::new())
             .service(

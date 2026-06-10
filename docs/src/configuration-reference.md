@@ -115,11 +115,19 @@ Exposed metrics:
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
-| `aviso_notifications_total` | counter | `event_type`, `status` | Total notification requests. |
+| `aviso_build_info` | gauge | `version` | Constant `1` with the server version as a label; join on it in dashboards to annotate deploys. |
+| `aviso_http_requests_total` | counter | `endpoint`, `method`, `status_code` | HTTP requests on the main server by matched route pattern (e.g. `/api/v1/schema/{event_type}`). Reserved label values: unrouted requests (404 scans) collapse into `endpoint="unmatched"`, requests failing with a service-level error (no route information available) record `endpoint="error"`, and non-standard HTTP methods collapse into `method="other"`. |
+| `aviso_http_request_duration_seconds` | histogram | `endpoint`, `method` | Request duration until response headers are ready. For the SSE endpoints (`/api/v1/watch`, `/api/v1/replay`) this is stream *setup* latency, not connection lifetime; see `aviso_sse_connection_duration_seconds`. |
+| `aviso_notifications_total` | counter | `event_type`, `status` | Total notification requests. `status` ∈ {`success`, `error`, `rejected`}; requests failing before schema validation record `event_type="unknown"`. |
 | `aviso_sse_connections_active` | gauge | `endpoint`, `event_type` | Currently active SSE connections. |
 | `aviso_sse_connections_total` | counter | `endpoint`, `event_type` | Total SSE connections opened. |
 | `aviso_sse_unique_users_active` | gauge | `endpoint` | Distinct users with active SSE connections. |
-| `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. |
+| `aviso_sse_events_sent_total` | counter | `endpoint`, `event_type` | Notification events delivered to SSE clients. Heartbeats, control events, and close frames are not counted. |
+| `aviso_sse_stream_errors_total` | counter | `endpoint`, `event_type` | Error events emitted into SSE streams after the response started (typed stream errors and notification rendering failures); these are invisible to `aviso_http_requests_total` because the stream already returned `200`. |
+| `aviso_sse_connection_duration_seconds` | histogram | `endpoint` | SSE connection lifetime, observed when the connection closes (buckets 1s-24h). Long-lived open connections appear in `aviso_sse_connections_active`, not here, until they close. |
+| `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. `mode` ∈ {`direct`, `trusted_proxy`}; `outcome` ∈ {`success`, `unauthorized`, `forbidden`, `service_unavailable`}. |
+
+Like the ECPDS counters below, the bounded label combinations of `aviso_auth_requests_total` and `aviso_notifications_total` (including one series per configured stream) are pre-initialised at zero on startup so `rate(...) > 0` alert rules evaluate against existing series.
 
 A binary built with `--features ecpds` registers the following five metrics. The unlabelled counters and the gauge appear as Prometheus series at process startup. The two labelled counters (`access_decisions_total`, `fetch_total`) are pre-initialised at startup with every documented `outcome` value, so each `outcome` label appears as a series at zero before any ECPDS traffic; this lets alert rules of the form `rate(metric{outcome="error"}[5m]) > 0` start evaluating on a known-zero baseline rather than on a missing series.
 

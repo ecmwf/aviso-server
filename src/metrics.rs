@@ -8,18 +8,19 @@
 
 use crate::middleware::access_log::AvisoRootSpanBuilder;
 use crate::middleware::request_id::RequestIdHeader;
+use crate::telemetry::SERVICE_VERSION;
 use actix_web::{App, HttpResponse, HttpServer, dev::Server, web};
 use prometheus::{
-    Encoder, IntCounterVec, IntGaugeVec, Registry, TextEncoder, opts,
+    Encoder, Histogram, HistogramVec, IntCounter, IntCounterVec, IntGaugeVec, Registry,
+    TextEncoder, histogram_opts, opts, register_histogram_vec_with_registry,
     register_int_counter_vec_with_registry, register_int_gauge_vec_with_registry,
 };
 #[cfg(feature = "ecpds")]
-use prometheus::{
-    IntCounter, IntGauge, register_int_counter_with_registry, register_int_gauge_with_registry,
-};
+use prometheus::{IntGauge, register_int_counter_with_registry, register_int_gauge_with_registry};
 use std::collections::HashMap;
 use std::net::TcpListener;
 use std::sync::{Arc, Mutex};
+use std::time::Instant;
 use tracing_actix_web::TracingLogger;
 
 /// Feature-gated ECPDS authorization plugin metrics.
@@ -43,10 +44,16 @@ pub struct EcpdsMetrics {
 #[derive(Clone, Debug)]
 pub struct AppMetrics {
     pub registry: Registry,
+    pub build_info: IntGaugeVec,
+    pub http_requests_total: IntCounterVec,
+    pub http_request_duration_seconds: HistogramVec,
     pub notifications_total: IntCounterVec,
     pub sse_connections_active: IntGaugeVec,
     pub sse_connections_total: IntCounterVec,
     pub sse_unique_users_active: IntGaugeVec,
+    pub sse_events_sent_total: IntCounterVec,
+    pub sse_stream_errors_total: IntCounterVec,
+    pub sse_connection_duration_seconds: HistogramVec,
     pub auth_requests_total: IntCounterVec,
     #[cfg(feature = "ecpds")]
     pub ecpds: EcpdsMetrics,
@@ -63,6 +70,40 @@ impl AppMetrics {
     pub fn new() -> Self {
         let registry = Registry::new();
 
+        // Constant-1 gauge carrying the crate version as a label. Dashboards
+        // join on it to annotate deploys and correlate behaviour changes with
+        // rollouts (standard Prometheus `*_build_info` convention).
+        let build_info = register_int_gauge_vec_with_registry!(
+            opts!(
+                "aviso_build_info",
+                "Build information; constant 1 with the server version as a label"
+            ),
+            &["version"],
+            registry
+        )
+        .expect("metric must register");
+        build_info.with_label_values(&[SERVICE_VERSION]).set(1);
+
+        let http_requests_total = register_int_counter_vec_with_registry!(
+            opts!(
+                "aviso_http_requests_total",
+                "HTTP requests by matched route pattern, method, and status code. Two reserved endpoint values bound label cardinality: unrouted requests (404 scans) collapse into endpoint=\"unmatched\", and requests whose handling failed with a service-level error (no route information available) record endpoint=\"error\"."
+            ),
+            &["endpoint", "method", "status_code"],
+            registry
+        )
+        .expect("metric must register");
+
+        let http_request_duration_seconds = register_histogram_vec_with_registry!(
+            histogram_opts!(
+                "aviso_http_request_duration_seconds",
+                "HTTP request duration in seconds by matched route pattern and method, measured until response headers are ready. For SSE endpoints (watch/replay) this is stream setup latency, NOT connection lifetime; see aviso_sse_connection_duration_seconds for that."
+            ),
+            &["endpoint", "method"],
+            registry
+        )
+        .expect("metric must register");
+
         let notifications_total = register_int_counter_vec_with_registry!(
             opts!(
                 "aviso_notifications_total",
@@ -72,6 +113,16 @@ impl AppMetrics {
             registry
         )
         .expect("metric must register");
+        // Pre-initialise the bounded label values so the series exist at zero
+        // from process startup; see the ECPDS pre-init comment below for why
+        // missing series break `rate(...) > 0` alert rules. Requests that fail
+        // before schema validation are recorded under event_type="unknown" and
+        // can only be errors or auth rejections, never successes. Per-stream
+        // series are pre-initialised via `preinit_notification_series` once
+        // the schema is loaded.
+        for status in ["error", "rejected"] {
+            let _ = notifications_total.with_label_values(&["unknown", status]);
+        }
 
         let sse_connections_active = register_int_gauge_vec_with_registry!(
             opts!(
@@ -103,6 +154,40 @@ impl AppMetrics {
         )
         .expect("metric must register");
 
+        let sse_events_sent_total = register_int_counter_vec_with_registry!(
+            opts!(
+                "aviso_sse_events_sent_total",
+                "Notification events delivered to SSE clients. Counts only notification frames; heartbeats, control events (connection_established, replay_started/completed/limit_reached), and close frames are excluded."
+            ),
+            &["endpoint", "event_type"],
+            registry
+        )
+        .expect("metric must register");
+
+        let sse_stream_errors_total = register_int_counter_vec_with_registry!(
+            opts!(
+                "aviso_sse_stream_errors_total",
+                "Error events emitted into SSE streams after the response started (typed stream errors and notification rendering failures). These failures are invisible to HTTP status metrics because the stream already returned 200."
+            ),
+            &["endpoint", "event_type"],
+            registry
+        )
+        .expect("metric must register");
+
+        let sse_connection_duration_seconds = register_histogram_vec_with_registry!(
+            histogram_opts!(
+                "aviso_sse_connection_duration_seconds",
+                "SSE connection lifetime in seconds, observed only when the connection closes; long-lived open connections appear in aviso_sse_connections_active, not here.",
+                vec![
+                    1.0, 5.0, 15.0, 30.0, 60.0, 300.0, 900.0, 1800.0, 3600.0, 7200.0, 14400.0,
+                    28800.0, 43200.0, 86400.0
+                ]
+            ),
+            &["endpoint"],
+            registry
+        )
+        .expect("metric must register");
+
         let auth_requests_total = register_int_counter_vec_with_registry!(
             opts!(
                 "aviso_auth_requests_total",
@@ -112,6 +197,16 @@ impl AppMetrics {
             registry
         )
         .expect("metric must register");
+        for mode in ["direct", "trusted_proxy"] {
+            for outcome in [
+                "success",
+                "unauthorized",
+                "forbidden",
+                "service_unavailable",
+            ] {
+                let _ = auth_requests_total.with_label_values(&[mode, outcome]);
+            }
+        }
 
         #[cfg(feature = "ecpds")]
         let ecpds = {
@@ -191,14 +286,33 @@ impl AppMetrics {
 
         Self {
             registry,
+            build_info,
+            http_requests_total,
+            http_request_duration_seconds,
             notifications_total,
             sse_connections_active,
             sse_connections_total,
             sse_unique_users_active,
+            sse_events_sent_total,
+            sse_stream_errors_total,
+            sse_connection_duration_seconds,
             auth_requests_total,
             #[cfg(feature = "ecpds")]
             ecpds,
             unique_users: Arc::new(Mutex::new(HashMap::new())),
+        }
+    }
+
+    /// Pre-initialise per-stream notification series at zero so alert rules
+    /// evaluate against existing series from startup (same rationale as the
+    /// ECPDS pre-init in `new`). Call once after the schema is loaded.
+    pub fn preinit_notification_series<'a>(&self, event_types: impl IntoIterator<Item = &'a str>) {
+        for event_type in event_types {
+            for status in ["success", "error"] {
+                let _ = self
+                    .notifications_total
+                    .with_label_values(&[event_type, status]);
+            }
         }
     }
 
@@ -218,7 +332,13 @@ impl AppMetrics {
             .inc();
 
         if let Some(u) = username {
-            let mut users = self.unique_users.lock().expect("metrics lock poisoned");
+            // Recover from poisoning instead of panicking: the map only holds
+            // refcounts, and a panic here (or in Drop, where it would abort
+            // the process during unwind) is worse than a skewed gauge.
+            let mut users = self
+                .unique_users
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             let count = users
                 .entry(endpoint.to_string())
                 .or_default()
@@ -237,31 +357,79 @@ impl AppMetrics {
             endpoint: endpoint.to_string(),
             event_type: event_type.to_string(),
             username: username.map(str::to_string),
+            connection_duration: self
+                .sse_connection_duration_seconds
+                .with_label_values(&[endpoint]),
+            opened_at: Instant::now(),
         }
     }
 }
 
-/// Decrements SSE connection gauges when dropped (connection closed/disconnected).
+/// Pre-labelled per-connection counters for frames delivered on an SSE
+/// stream. Cheap to clone into stream-mapping closures; obtained from
+/// [`SseConnectionGuard::delivery_metrics`] so the labels always match the
+/// connection's gauges.
+#[derive(Clone)]
+pub struct SseDeliveryMetrics {
+    events_sent: IntCounter,
+    stream_errors: IntCounter,
+}
+
+impl SseDeliveryMetrics {
+    pub fn inc_events_sent(&self) {
+        self.events_sent.inc();
+    }
+
+    pub fn inc_stream_errors(&self) {
+        self.stream_errors.inc();
+    }
+}
+
+/// Decrements SSE connection gauges and observes connection duration when
+/// dropped (connection closed/disconnected).
 pub struct SseConnectionGuard {
     metrics: AppMetrics,
     endpoint: String,
     event_type: String,
     username: Option<String>,
+    connection_duration: Histogram,
+    opened_at: Instant,
+}
+
+impl SseConnectionGuard {
+    /// Counters labelled with this connection's endpoint and event type, for
+    /// counting delivered frames inside the stream pipeline.
+    pub fn delivery_metrics(&self) -> SseDeliveryMetrics {
+        SseDeliveryMetrics {
+            events_sent: self
+                .metrics
+                .sse_events_sent_total
+                .with_label_values(&[&self.endpoint, &self.event_type]),
+            stream_errors: self
+                .metrics
+                .sse_stream_errors_total
+                .with_label_values(&[&self.endpoint, &self.event_type]),
+        }
+    }
 }
 
 impl Drop for SseConnectionGuard {
     fn drop(&mut self) {
+        self.connection_duration
+            .observe(self.opened_at.elapsed().as_secs_f64());
         self.metrics
             .sse_connections_active
             .with_label_values(&[&self.endpoint, &self.event_type])
             .dec();
 
         if let Some(username) = &self.username {
+            // See track_sse_connection: poisoning recovery avoids a
+            // panic-in-Drop, which would abort the process mid-unwind.
             let mut users = self
                 .metrics
                 .unique_users
                 .lock()
-                .expect("metrics lock poisoned");
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
             if let Some(endpoint_users) = users.get_mut(&self.endpoint)
                 && let Some(count) = endpoint_users.get_mut(username)
             {
@@ -531,6 +699,78 @@ mod tests {
             output.contains(r#"event_type="mars""#),
             "output should contain label"
         );
+    }
+
+    #[test]
+    fn guard_drop_observes_connection_duration() {
+        let m = AppMetrics::new();
+        let histogram = m
+            .sse_connection_duration_seconds
+            .with_label_values(&["watch"]);
+
+        let guard = m.track_sse_connection("watch", "mars", None);
+        assert_eq!(histogram.get_sample_count(), 0);
+
+        drop(guard);
+        assert_eq!(histogram.get_sample_count(), 1);
+    }
+
+    #[test]
+    fn delivery_metrics_increment_counters_with_connection_labels() {
+        let m = AppMetrics::new();
+        let guard = m.track_sse_connection("replay", "mars", None);
+
+        let delivery = guard.delivery_metrics();
+        delivery.inc_events_sent();
+        delivery.inc_events_sent();
+        delivery.inc_stream_errors();
+
+        assert_eq!(
+            m.sse_events_sent_total
+                .with_label_values(&["replay", "mars"])
+                .get(),
+            2
+        );
+        assert_eq!(
+            m.sse_stream_errors_total
+                .with_label_values(&["replay", "mars"])
+                .get(),
+            1
+        );
+    }
+
+    #[test]
+    fn build_info_and_preinitialized_series_appear_in_scrape_at_startup() {
+        let m = AppMetrics::new();
+        m.preinit_notification_series(["mars"]);
+
+        let encoder = TextEncoder::new();
+        let mut buf = Vec::new();
+        encoder
+            .encode(&m.registry.gather(), &mut buf)
+            .expect("encode ok");
+        let output = String::from_utf8(buf).expect("valid utf8");
+
+        assert!(
+            output.contains(&format!(
+                r#"aviso_build_info{{version="{}"}} 1"#,
+                env!("CARGO_PKG_VERSION")
+            )),
+            "build_info should carry the crate version: {output}"
+        );
+        for series in [
+            r#"aviso_auth_requests_total{mode="direct",outcome="unauthorized"} 0"#,
+            r#"aviso_auth_requests_total{mode="trusted_proxy",outcome="success"} 0"#,
+            r#"aviso_notifications_total{event_type="unknown",status="rejected"} 0"#,
+            r#"aviso_notifications_total{event_type="unknown",status="error"} 0"#,
+            r#"aviso_notifications_total{event_type="mars",status="success"} 0"#,
+            r#"aviso_notifications_total{event_type="mars",status="error"} 0"#,
+        ] {
+            assert!(
+                output.contains(series),
+                "series should be pre-initialised at zero: {series}\n{output}"
+            );
+        }
     }
 
     #[test]

@@ -9,4 +9,5 @@
 //! Cross-cutting HTTP middlewares.
 
 pub mod access_log;
+pub mod http_metrics;
 pub mod request_id;

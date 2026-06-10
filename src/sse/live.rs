@@ -17,7 +17,7 @@ use tokio_stream::StreamExt as TokioStreamExt;
 use tokio_util::sync::CancellationToken;
 
 use super::helpers::{
-    apply_stream_lifecycle, create_heartbeat_stream, create_sse_response, frame_to_sse_bytes,
+    apply_stream_lifecycle, create_heartbeat_stream, create_sse_response, frames_to_sse_byte_stream,
 };
 use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
@@ -109,11 +109,12 @@ pub(crate) async fn create_watch_sse_stream(
         Some(connection_timeout),
         request_id.clone(),
     );
-    let base_url = app_settings.base_url.clone();
-    let request_id_for_bytes = request_id.clone();
-    let byte_stream = FuturesStreamExt::map(stream_with_lifecycle, move |frame| {
-        frame_to_sse_bytes(frame, &base_url, &request_id_for_bytes)
-    });
+    let byte_stream = frames_to_sse_byte_stream(
+        stream_with_lifecycle,
+        app_settings.base_url.clone(),
+        request_id.clone(),
+        sse_guard.as_ref(),
+    );
 
     tracing::info!(
         service_name = SERVICE_NAME,

@@ -32,13 +32,30 @@ fn format_stream_timestamp(timestamp: DateTime<Utc>) -> String {
     timestamp.to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
+/// Delivery classification of a rendered SSE frame, used for metrics.
+///
+/// Computed at the render boundary because only the renderer knows when a
+/// `StreamFrame::Notification` degrades into an `event: error` (CloudEvent
+/// creation failure); classifying on the input frame alone would count that
+/// failure as a delivered notification.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum SseFrameKind {
+    /// A notification delivered as a live/replay event.
+    Notification,
+    /// An error event emitted into the stream: a typed `Error` frame or a
+    /// notification whose CloudEvent rendering failed.
+    StreamError,
+    /// Heartbeats, control, and close frames; not counted by delivery metrics.
+    Infrastructure,
+}
+
 /// Convert a notification message to an SSE event
 pub(crate) fn notification_to_sse_event(
     notification: &crate::notification_backend::NotificationMessage,
     base_url: &str,
     event_type: SseEventType,
     request_id: &str,
-) -> Result<web::Bytes, actix_web::Error> {
+) -> Result<(web::Bytes, SseFrameKind), actix_web::Error> {
     match create_cloud_event_from_notification(notification, base_url) {
         Ok(cloud_event) => {
             let event_data = serde_json::to_value(&cloud_event)
@@ -56,7 +73,7 @@ pub(crate) fn notification_to_sse_event(
                 );
             }
 
-            Ok(web::Bytes::from(sse_event))
+            Ok((web::Bytes::from(sse_event), SseFrameKind::Notification))
         }
         Err(e) => {
             let display_topic = decode_subject_for_display(&notification.topic);
@@ -85,12 +102,13 @@ pub(crate) fn notification_to_sse_event(
                 }),
             );
 
-            Ok(web::Bytes::from(error_event))
+            Ok((web::Bytes::from(error_event), SseFrameKind::StreamError))
         }
     }
 }
 
-/// Render an internal stream frame into SSE wire bytes.
+/// Render an internal stream frame into SSE wire bytes, classified for
+/// delivery metrics.
 ///
 /// This is the single formatting boundary between typed stream state and
 /// event-stream text payloads sent to clients. `request_id` is propagated
@@ -100,7 +118,7 @@ pub(crate) fn frame_to_sse_bytes(
     frame: StreamFrame,
     base_url: &str,
     request_id: &str,
-) -> Result<web::Bytes, actix_web::Error> {
+) -> Result<(web::Bytes, SseFrameKind), actix_web::Error> {
     match frame {
         StreamFrame::Notification { notification, kind } => {
             let event_type = match kind {
@@ -115,16 +133,19 @@ pub(crate) fn frame_to_sse_bytes(
                 timestamp,
                 connection_will_close_in_seconds,
                 request_id,
-            } => Ok(web::Bytes::from(format_sse_event(
-                SseEventType::LiveNotification,
-                json!({
-                    "type": "connection_established",
-                    "topic": decode_subject_for_display(&topic),
-                    "timestamp": format_stream_timestamp(timestamp),
-                    "connection_will_close_in_seconds": connection_will_close_in_seconds,
-                    "request_id": request_id,
-                }),
-            ))),
+            } => Ok((
+                web::Bytes::from(format_sse_event(
+                    SseEventType::LiveNotification,
+                    json!({
+                        "type": "connection_established",
+                        "topic": decode_subject_for_display(&topic),
+                        "timestamp": format_stream_timestamp(timestamp),
+                        "connection_will_close_in_seconds": connection_will_close_in_seconds,
+                        "request_id": request_id,
+                    }),
+                )),
+                SseFrameKind::Infrastructure,
+            )),
             ControlEvent::ReplayStarted {
                 topic,
                 from_sequence,
@@ -132,66 +153,79 @@ pub(crate) fn frame_to_sse_bytes(
                 batch_size,
                 timestamp,
                 request_id,
-            } => Ok(web::Bytes::from(format_sse_event(
-                SseEventType::ReplayControl,
-                json!({
-                    "type": "replay_started",
-                    "topic": decode_subject_for_display(&topic),
-                    "from_sequence": from_sequence,
-                    "from_date": from_date.map(format_stream_timestamp),
-                    "batch_size": batch_size,
-                    "timestamp": format_stream_timestamp(timestamp),
-                    "request_id": request_id,
-                }),
-            ))),
-            ControlEvent::ReplayCompleted { topic, timestamp } => {
-                Ok(web::Bytes::from(format_sse_event(
+            } => Ok((
+                web::Bytes::from(format_sse_event(
+                    SseEventType::ReplayControl,
+                    json!({
+                        "type": "replay_started",
+                        "topic": decode_subject_for_display(&topic),
+                        "from_sequence": from_sequence,
+                        "from_date": from_date.map(format_stream_timestamp),
+                        "batch_size": batch_size,
+                        "timestamp": format_stream_timestamp(timestamp),
+                        "request_id": request_id,
+                    }),
+                )),
+                SseFrameKind::Infrastructure,
+            )),
+            ControlEvent::ReplayCompleted { topic, timestamp } => Ok((
+                web::Bytes::from(format_sse_event(
                     SseEventType::ReplayControl,
                     json!({
                         "type": "replay_completed",
                         "topic": decode_subject_for_display(&topic),
                         "timestamp": format_stream_timestamp(timestamp)
                     }),
-                )))
-            }
+                )),
+                SseFrameKind::Infrastructure,
+            )),
             ControlEvent::ReplayLimitReached {
                 topic,
                 max_allowed,
                 timestamp,
-            } => Ok(web::Bytes::from(format_sse_event(
-                SseEventType::ReplayControl,
-                json!({
-                    "type": "notification_replay_limit_reached",
-                    "topic": decode_subject_for_display(&topic),
-                    "max_allowed": max_allowed,
-                    "message": format!(
-                        "Historical replay limited to {} messages. Additional historical messages may be available but were not retrieved.",
-                        max_allowed
-                    ),
-                    "timestamp": format_stream_timestamp(timestamp)
-                }),
-            ))),
+            } => Ok((
+                web::Bytes::from(format_sse_event(
+                    SseEventType::ReplayControl,
+                    json!({
+                        "type": "notification_replay_limit_reached",
+                        "topic": decode_subject_for_display(&topic),
+                        "max_allowed": max_allowed,
+                        "message": format!(
+                            "Historical replay limited to {} messages. Additional historical messages may be available but were not retrieved.",
+                            max_allowed
+                        ),
+                        "timestamp": format_stream_timestamp(timestamp)
+                    }),
+                )),
+                SseFrameKind::Infrastructure,
+            )),
         },
-        StreamFrame::Heartbeat { topic, timestamp } => Ok(web::Bytes::from(format_sse_event(
-            SseEventType::Heartbeat,
-            json!({
-                "timestamp": format_stream_timestamp(timestamp),
-                "topic": decode_subject_for_display(&topic)
-            }),
-        ))),
+        StreamFrame::Heartbeat { topic, timestamp } => Ok((
+            web::Bytes::from(format_sse_event(
+                SseEventType::Heartbeat,
+                json!({
+                    "timestamp": format_stream_timestamp(timestamp),
+                    "topic": decode_subject_for_display(&topic)
+                }),
+            )),
+            SseFrameKind::Infrastructure,
+        )),
         StreamFrame::Error {
             topic,
             message,
             request_id,
-        } => Ok(web::Bytes::from(format_sse_event(
-            SseEventType::Error,
-            json!({
-                "error": "stream_processing_failed",
-                "message": message,
-                "topic": decode_subject_for_display(&topic),
-                "request_id": request_id,
-            }),
-        ))),
+        } => Ok((
+            web::Bytes::from(format_sse_event(
+                SseEventType::Error,
+                json!({
+                    "error": "stream_processing_failed",
+                    "message": message,
+                    "topic": decode_subject_for_display(&topic),
+                    "request_id": request_id,
+                }),
+            )),
+            SseFrameKind::StreamError,
+        )),
         StreamFrame::Close {
             topic,
             reason,
@@ -209,16 +243,19 @@ pub(crate) fn frame_to_sse_bytes(
                 ),
                 CloseReason::EndOfStream => ("end_of_stream", "Stream completed".to_string()),
             };
-            Ok(web::Bytes::from(format_sse_event(
-                SseEventType::ConnectionClosing,
-                json!({
-                    "reason": reason_str,
-                    "timestamp": format_stream_timestamp(timestamp),
-                    "message": message,
-                    "topic": decode_subject_for_display(&topic),
-                    "request_id": request_id,
-                }),
-            )))
+            Ok((
+                web::Bytes::from(format_sse_event(
+                    SseEventType::ConnectionClosing,
+                    json!({
+                        "reason": reason_str,
+                        "timestamp": format_stream_timestamp(timestamp),
+                        "message": message,
+                        "topic": decode_subject_for_display(&topic),
+                        "request_id": request_id,
+                    }),
+                )),
+                SseFrameKind::Infrastructure,
+            ))
         }
     }
 }
@@ -319,6 +356,40 @@ where
     )
 }
 
+fn record_frame_delivery(
+    delivery: &Option<crate::metrics::SseDeliveryMetrics>,
+    kind: SseFrameKind,
+) {
+    let Some(d) = delivery else { return };
+    match kind {
+        SseFrameKind::Notification => d.inc_events_sent(),
+        SseFrameKind::StreamError => d.inc_stream_errors(),
+        SseFrameKind::Infrastructure => {}
+    }
+}
+
+/// Convert a typed frame stream into SSE wire bytes, recording delivery
+/// metrics per rendered frame. The single conversion point for every SSE
+/// endpoint: new stream builders go through here so delivered-event
+/// accounting cannot be forgotten.
+pub(crate) fn frames_to_sse_byte_stream<S>(
+    frames: S,
+    base_url: String,
+    request_id: String,
+    sse_guard: Option<&crate::metrics::SseConnectionGuard>,
+) -> impl tokio_stream::Stream<Item = Result<web::Bytes, actix_web::Error>> + use<S>
+where
+    S: tokio_stream::Stream<Item = StreamFrame>,
+{
+    let delivery = sse_guard.map(crate::metrics::SseConnectionGuard::delivery_metrics);
+    futures_util::StreamExt::map(frames, move |frame| {
+        frame_to_sse_bytes(frame, &base_url, &request_id).map(|(bytes, kind)| {
+            record_frame_delivery(&delivery, kind);
+            bytes
+        })
+    })
+}
+
 /// Create a standardized SSE HttpResponse with proper headers.
 ///
 /// When a `SseConnectionGuard` is provided, it is held alive for the
@@ -349,11 +420,85 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::frame_to_sse_bytes;
+    use super::{frame_to_sse_bytes, record_frame_delivery};
+    use crate::metrics::AppMetrics;
     use crate::sse::types::{CloseReason, ControlEvent, StreamFrame};
     use chrono::{DateTime, Utc};
 
     const TEST_REQUEST_ID: &str = "abcd1234-0000-4000-8000-aaaaaaaaaaaa";
+
+    #[test]
+    fn infrastructure_frames_classify_as_uncounted_and_error_frames_as_stream_errors() {
+        let infrastructure_frames = [
+            StreamFrame::Heartbeat {
+                topic: "test.topic".to_string(),
+                timestamp: Utc::now(),
+            },
+            StreamFrame::Control(ControlEvent::ReplayCompleted {
+                topic: "test.topic".to_string(),
+                timestamp: Utc::now(),
+            }),
+            StreamFrame::Control(ControlEvent::ConnectionEstablished {
+                topic: "test.topic".to_string(),
+                timestamp: Utc::now(),
+                connection_will_close_in_seconds: 3600,
+                request_id: TEST_REQUEST_ID.to_string(),
+            }),
+            StreamFrame::Close {
+                topic: "test.topic".to_string(),
+                reason: CloseReason::EndOfStream,
+                timestamp: Utc::now(),
+                request_id: TEST_REQUEST_ID.to_string(),
+            },
+        ];
+        for frame in infrastructure_frames {
+            let (_, kind) = frame_to_sse_bytes(frame, "http://localhost", TEST_REQUEST_ID)
+                .expect("frame rendering should succeed");
+            assert_eq!(kind, super::SseFrameKind::Infrastructure);
+        }
+
+        let (_, kind) = frame_to_sse_bytes(
+            StreamFrame::Error {
+                topic: "test.topic".to_string(),
+                message: "boom".to_string(),
+                request_id: TEST_REQUEST_ID.to_string(),
+            },
+            "http://localhost",
+            TEST_REQUEST_ID,
+        )
+        .expect("frame rendering should succeed");
+        assert_eq!(kind, super::SseFrameKind::StreamError);
+    }
+
+    #[test]
+    fn record_frame_delivery_counts_notifications_and_stream_errors_only() {
+        let metrics = AppMetrics::new();
+        let guard = metrics.track_sse_connection("watch", "mars", None);
+        let delivery = Some(guard.delivery_metrics());
+
+        record_frame_delivery(&delivery, super::SseFrameKind::Notification);
+        record_frame_delivery(&delivery, super::SseFrameKind::Notification);
+        record_frame_delivery(&delivery, super::SseFrameKind::StreamError);
+        record_frame_delivery(&delivery, super::SseFrameKind::Infrastructure);
+        record_frame_delivery(&None, super::SseFrameKind::Notification);
+
+        assert_eq!(
+            metrics
+                .sse_events_sent_total
+                .with_label_values(&["watch", "mars"])
+                .get(),
+            2,
+            "only notification kinds count as delivered events"
+        );
+        assert_eq!(
+            metrics
+                .sse_stream_errors_total
+                .with_label_values(&["watch", "mars"])
+                .get(),
+            1,
+            "only stream-error kinds count as stream errors"
+        );
+    }
 
     #[test]
     fn replay_started_timestamps_are_emitted_as_clean_utc_seconds() {
@@ -364,7 +509,7 @@ mod tests {
             .expect("test from_date should parse")
             .with_timezone(&Utc);
 
-        let bytes = frame_to_sse_bytes(
+        let (bytes, _) = frame_to_sse_bytes(
             StreamFrame::Control(ControlEvent::ReplayStarted {
                 topic: "polygon.*.1200".to_string(),
                 from_sequence: Some(0),
@@ -385,7 +530,7 @@ mod tests {
 
     #[test]
     fn connection_established_event_carries_request_id() {
-        let bytes = frame_to_sse_bytes(
+        let (bytes, _) = frame_to_sse_bytes(
             StreamFrame::Control(ControlEvent::ConnectionEstablished {
                 topic: "test.topic".to_string(),
                 timestamp: Utc::now(),
@@ -404,7 +549,7 @@ mod tests {
 
     #[test]
     fn replay_started_event_carries_request_id() {
-        let bytes = frame_to_sse_bytes(
+        let (bytes, _) = frame_to_sse_bytes(
             StreamFrame::Control(ControlEvent::ReplayStarted {
                 topic: "test.topic".to_string(),
                 from_sequence: Some(42),
@@ -425,7 +570,7 @@ mod tests {
 
     #[test]
     fn error_frame_carries_request_id() {
-        let bytes = frame_to_sse_bytes(
+        let (bytes, _) = frame_to_sse_bytes(
             StreamFrame::Error {
                 topic: "test.topic".to_string(),
                 message: "backend unavailable".to_string(),
@@ -444,7 +589,7 @@ mod tests {
 
     #[test]
     fn close_frame_carries_request_id() {
-        let bytes = frame_to_sse_bytes(
+        let (bytes, _) = frame_to_sse_bytes(
             StreamFrame::Close {
                 topic: "test.topic".to_string(),
                 reason: CloseReason::MaxDurationReached,
