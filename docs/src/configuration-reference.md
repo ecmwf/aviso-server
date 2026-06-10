@@ -116,7 +116,7 @@ Exposed metrics:
 | Metric | Type | Labels | Description |
 |---|---|---|---|
 | `aviso_build_info` | gauge | `version` | Constant `1` with the server version as a label; join on it in dashboards to annotate deploys. |
-| `aviso_http_requests_total` | counter | `endpoint`, `method`, `status_code` | HTTP requests on the main server by matched route pattern (e.g. `/api/v1/schema/{event_type}`). Unrouted requests (404 scans) collapse into `endpoint="unmatched"`; non-standard HTTP methods collapse into `method="other"`. |
+| `aviso_http_requests_total` | counter | `endpoint`, `method`, `status_code` | HTTP requests on the main server by matched route pattern (e.g. `/api/v1/schema/{event_type}`). Reserved label values: unrouted requests (404 scans) collapse into `endpoint="unmatched"`, requests failing with a service-level error (no route information available) record `endpoint="error"`, and non-standard HTTP methods collapse into `method="other"`. |
 | `aviso_http_request_duration_seconds` | histogram | `endpoint`, `method` | Request duration until response headers are ready. For the SSE endpoints (`/api/v1/watch`, `/api/v1/replay`) this is stream *setup* latency, not connection lifetime; see `aviso_sse_connection_duration_seconds`. |
 | `aviso_notifications_total` | counter | `event_type`, `status` | Total notification requests. `status` ∈ {`success`, `error`, `rejected`}; requests failing before schema validation record `event_type="unknown"`. |
 | `aviso_sse_connections_active` | gauge | `endpoint`, `event_type` | Currently active SSE connections. |

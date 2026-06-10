@@ -45,6 +45,8 @@ fn method_label(method: &Method) -> &'static str {
         "PATCH" => "PATCH",
         "HEAD" => "HEAD",
         "OPTIONS" => "OPTIONS",
+        "CONNECT" => "CONNECT",
+        "TRACE" => "TRACE",
         _ => "other",
     }
 }

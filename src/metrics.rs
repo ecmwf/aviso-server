@@ -87,7 +87,7 @@ impl AppMetrics {
         let http_requests_total = register_int_counter_vec_with_registry!(
             opts!(
                 "aviso_http_requests_total",
-                "HTTP requests by matched route pattern, method, and status code. Unrouted requests (404 scans) are collapsed into endpoint=\"unmatched\" to bound label cardinality."
+                "HTTP requests by matched route pattern, method, and status code. Two reserved endpoint values bound label cardinality: unrouted requests (404 scans) collapse into endpoint=\"unmatched\", and requests whose handling failed with a service-level error (no route information available) record endpoint=\"error\"."
             ),
             &["endpoint", "method", "status_code"],
             registry
