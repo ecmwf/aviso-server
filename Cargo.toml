@@ -1,6 +1,6 @@
 [package]
 name = "aviso-server"
-version = "0.6.2"
+version = "0.7.0"
 edition = "2024"
 authors = ["Samet Demir <samet.demir@ecmwf.int>",
            "James Hawkes <james.hawkes@ecmwf.int>"]
@@ -23,7 +23,7 @@ path = "src/main.rs"
 name = "aviso_server"
 
 [dependencies]
-aviso-validators = { version = "0.6.2", path = "aviso-validators", features = ["openapi"] }
+aviso-validators = { version = "0.7.0", path = "aviso-validators", features = ["openapi"] }
 actix-web = "4.13"
 actix-files = "0.6"
 utoipa = { version = "5.5", features = ["actix_extras", "chrono", "uuid"] }
@@ -56,7 +56,7 @@ tokio-util = "0.7"
 geo = "0.33"
 geo-types = "0.7"
 prometheus = { version = "0.14", features = ["process"] }
-aviso-ecpds = { version = "0.6.2", path = "aviso-ecpds", optional = true }
+aviso-ecpds = { version = "0.7.0", path = "aviso-ecpds", optional = true }
 
 [features]
 default = []
