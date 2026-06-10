@@ -130,7 +130,7 @@ pub async fn replay(
     // See watch.rs for why the guard is created before stream setup.
     let sse_guard = metrics.as_ref().map(|m| {
         let username = get_username(&http_request);
-        m.track_sse_connection("replay", event_type_label, username.as_deref())
+        m.track_sse_connection("/api/v1/replay", event_type_label, username.as_deref())
     });
 
     match create_replay_only_stream(

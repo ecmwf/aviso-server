@@ -47,6 +47,9 @@ pub struct AppMetrics {
     pub build_info: IntGaugeVec,
     pub http_requests_total: IntCounterVec,
     pub http_request_duration_seconds: HistogramVec,
+    pub http_requests_in_flight: IntGaugeVec,
+    pub backend_operations_total: IntCounterVec,
+    pub backend_operation_duration_seconds: HistogramVec,
     pub notifications_total: IntCounterVec,
     pub sse_connections_active: IntGaugeVec,
     pub sse_connections_total: IntCounterVec,
@@ -87,9 +90,9 @@ impl AppMetrics {
         let http_requests_total = register_int_counter_vec_with_registry!(
             opts!(
                 "aviso_http_requests_total",
-                "HTTP requests by matched route pattern, method, and status code. Two reserved endpoint values bound label cardinality: unrouted requests (404 scans) collapse into endpoint=\"unmatched\", and requests whose handling failed with a service-level error (no route information available) record endpoint=\"error\"."
+                "HTTP requests by matched route pattern, method, and status code. Two reserved route values bound label cardinality: unrouted requests (404 scans) collapse into route=\"unmatched\", and requests whose handling failed with a service-level error (no route information available) record route=\"error\". The label is named `route` (not `endpoint`) to avoid colliding with the Prometheus Operator target label `endpoint`."
             ),
-            &["endpoint", "method", "status_code"],
+            &["route", "method", "status_code"],
             registry
         )
         .expect("metric must register");
@@ -97,9 +100,39 @@ impl AppMetrics {
         let http_request_duration_seconds = register_histogram_vec_with_registry!(
             histogram_opts!(
                 "aviso_http_request_duration_seconds",
-                "HTTP request duration in seconds by matched route pattern and method, measured until response headers are ready. For SSE endpoints (watch/replay) this is stream setup latency, NOT connection lifetime; see aviso_sse_connection_duration_seconds for that."
+                "HTTP request duration in seconds by matched route pattern and method, measured until response headers are ready. For SSE routes (/api/v1/watch, /api/v1/replay) this is stream setup latency, NOT connection lifetime; see aviso_sse_connection_duration_seconds for that."
             ),
-            &["endpoint", "method"],
+            &["route", "method"],
+            registry
+        )
+        .expect("metric must register");
+
+        let http_requests_in_flight = register_int_gauge_vec_with_registry!(
+            opts!(
+                "aviso_http_requests_in_flight",
+                "HTTP requests currently being processed, by method. Labelled by method only: the matched route pattern is not known until routing completes (after the request is already in flight)."
+            ),
+            &["method"],
+            registry
+        )
+        .expect("metric must register");
+
+        let backend_operations_total = register_int_counter_vec_with_registry!(
+            opts!(
+                "aviso_backend_operations_total",
+                "Notification-backend operations by backend kind, operation, and outcome. Measured at the trait boundary (caller-observed). subscribe_to_topic is excluded because its work happens lazily as the returned stream is polled, not when the call returns."
+            ),
+            &["backend", "operation", "outcome"],
+            registry
+        )
+        .expect("metric must register");
+
+        let backend_operation_duration_seconds = register_histogram_vec_with_registry!(
+            histogram_opts!(
+                "aviso_backend_operation_duration_seconds",
+                "Notification-backend operation duration in seconds at the trait boundary, by backend kind, operation, and outcome. Covers publish/get_batch/wipe_stream/wipe_all/delete_message; subscribe_to_topic is excluded (lazy stream)."
+            ),
+            &["backend", "operation", "outcome"],
             registry
         )
         .expect("metric must register");
@@ -127,9 +160,9 @@ impl AppMetrics {
         let sse_connections_active = register_int_gauge_vec_with_registry!(
             opts!(
                 "aviso_sse_connections_active",
-                "Currently active SSE connections"
+                "Currently active SSE connections by route (/api/v1/watch, /api/v1/replay)"
             ),
-            &["endpoint", "event_type"],
+            &["route", "event_type"],
             registry
         )
         .expect("metric must register");
@@ -137,9 +170,9 @@ impl AppMetrics {
         let sse_connections_total = register_int_counter_vec_with_registry!(
             opts!(
                 "aviso_sse_connections_total",
-                "Total SSE connections opened"
+                "Total SSE connections opened by route"
             ),
-            &["endpoint", "event_type"],
+            &["route", "event_type"],
             registry
         )
         .expect("metric must register");
@@ -147,9 +180,9 @@ impl AppMetrics {
         let sse_unique_users_active = register_int_gauge_vec_with_registry!(
             opts!(
                 "aviso_sse_unique_users_active",
-                "Distinct users with active SSE connections"
+                "Distinct users with active SSE connections by route"
             ),
-            &["endpoint"],
+            &["route"],
             registry
         )
         .expect("metric must register");
@@ -159,7 +192,7 @@ impl AppMetrics {
                 "aviso_sse_events_sent_total",
                 "Notification events delivered to SSE clients. Counts only notification frames; heartbeats, control events (connection_established, replay_started/completed/limit_reached), and close frames are excluded."
             ),
-            &["endpoint", "event_type"],
+            &["route", "event_type"],
             registry
         )
         .expect("metric must register");
@@ -169,7 +202,7 @@ impl AppMetrics {
                 "aviso_sse_stream_errors_total",
                 "Error events emitted into SSE streams after the response started (typed stream errors and notification rendering failures). These failures are invisible to HTTP status metrics because the stream already returned 200."
             ),
-            &["endpoint", "event_type"],
+            &["route", "event_type"],
             registry
         )
         .expect("metric must register");
@@ -183,7 +216,7 @@ impl AppMetrics {
                     28800.0, 43200.0, 86400.0
                 ]
             ),
-            &["endpoint"],
+            &["route"],
             registry
         )
         .expect("metric must register");
@@ -289,6 +322,9 @@ impl AppMetrics {
             build_info,
             http_requests_total,
             http_request_duration_seconds,
+            http_requests_in_flight,
+            backend_operations_total,
+            backend_operation_duration_seconds,
             notifications_total,
             sse_connections_active,
             sse_connections_total,
@@ -316,19 +352,19 @@ impl AppMetrics {
         }
     }
 
-    /// Track a user connecting to an SSE endpoint.
+    /// Track a user connecting to an SSE route (e.g. `/api/v1/watch`).
     /// Returns a guard that decrements on drop.
     pub fn track_sse_connection(
         &self,
-        endpoint: &str,
+        route: &str,
         event_type: &str,
         username: Option<&str>,
     ) -> SseConnectionGuard {
         self.sse_connections_active
-            .with_label_values(&[endpoint, event_type])
+            .with_label_values(&[route, event_type])
             .inc();
         self.sse_connections_total
-            .with_label_values(&[endpoint, event_type])
+            .with_label_values(&[route, event_type])
             .inc();
 
         if let Some(u) = username {
@@ -340,26 +376,26 @@ impl AppMetrics {
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
             let count = users
-                .entry(endpoint.to_string())
+                .entry(route.to_string())
                 .or_default()
                 .entry(u.to_string())
                 .or_insert(0);
             *count += 1;
             if *count == 1 {
                 self.sse_unique_users_active
-                    .with_label_values(&[endpoint])
+                    .with_label_values(&[route])
                     .inc();
             }
         }
 
         SseConnectionGuard {
             metrics: self.clone(),
-            endpoint: endpoint.to_string(),
+            route: route.to_string(),
             event_type: event_type.to_string(),
             username: username.map(str::to_string),
             connection_duration: self
                 .sse_connection_duration_seconds
-                .with_label_values(&[endpoint]),
+                .with_label_values(&[route]),
             opened_at: Instant::now(),
         }
     }
@@ -389,7 +425,7 @@ impl SseDeliveryMetrics {
 /// dropped (connection closed/disconnected).
 pub struct SseConnectionGuard {
     metrics: AppMetrics,
-    endpoint: String,
+    route: String,
     event_type: String,
     username: Option<String>,
     connection_duration: Histogram,
@@ -397,18 +433,18 @@ pub struct SseConnectionGuard {
 }
 
 impl SseConnectionGuard {
-    /// Counters labelled with this connection's endpoint and event type, for
+    /// Counters labelled with this connection's route and event type, for
     /// counting delivered frames inside the stream pipeline.
     pub fn delivery_metrics(&self) -> SseDeliveryMetrics {
         SseDeliveryMetrics {
             events_sent: self
                 .metrics
                 .sse_events_sent_total
-                .with_label_values(&[&self.endpoint, &self.event_type]),
+                .with_label_values(&[&self.route, &self.event_type]),
             stream_errors: self
                 .metrics
                 .sse_stream_errors_total
-                .with_label_values(&[&self.endpoint, &self.event_type]),
+                .with_label_values(&[&self.route, &self.event_type]),
         }
     }
 }
@@ -419,7 +455,7 @@ impl Drop for SseConnectionGuard {
             .observe(self.opened_at.elapsed().as_secs_f64());
         self.metrics
             .sse_connections_active
-            .with_label_values(&[&self.endpoint, &self.event_type])
+            .with_label_values(&[&self.route, &self.event_type])
             .dec();
 
         if let Some(username) = &self.username {
@@ -430,15 +466,15 @@ impl Drop for SseConnectionGuard {
                 .unique_users
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
-            if let Some(endpoint_users) = users.get_mut(&self.endpoint)
-                && let Some(count) = endpoint_users.get_mut(username)
+            if let Some(route_users) = users.get_mut(&self.route)
+                && let Some(count) = route_users.get_mut(username)
             {
                 *count = count.saturating_sub(1);
                 if *count == 0 {
-                    endpoint_users.remove(username);
+                    route_users.remove(username);
                     self.metrics
                         .sse_unique_users_active
-                        .with_label_values(&[&self.endpoint])
+                        .with_label_values(&[&self.route])
                         .dec();
                 }
             }

@@ -33,7 +33,7 @@ use crate::{
         Settings, validate_auth_settings, validate_schema_storage_policy_support,
         validate_stream_auth_settings, validate_stream_plugin_settings,
     },
-    notification_backend::{NotificationBackend, build_backend},
+    notification_backend::{MeteredBackend, NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify},
     telemetry::{SERVICE_NAME, SERVICE_VERSION},
 };
@@ -192,6 +192,17 @@ impl Application {
             (Some(metrics), Some(server))
         } else {
             (None, None)
+        };
+
+        // Wrap the backend so trait-boundary operations record metrics. Only
+        // when metrics are enabled; otherwise the bare backend is used.
+        let notification_backend: Arc<dyn NotificationBackend> = match &app_metrics {
+            Some(metrics) => Arc::new(MeteredBackend::new(
+                notification_backend,
+                metrics.clone(),
+                &configuration.notification_backend.kind,
+            )),
+            None => notification_backend,
         };
 
         let server = run(

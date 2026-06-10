@@ -137,7 +137,7 @@ pub async fn watch(
     // brief +1/-1 on the active gauge — acceptable for production metrics.
     let sse_guard = metrics.as_ref().map(|m| {
         let username = get_username(&http_request);
-        m.track_sse_connection("watch", event_type_label, username.as_deref())
+        m.track_sse_connection("/api/v1/watch", event_type_label, username.as_deref())
     });
 
     // Determine streaming mode and create appropriate stream

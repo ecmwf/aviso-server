@@ -8,10 +8,12 @@
 
 pub mod in_memory;
 pub mod jetstream;
+pub mod metered;
 pub mod replay;
 
 pub use jetstream::backend::JetStreamBackend;
 pub use jetstream::config::JetStreamConfig;
+pub use metered::MeteredBackend;
 use std::collections::HashMap;
 
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
