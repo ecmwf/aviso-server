@@ -7,14 +7,20 @@
 // does it submit to any jurisdiction.
 
 //! Per-request RED metrics (`aviso_http_requests_total`,
-//! `aviso_http_request_duration_seconds`) for every route on the main server.
+//! `aviso_http_request_duration_seconds`, `aviso_http_requests_in_flight`)
+//! for every route on the main server.
 //!
-//! The endpoint label is the *matched route pattern* (e.g.
+//! The `route` label is the *matched route pattern* (e.g.
 //! `/api/v1/schema/{event_type}`), never the raw request path, so label
 //! cardinality stays bounded under path scans: unrouted requests collapse
-//! into `endpoint="unmatched"`. Durations are measured until response
-//! headers are ready, which for SSE endpoints means stream *setup* latency
-//! rather than connection lifetime.
+//! into `route="unmatched"`. (It is named `route`, not `endpoint`, to avoid
+//! colliding with the Prometheus Operator target label `endpoint`.) Durations
+//! are measured until response headers are ready, which for SSE routes means
+//! stream *setup* latency rather than connection lifetime.
+//!
+//! The in-flight gauge is labelled by method only: the route pattern is not
+//! known until routing completes, by which point the request is already in
+//! flight, so there is no correct route value to use at increment time.
 //!
 //! Reads [`AppMetrics`] from app data and is a pure passthrough when metrics
 //! are disabled, mirroring how route handlers treat
@@ -32,8 +38,19 @@ use actix_web::{
     web,
 };
 use futures_util::future::LocalBoxFuture;
+use prometheus::IntGauge;
 
 use crate::metrics::AppMetrics;
+
+/// Decrements the in-flight gauge when the request future completes or is
+/// dropped (client disconnect / cancellation), so the gauge cannot leak.
+struct InFlightGuard(IntGauge);
+
+impl Drop for InFlightGuard {
+    fn drop(&mut self) {
+        self.0.dec();
+    }
+}
 
 /// Bound the method label to well-known HTTP methods; anything else (HTTP
 /// allows arbitrary extension tokens) is collapsed to keep cardinality fixed.
@@ -110,12 +127,20 @@ where
         let started_at = Instant::now();
 
         Box::pin(async move {
+            // Increment in-flight on entry; the guard decrements on drop,
+            // covering the Ok, Err, and cancellation (client disconnect) paths.
+            let _in_flight = metrics.as_ref().map(|m| {
+                let gauge = m.http_requests_in_flight.with_label_values(&[method]);
+                gauge.inc();
+                InFlightGuard(gauge)
+            });
+
             let result = service.call(req).await;
 
-            if let Some(m) = metrics {
+            if let Some(m) = &metrics {
                 // Route matching happens inside the inner service, so the
                 // pattern is only available on the response's request.
-                let (endpoint, status_code): (Cow<'static, str>, _) = match &result {
+                let (route, status_code): (Cow<'static, str>, _) = match &result {
                     Ok(res) => (
                         res.request()
                             .match_pattern()
@@ -126,10 +151,10 @@ where
                 };
 
                 m.http_requests_total
-                    .with_label_values(&[endpoint.as_ref(), method, status_code.as_str()])
+                    .with_label_values(&[route.as_ref(), method, status_code.as_str()])
                     .inc();
                 m.http_request_duration_seconds
-                    .with_label_values(&[endpoint.as_ref(), method])
+                    .with_label_values(&[route.as_ref(), method])
                     .observe(started_at.elapsed().as_secs_f64());
             }
 
@@ -161,15 +186,15 @@ mod tests {
         HttpResponse::InternalServerError().finish()
     }
 
-    fn requests_count(m: &AppMetrics, endpoint: &str, method: &str, status: &str) -> u64 {
+    fn requests_count(m: &AppMetrics, route: &str, method: &str, status: &str) -> u64 {
         m.http_requests_total
-            .with_label_values(&[endpoint, method, status])
+            .with_label_values(&[route, method, status])
             .get()
     }
 
-    fn duration_sample_count(m: &AppMetrics, endpoint: &str, method: &str) -> u64 {
+    fn duration_sample_count(m: &AppMetrics, route: &str, method: &str) -> u64 {
         m.http_request_duration_seconds
-            .with_label_values(&[endpoint, method])
+            .with_label_values(&[route, method])
             .get_sample_count()
     }
 
@@ -284,6 +309,46 @@ mod tests {
         assert!(result.is_err(), "error must propagate unchanged");
         assert_eq!(requests_count(&metrics, "error", "GET", "418"), 1);
         assert_eq!(duration_sample_count(&metrics, "error", "GET"), 1);
+    }
+
+    #[actix_web::test]
+    async fn in_flight_gauge_rises_during_request_and_falls_after() {
+        let metrics = AppMetrics::new();
+
+        // Handler observes the in-flight gauge from inside the request, where
+        // it must read 1 (this request), then the gauge must return to 0 once
+        // the response future completes and the guard drops.
+        async fn observing_handler(m: web::Data<AppMetrics>) -> HttpResponse {
+            let in_flight = m.http_requests_in_flight.with_label_values(&["GET"]).get();
+            HttpResponse::Ok().body(in_flight.to_string())
+        }
+
+        let app = init_service(
+            App::new()
+                .wrap(HttpMetrics)
+                .app_data(web::Data::new(metrics.clone()))
+                .route("/obs", web::get().to(observing_handler)),
+        )
+        .await;
+
+        let res = call_service(&app, TestRequest::get().uri("/obs").to_request()).await;
+        assert_eq!(res.status(), StatusCode::OK);
+        let body = actix_web::body::to_bytes(res.into_body())
+            .await
+            .expect("body");
+        assert_eq!(
+            body, "1",
+            "gauge should read 1 while the request is in flight"
+        );
+
+        assert_eq!(
+            metrics
+                .http_requests_in_flight
+                .with_label_values(&["GET"])
+                .get(),
+            0,
+            "gauge should return to 0 after the request completes",
+        );
     }
 
     #[actix_web::test]
