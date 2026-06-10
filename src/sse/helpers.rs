@@ -319,6 +319,23 @@ where
     )
 }
 
+/// Record a frame about to be delivered to an SSE client.
+///
+/// Counts notification frames as delivered events and error frames as
+/// stream errors; heartbeats, control, and close frames are intentionally
+/// not counted (see the `aviso_sse_events_sent_total` HELP text).
+pub(crate) fn record_frame_delivery(
+    delivery: &Option<crate::metrics::SseDeliveryMetrics>,
+    frame: &StreamFrame,
+) {
+    let Some(d) = delivery else { return };
+    match frame {
+        StreamFrame::Notification { .. } => d.inc_events_sent(),
+        StreamFrame::Error { .. } => d.inc_stream_errors(),
+        StreamFrame::Control(_) | StreamFrame::Heartbeat { .. } | StreamFrame::Close { .. } => {}
+    }
+}
+
 /// Create a standardized SSE HttpResponse with proper headers.
 ///
 /// When a `SseConnectionGuard` is provided, it is held alive for the
@@ -349,11 +366,78 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::frame_to_sse_bytes;
-    use crate::sse::types::{CloseReason, ControlEvent, StreamFrame};
+    use super::{frame_to_sse_bytes, record_frame_delivery};
+    use crate::metrics::AppMetrics;
+    use crate::sse::types::{CloseReason, ControlEvent, DeliveryKind, StreamFrame};
     use chrono::{DateTime, Utc};
 
     const TEST_REQUEST_ID: &str = "abcd1234-0000-4000-8000-aaaaaaaaaaaa";
+
+    #[test]
+    fn record_frame_delivery_counts_only_notifications_and_errors() {
+        let metrics = AppMetrics::new();
+        let guard = metrics.track_sse_connection("watch", "mars", None);
+        let delivery = Some(guard.delivery_metrics());
+
+        let notification = crate::notification_backend::NotificationMessage {
+            sequence: 1,
+            topic: "test.topic".to_string(),
+            payload: "{}".to_string(),
+            timestamp: None,
+            metadata: None,
+        };
+        let frames = [
+            StreamFrame::Notification {
+                notification: notification.clone(),
+                kind: DeliveryKind::Live,
+            },
+            StreamFrame::Notification {
+                notification,
+                kind: DeliveryKind::Replay,
+            },
+            StreamFrame::Heartbeat {
+                topic: "test.topic".to_string(),
+                timestamp: Utc::now(),
+            },
+            StreamFrame::Control(ControlEvent::ReplayCompleted {
+                topic: "test.topic".to_string(),
+                timestamp: Utc::now(),
+            }),
+            StreamFrame::Error {
+                topic: "test.topic".to_string(),
+                message: "boom".to_string(),
+                request_id: TEST_REQUEST_ID.to_string(),
+            },
+            StreamFrame::Close {
+                topic: "test.topic".to_string(),
+                reason: CloseReason::EndOfStream,
+                timestamp: Utc::now(),
+                request_id: TEST_REQUEST_ID.to_string(),
+            },
+        ];
+
+        for frame in &frames {
+            record_frame_delivery(&delivery, frame);
+        }
+        record_frame_delivery(&None, &frames[2]);
+
+        assert_eq!(
+            metrics
+                .sse_events_sent_total
+                .with_label_values(&["watch", "mars"])
+                .get(),
+            2,
+            "only the two notification frames count as delivered events"
+        );
+        assert_eq!(
+            metrics
+                .sse_stream_errors_total
+                .with_label_values(&["watch", "mars"])
+                .get(),
+            1,
+            "only the error frame counts as a stream error"
+        );
+    }
 
     #[test]
     fn replay_started_timestamps_are_emitted_as_clean_utc_seconds() {
