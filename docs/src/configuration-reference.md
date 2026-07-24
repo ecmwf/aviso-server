@@ -52,6 +52,56 @@ When `RUST_LOG` is unset, the default filter combines `logging.level` with a sma
 
 These mute directives are pinned by unit tests, only apply when `RUST_LOG` is unset, and only apply when the directive's level is **more restrictive** than `logging.level`. With `logging.level=warn` or `logging.level=error` the directives are skipped entirely so they never raise the per-target ceiling above what the operator chose; with `logging.level=info` the two `actix_*=warn` directives narrow framework chatter while `async_nats=info` is skipped (it would be neutral); with `logging.level=debug` or `logging.level=trace` all three directives apply. Setting `RUST_LOG` opts out of all of them and gives the operator full directive control.
 
+### Push-based export via `logging.otlp`
+
+Logs are always written to stdout as OTel-aligned JSON. With an `otlp`
+block the server additionally pushes every log record to an OpenTelemetry
+collector over OTLP, for clusters where log collection is push-based
+instead of scraping container output.
+
+| Field | Type | Default | Notes |
+|---|---|---|---|
+| `enabled` | `bool` | `false` | Turns OTLP log export on. Startup fails when enabled without an `endpoint`. |
+| `endpoint` | `string` | none | Collector endpoint. A missing scheme defaults to `http://`. For `protocol: http` the OTLP path `/v1/logs` is appended when absent. |
+| `protocol` | `"grpc"\|"http"` | `"grpc"` | Transport. Collectors conventionally listen on 4317 for gRPC and 4318 for HTTP. |
+
+```yaml
+logging:
+  level: info
+  format: json
+  otlp:
+    enabled: true
+    endpoint: "http://otel-collector.observability.svc:4317"
+    protocol: grpc
+```
+
+Operational behavior:
+
+- Export runs on a background batch thread with a bounded queue. A slow or
+  unreachable collector never blocks request handling; overflow drops
+  records from the export path only, and stdout remains complete.
+- Export errors are reported by the SDK's internal diagnostics on stdout,
+  so a broken collector connection is visible in `kubectl logs`.
+- The global filter (`logging.level` / `RUST_LOG`) applies to both sinks,
+  so the collector receives the same event stream as stdout. The export
+  transport's own targets (`opentelemetry*`, `tonic`, `hyper`, `h2`,
+  `tower`, `reqwest`) are excluded from the export path to prevent
+  feedback loops; they still appear on stdout.
+- Exported records carry the same resource identity as stdout records
+  (`service.name`, `service.version`, and `k8s.namespace.name` /
+  `k8s.pod.name` when the corresponding environment variables are set).
+- Redaction on the export path is stricter than stdout: record bodies get
+  the same pattern redaction, but a record carrying a sensitive attribute
+  key (`password`, `secret`, `token`, `authorization`, `api_key`) or a
+  URL value with embedded credentials is withheld from export entirely.
+  The stdout copy of the same record keeps field-level `[REDACTED]`
+  markers, so no information is lost to operators.
+- On shutdown the server flushes buffered records before exiting.
+
+The endpoint can also be injected without a config file change via
+environment overrides, for example
+`AVISOSERVER_LOGGING__OTLP__ENDPOINT=http://collector:4317`.
+
 ## `auth`
 
 Authentication is optional. When disabled (default), all API endpoints are publicly accessible only if schemas do not define stream auth rules. Startup fails if global auth is disabled while a schema sets `auth.required=true` or non-empty `auth.read_roles`/`auth.write_roles`.
