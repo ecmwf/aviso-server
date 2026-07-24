@@ -30,6 +30,7 @@ use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt};
 /// depend on `opentelemetry_sdk` directly.
 pub use opentelemetry_sdk::logs::SdkLoggerProvider;
 pub use otlp::OtlpInitError;
+pub(crate) use otlp::register_otlp_metrics;
 
 pub const SERVICE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");

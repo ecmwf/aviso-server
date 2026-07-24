@@ -73,6 +73,11 @@ impl AppMetrics {
     pub fn new() -> Self {
         let registry = Registry::new();
 
+        // OTLP log export health counters live as statics in the telemetry
+        // module (the log pipeline is installed before AppMetrics exists);
+        // link them into this registry so /metrics serves them.
+        crate::telemetry::register_otlp_metrics(&registry);
+
         // Constant-1 gauge carrying the crate version as a label. Dashboards
         // join on it to annotate deploys and correlate behaviour changes with
         // rollouts (standard Prometheus `*_build_info` convention).

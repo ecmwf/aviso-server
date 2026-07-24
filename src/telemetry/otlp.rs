@@ -21,11 +21,60 @@ use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkResult;
-use opentelemetry_sdk::logs::{BatchLogProcessor, LogProcessor, SdkLogRecord, SdkLoggerProvider};
+use opentelemetry_sdk::logs::{
+    BatchLogProcessor, LogBatch, LogExporter, LogProcessor, SdkLogRecord, SdkLoggerProvider,
+};
+use prometheus::{IntCounter, Registry};
+use std::sync::LazyLock;
 use std::time::Duration;
 use tracing::Subscriber;
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, Layer};
+
+/// Records withheld from OTLP export by the redaction guard.
+///
+/// Static rather than part of `AppMetrics`: the log pipeline is a
+/// process-wide singleton installed in `main` before the application (and
+/// its metrics registry) is built. [`register_otlp_metrics`] links the
+/// counters into the served registry; increments before registration are
+/// preserved because Prometheus collectors keep state independently of
+/// registries.
+static OTLP_SUPPRESSED_LOG_RECORDS: LazyLock<IntCounter> = LazyLock::new(|| {
+    IntCounter::new(
+        "aviso_otlp_suppressed_log_records_total",
+        "Log records withheld from OTLP export by the redaction guard \
+         (sensitive attribute key or credentialed URL value). The stdout \
+         copy of each suppressed record is still emitted with field-level \
+         redaction. A non-zero rate means OpenSearch is missing records \
+         that stdout has; check for new call sites logging sensitive \
+         field names.",
+    )
+    .expect("metric definition must be valid")
+});
+
+/// Failed OTLP export attempts (one per batch, not per record).
+static OTLP_EXPORT_FAILURES: LazyLock<IntCounter> = LazyLock::new(|| {
+    IntCounter::new(
+        "aviso_otlp_export_failures_total",
+        "Failed OTLP log batch export attempts. Each increment is one \
+         batch (up to 512 records) that the collector did not accept; \
+         those records are dropped from the push path while stdout stays \
+         complete. A sustained non-zero rate means the collector endpoint \
+         is unreachable or rejecting writes.",
+    )
+    .expect("metric definition must be valid")
+});
+
+/// Register the OTLP export health counters into `registry` so they are
+/// served by the application's `/metrics` endpoint.
+pub(crate) fn register_otlp_metrics(registry: &Registry) {
+    registry
+        .register(Box::new(OTLP_SUPPRESSED_LOG_RECORDS.clone()))
+        .expect("metric must register");
+    registry
+        .register(Box::new(OTLP_EXPORT_FAILURES.clone()))
+        .expect("metric must register");
+}
 
 /// Failures while constructing the OTLP export pipeline at startup.
 ///
@@ -82,7 +131,7 @@ where
     let provider = SdkLoggerProvider::builder()
         .with_resource(build_resource(service_name))
         .with_log_processor(RedactingLogProcessor::new(
-            BatchLogProcessor::builder(exporter).build(),
+            BatchLogProcessor::builder(MeteredLogExporter::new(exporter)).build(),
         ))
         .build();
 
@@ -223,6 +272,7 @@ impl<P> RedactingLogProcessor<P> {
 impl<P: LogProcessor> LogProcessor for RedactingLogProcessor<P> {
     fn emit(&self, record: &mut SdkLogRecord, instrumentation: &InstrumentationScope) {
         if record_carries_sensitive_attributes(record) {
+            OTLP_SUPPRESSED_LOG_RECORDS.inc();
             return;
         }
         redact_body(record);
@@ -253,6 +303,46 @@ impl<P> std::fmt::Debug for RedactingLogProcessor<P> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("RedactingLogProcessor")
             .finish_non_exhaustive()
+    }
+}
+
+/// Exporter wrapper that counts failed export attempts.
+///
+/// The batch processor logs export failures through the SDK's internal
+/// diagnostics (visible on stdout), but a grep is not an alerting
+/// surface; the counter makes "log export is broken" a Prometheus alert.
+#[derive(Debug)]
+struct MeteredLogExporter<E> {
+    inner: E,
+}
+
+impl<E> MeteredLogExporter<E> {
+    fn new(inner: E) -> Self {
+        Self { inner }
+    }
+}
+
+impl<E: LogExporter> LogExporter for MeteredLogExporter<E> {
+    async fn export(&self, batch: LogBatch<'_>) -> OTelSdkResult {
+        let result = self.inner.export(batch).await;
+        if result.is_err() {
+            OTLP_EXPORT_FAILURES.inc();
+        }
+        result
+    }
+
+    fn shutdown_with_timeout(&self, timeout: Duration) -> OTelSdkResult {
+        self.inner.shutdown_with_timeout(timeout)
+    }
+
+    fn event_enabled(&self, level: Severity, target: &str, name: Option<&str>) -> bool {
+        self.inner.event_enabled(level, target, name)
+    }
+
+    fn set_resource(&mut self, resource: &Resource) {
+        // Forwarding is load-bearing: the OTLP exporter snapshots the
+        // resource here for every outgoing payload.
+        self.inner.set_resource(resource);
     }
 }
 
@@ -427,7 +517,8 @@ mod tests {
     }
 
     #[test]
-    fn sensitive_attribute_key_suppresses_record() {
+    fn sensitive_attribute_key_suppresses_record_and_counts_it() {
+        let suppressed_before = OTLP_SUPPRESSED_LOG_RECORDS.get();
         let mut record = new_record();
         record.set_body(AnyValue::String("auth check".into()));
         record.add_attribute("api_key", "super-secret");
@@ -436,6 +527,12 @@ mod tests {
         assert!(
             forwarded.is_empty(),
             "records with sensitive attribute keys must not be exported"
+        );
+        // Strict-greater comparison: other tests exercising suppression run
+        // in parallel against the same process-wide counter.
+        assert!(
+            OTLP_SUPPRESSED_LOG_RECORDS.get() > suppressed_before,
+            "suppression must increment the counter"
         );
     }
 
@@ -487,5 +584,72 @@ mod tests {
         let resource = Resource::builder().with_service_name("svc").build();
         wrapper.set_resource(&resource);
         assert_eq!(resources.lock().expect("test lock poisoned").len(), 1);
+    }
+
+    /// Exporter stub with a scripted outcome, for exercising the metered
+    /// wrapper without a network.
+    #[derive(Debug)]
+    struct ScriptedExporter {
+        fail: bool,
+    }
+
+    impl LogExporter for ScriptedExporter {
+        async fn export(&self, _batch: LogBatch<'_>) -> OTelSdkResult {
+            if self.fail {
+                Err(opentelemetry_sdk::error::OTelSdkError::InternalFailure(
+                    "scripted failure".to_string(),
+                ))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn export_once(exporter: &MeteredLogExporter<ScriptedExporter>) -> OTelSdkResult {
+        let record = new_record();
+        let scope = scope();
+        let data = [(&record, &scope)];
+        futures::executor::block_on(exporter.export(LogBatch::new(&data)))
+    }
+
+    #[test]
+    fn metered_exporter_counts_failed_exports_only() {
+        // Exact deltas are safe here: this test is the only user of
+        // OTLP_EXPORT_FAILURES in the test binary (suppression tests touch
+        // the other counter). If that changes, these assertions will fail
+        // loudly rather than silently weakening.
+        let failures_before = OTLP_EXPORT_FAILURES.get();
+
+        let failing = MeteredLogExporter::new(ScriptedExporter { fail: true });
+        assert!(export_once(&failing).is_err());
+        assert_eq!(
+            OTLP_EXPORT_FAILURES.get(),
+            failures_before + 1,
+            "failed export must increment the counter"
+        );
+
+        let succeeding = MeteredLogExporter::new(ScriptedExporter { fail: false });
+        assert!(export_once(&succeeding).is_ok());
+        assert_eq!(
+            OTLP_EXPORT_FAILURES.get(),
+            failures_before + 1,
+            "successful export must not increment the counter"
+        );
+    }
+
+    #[test]
+    fn register_otlp_metrics_exposes_both_counters() {
+        let registry = Registry::new();
+        register_otlp_metrics(&registry);
+
+        use prometheus::Encoder;
+        let mut buf = Vec::new();
+        prometheus::TextEncoder::new()
+            .encode(&registry.gather(), &mut buf)
+            .expect("encode ok");
+        let output = String::from_utf8(buf).expect("valid utf8");
+
+        assert!(output.contains("aviso_otlp_suppressed_log_records_total"));
+        assert!(output.contains("aviso_otlp_export_failures_total"));
     }
 }
