@@ -44,15 +44,19 @@ static TRACING: LazyLock<()> = LazyLock::new(|| {
     let logging_settings: Option<LoggingSettings> = LoggingSettings {
         level: default_filter_level.clone(),
         format: default_format.clone(),
+        otlp: None,
     }
     .into();
     let subscriber_name = "test".to_string();
     if std::env::var("TEST_LOG").is_ok() {
-        let subscriber =
-            get_subscriber(subscriber_name, logging_settings.as_ref(), std::io::stdout);
+        let (subscriber, _otlp_provider) =
+            get_subscriber(subscriber_name, logging_settings.as_ref(), std::io::stdout)
+                .expect("test telemetry init must succeed without otlp config");
         init_subscriber(subscriber);
     } else {
-        let subscriber = get_subscriber(subscriber_name, logging_settings.as_ref(), std::io::sink);
+        let (subscriber, _otlp_provider) =
+            get_subscriber(subscriber_name, logging_settings.as_ref(), std::io::sink)
+                .expect("test telemetry init must succeed without otlp config");
         init_subscriber(subscriber);
     }
 });
