@@ -6,6 +6,8 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
+mod otlp;
+
 use crate::configuration::LoggingSettings;
 use chrono::{SecondsFormat, Utc};
 use regex::Regex;
@@ -23,6 +25,12 @@ use tracing_subscriber::fmt::{FmtContext, MakeWriter};
 use tracing_subscriber::registry::LookupSpan;
 use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt};
 
+/// Handle to the OTLP log pipeline; call `shutdown()` on process exit to
+/// flush buffered records. Re-exported so the binary does not need to
+/// depend on `opentelemetry_sdk` directly.
+pub use opentelemetry_sdk::logs::SdkLoggerProvider;
+pub use otlp::OtlpInitError;
+
 pub const SERVICE_NAME: &str = env!("CARGO_PKG_NAME");
 pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -37,11 +45,18 @@ pub const SERVICE_VERSION: &str = env!("CARGO_PKG_VERSION");
 ///    no config is supplied) and add a small set of mute directives for
 ///    framework internals that are routinely chatty at info
 ///    (see [`default_mute_directives`]).
+///
+/// When `logging.otlp.enabled` is set, an OTLP export layer is added next to
+/// the stdout formatter and the returned [`SdkLoggerProvider`] handle is
+/// `Some`; the caller must invoke `shutdown()` on it at process exit to
+/// flush buffered records. Constructing the OTLP pipeline can fail (missing
+/// endpoint, invalid URI), which aborts startup instead of silently running
+/// without the export the operator asked for.
 pub fn get_subscriber<Sink>(
     name: String,
     logging_config: Option<&LoggingSettings>,
     sink: Sink,
-) -> impl Subscriber + Sync + Send
+) -> Result<(impl Subscriber + Sync + Send, Option<SdkLoggerProvider>), OtlpInitError>
 where
     Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
 {
@@ -51,16 +66,29 @@ where
 
     let filter_layer = build_env_filter(&level);
 
-    let formatter = OTelLogFormatter::new(name);
+    let formatter = OTelLogFormatter::new(name.clone());
     let formatting_layer = tracing_subscriber::fmt::layer()
         .with_writer(sink)
         .with_ansi(false)
         .with_span_events(FmtSpan::NONE)
         .event_format(formatter);
 
-    Registry::default()
+    let (otlp_layer, otlp_provider) = match logging_config
+        .and_then(|config| config.otlp.as_ref())
+        .filter(|otlp| otlp.enabled)
+    {
+        Some(settings) => {
+            let (layer, provider) = otlp::build_layer(settings, &name)?;
+            (Some(layer), Some(provider))
+        }
+        None => (None, None),
+    };
+
+    let subscriber = Registry::default()
         .with(filter_layer)
         .with(formatting_layer)
+        .with(otlp_layer);
+    Ok((subscriber, otlp_provider))
 }
 
 /// Build the runtime `EnvFilter` honouring `RUST_LOG` first, then falling back

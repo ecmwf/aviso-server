@@ -38,6 +38,13 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["registry", "env-filter", "json"] }
 tracing-log = "0.2"# forwards log crate events to tracing
 tracing-actix-web = "0.7"
+# OTLP log export (push-based log collection). The appender bridges tracing
+# events into the OTel logs pipeline; the exporter ships them over gRPC or
+# HTTP to an in-cluster collector.
+opentelemetry = { version = "0.32", default-features = false, features = ["logs"] }
+opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs", "internal-logs"] }
+opentelemetry-otlp = { version = "0.32", default-features = false, features = ["logs", "grpc-tonic", "http-proto", "reqwest-blocking-client", "internal-logs"] }
+opentelemetry-appender-tracing = { version = "0.32", default-features = false }
 async-trait = "0.1"
 anyhow = "1"
 thiserror = "2"

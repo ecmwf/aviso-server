@@ -227,6 +227,47 @@ pub struct LoggingSettings {
     pub level: String,
     /// Compatibility field; runtime output is OTel-style JSON regardless of value.
     pub format: String,
+    /// Optional push-based OTLP log export to a collector endpoint.
+    /// Absent or `enabled: false` keeps stdout-only logging.
+    #[serde(default)]
+    pub otlp: Option<OtlpSettings>,
+}
+
+/// OTLP log export settings. Logs are always written to stdout; when
+/// `enabled` is true they are additionally pushed to `endpoint` using the
+/// selected transport.
+///
+/// Valid example (gRPC, in-cluster collector):
+/// ```yaml
+/// otlp:
+///   enabled: true
+///   endpoint: "http://otel-collector:4317"
+///   protocol: grpc
+/// ```
+/// Invalid example (enabled without an endpoint; rejected at startup):
+/// ```yaml
+/// otlp:
+///   enabled: true
+/// ```
+#[derive(Deserialize, Serialize, Clone, Debug)]
+pub struct OtlpSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    /// Collector endpoint. A missing scheme defaults to `http://`. For the
+    /// `http` protocol the OTLP logs path `/v1/logs` is appended when absent.
+    pub endpoint: Option<String>,
+    #[serde(default)]
+    pub protocol: OtlpProtocol,
+}
+
+/// Transport used for OTLP log export. Collectors conventionally listen on
+/// 4317 for gRPC and 4318 for HTTP.
+#[derive(Deserialize, Serialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum OtlpProtocol {
+    #[default]
+    Grpc,
+    Http,
 }
 
 #[derive(serde::Deserialize, Serialize, Clone, Debug)]
@@ -381,10 +422,47 @@ pub struct Settings {
 mod tests {
     use super::{
         ApiEventSchema, EventSchema, IdentifierFieldConfig, JetStreamSettings,
-        JetStreamStorageType, PayloadConfig, StreamAuthConfig,
+        JetStreamStorageType, LoggingSettings, OtlpProtocol, PayloadConfig, StreamAuthConfig,
     };
     use aviso_validators::ValidationRules;
     use std::collections::HashMap;
+
+    #[test]
+    fn logging_settings_without_otlp_block_deserialize_to_none() {
+        // Pre-otlp config files must keep loading unchanged.
+        let settings: LoggingSettings = serde_json::from_str(r#"{"level":"info","format":"json"}"#)
+            .expect("should deserialize");
+        assert!(settings.otlp.is_none());
+    }
+
+    #[test]
+    fn otlp_settings_default_to_disabled_grpc() {
+        let settings: LoggingSettings = serde_json::from_str(
+            r#"{"level":"info","format":"json","otlp":{"endpoint":"collector:4317"}}"#,
+        )
+        .expect("should deserialize");
+        let otlp = settings.otlp.expect("otlp block present");
+        assert!(!otlp.enabled);
+        assert_eq!(otlp.protocol, OtlpProtocol::Grpc);
+        assert_eq!(otlp.endpoint.as_deref(), Some("collector:4317"));
+    }
+
+    #[test]
+    fn otlp_protocol_accepts_lowercase_http_and_rejects_unknown() {
+        let settings: LoggingSettings = serde_json::from_str(
+            r#"{"level":"info","format":"json","otlp":{"enabled":true,"endpoint":"c:4318","protocol":"http"}}"#,
+        )
+        .expect("should deserialize");
+        assert_eq!(
+            settings.otlp.expect("otlp block present").protocol,
+            OtlpProtocol::Http
+        );
+
+        let result = serde_json::from_str::<LoggingSettings>(
+            r#"{"level":"info","format":"json","otlp":{"protocol":"udp"}}"#,
+        );
+        assert!(result.is_err());
+    }
 
     #[test]
     fn jetstream_settings_accept_lowercase_storage_type() {

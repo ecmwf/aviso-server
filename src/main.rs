@@ -36,11 +36,20 @@ async fn main() -> Result<(), std::io::Error> {
     // Initialize global configuration once
     configuration.init_global_config();
 
-    let subscriber = get_subscriber(
+    let (subscriber, otlp_provider) = match get_subscriber(
         "aviso-server".into(),
         configuration.logging.as_ref(),
         std::io::stdout,
-    );
+    ) {
+        Ok(pipeline) => pipeline,
+        Err(e) => {
+            eprintln!(
+                "Failed to initialize telemetry (service_name={}, service_version={}): {}",
+                SERVICE_NAME, SERVICE_VERSION, e
+            );
+            return Err(std::io::Error::other(e));
+        }
+    };
     init_subscriber(subscriber);
 
     let redacted_config = redacted_config_json(&configuration);
@@ -127,7 +136,17 @@ async fn main() -> Result<(), std::io::Error> {
         swagger_url = format!("{}:{}/swagger-ui/", host, application.port()),
         "Server starting with OpenAPI documentation"
     );
-    application.run_until_stopped().await
+    let run_result = application.run_until_stopped().await;
+
+    // Flush OTLP-buffered log records before the process exits; without this
+    // the tail of the log stream is lost on every restart.
+    if let Some(provider) = otlp_provider
+        && let Err(error) = provider.shutdown()
+    {
+        eprintln!("warning: OTLP log exporter shutdown failed: {error}");
+    }
+
+    run_result
 }
 
 fn redacted_config_json(configuration: &Settings) -> Value {
