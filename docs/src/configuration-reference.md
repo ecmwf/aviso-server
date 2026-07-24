@@ -82,6 +82,10 @@ Operational behavior:
   records from the export path only, and stdout remains complete.
 - Export errors are reported by the SDK's internal diagnostics on stdout,
   so a broken collector connection is visible in `kubectl logs`.
+- Export health is measurable on the Prometheus endpoint:
+  `aviso_otlp_export_failures_total` counts failed batch exports and
+  `aviso_otlp_suppressed_log_records_total` counts records withheld by
+  the redaction guard. Alert on a sustained non-zero rate of either.
 - The global filter (`logging.level` / `RUST_LOG`) applies to both sinks,
   so the collector receives the same event stream as stdout. The export
   transport's own targets (`opentelemetry*`, `tonic`, `hyper`, `h2`,
