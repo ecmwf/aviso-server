@@ -92,12 +92,16 @@ jobs:
     needs: release-setup
     if: needs.release-setup.outputs.should_release == 'true'
     strategy:
+      # Let each architecture finish independently: a failed leg can be
+      # retried alone via re-run-failed instead of cancelling its sibling.
+      fail-fast: false
       matrix:
         arch: [amd64, arm64]  # Build for both architectures.
-    # Self-hosted runner based on the architecture:
-    # ECMWF has self-hosted runners for both amd64 and arm64.
-    # We will use Ubuntu for amd64, macOS for arm64.
-    runs-on: ${{ matrix.arch == 'amd64' && 'platform-builder-Ubuntu-22.04' || 'platform-builder-MacOSX-13.4.1-arm64' }}
+    # amd64 builds on the ECMWF self-hosted runner (registry-local, warm
+    # caches). arm64 builds on GitHub's hosted arm64 Linux runner: it ships
+    # a native Docker daemon, unlike the previous self-hosted macOS runner
+    # whose colima-provided daemon was frequently unavailable.
+    runs-on: ${{ matrix.arch == 'amd64' && 'platform-builder-Ubuntu-22.04' || 'ubuntu-24.04-arm' }}
     env:
       # Repository to push images.
       SKAFFOLD_DEFAULT_REPO: eccr.ecmwf.int/aviso
