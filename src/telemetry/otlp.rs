@@ -177,6 +177,12 @@ fn normalize_endpoint(raw: &str, protocol: OtlpProtocol) -> String {
 /// Mirrors the identity block of the stdout formatter (`resource` in the
 /// JSON records): service name/version plus pod identity from the same
 /// environment variables, so both sinks describe the process identically.
+///
+/// [`Resource::builder`] starts from the SDK's default detectors, which
+/// include the environment detector: attributes supplied via the standard
+/// `OTEL_RESOURCE_ATTRIBUTES` variable (for example collector routing
+/// keys) are merged automatically, with the explicit attributes below
+/// taking precedence on key collision.
 fn build_resource(service_name: &str) -> Resource {
     let mut attributes = vec![KeyValue::new(
         "service.version",
