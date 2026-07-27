@@ -130,6 +130,10 @@ where
 
     let provider = SdkLoggerProvider::builder()
         .with_resource(build_resource(service_name))
+        // Processors run in registration order and mutations are visible
+        // to the next one: backfill timestamps first, then redact and
+        // hand off to the batch exporter.
+        .with_log_processor(EventTimestampProcessor)
         .with_log_processor(RedactingLogProcessor::new(
             BatchLogProcessor::builder(MeteredLogExporter::new(exporter)).build(),
         ))
@@ -249,6 +253,37 @@ fn export_noise_filter() -> EnvFilter {
         }
     }
     filter
+}
+
+/// Backfill the event timestamp on bridged log records.
+///
+/// `tracing` events carry no timestamp, so the tracing bridge sets only
+/// `observed_timestamp` and leaves `timestamp` unset. OTLP encodes an
+/// unset timestamp as 0, which log backends render as 1970-01-01 and
+/// which breaks every time-based query over the exported records. Copy
+/// the observed timestamp into the event timestamp; for an in-process
+/// bridge the two are sub-millisecond apart. Records that already carry
+/// an event timestamp are left untouched.
+#[derive(Debug)]
+struct EventTimestampProcessor;
+
+impl LogProcessor for EventTimestampProcessor {
+    fn emit(&self, record: &mut SdkLogRecord, _instrumentation: &InstrumentationScope) {
+        if record.timestamp().is_none() {
+            let observed = record
+                .observed_timestamp()
+                .unwrap_or_else(std::time::SystemTime::now);
+            record.set_timestamp(observed);
+        }
+    }
+
+    fn force_flush(&self) -> OTelSdkResult {
+        Ok(())
+    }
+
+    fn shutdown_with_timeout(&self, _timeout: Duration) -> OTelSdkResult {
+        Ok(())
+    }
 }
 
 /// Log processor that enforces the crate's redaction rules on the push
@@ -641,6 +676,46 @@ mod tests {
             failures_before + 1,
             "successful export must not increment the counter"
         );
+    }
+
+    #[test]
+    fn event_timestamp_backfilled_from_observed_timestamp() {
+        // The bridge leaves `timestamp` unset; OTLP encodes that as 0 and
+        // backends render 1970-01-01. The processor must copy the
+        // observed timestamp so time-based queries work.
+        let observed = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_785_176_180);
+        let mut record = new_record();
+        record.set_observed_timestamp(observed);
+        assert!(record.timestamp().is_none(), "precondition: no timestamp");
+
+        EventTimestampProcessor.emit(&mut record, &scope());
+        assert_eq!(record.timestamp(), Some(observed));
+    }
+
+    #[test]
+    fn existing_event_timestamp_is_left_untouched() {
+        let event_time = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(1_000);
+        let observed = std::time::SystemTime::UNIX_EPOCH + Duration::from_secs(2_000);
+        let mut record = new_record();
+        record.set_timestamp(event_time);
+        record.set_observed_timestamp(observed);
+
+        EventTimestampProcessor.emit(&mut record, &scope());
+        assert_eq!(record.timestamp(), Some(event_time));
+    }
+
+    #[test]
+    fn event_timestamp_falls_back_to_now_without_observed_timestamp() {
+        // The SDK logger sets observed_timestamp before processors run,
+        // but the processor must not rely on that ordering.
+        let before = std::time::SystemTime::now();
+        let mut record = new_record();
+        assert!(record.observed_timestamp().is_none());
+
+        EventTimestampProcessor.emit(&mut record, &scope());
+        let after = std::time::SystemTime::now();
+        let stamped = record.timestamp().expect("timestamp must be set");
+        assert!(stamped >= before && stamped <= after);
     }
 
     #[test]
