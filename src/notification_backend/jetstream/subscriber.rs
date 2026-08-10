@@ -42,9 +42,11 @@ pub async fn subscribe_to_topic(
 
     // Determine retry parameters based on configuration
     let max_attempts = if config.enable_auto_reconnect {
-        // Keep at least one subscription attempt even when config uses 0 as
-        // "unlimited" in connection policy semantics.
-        config.max_reconnect_attempts.max(1)
+        // Subscription creation is a bounded retry loop, unlike the
+        // connection policy where unset/0 means unlimited: a subscribe
+        // call has a caller waiting on it. Unset keeps the historical
+        // default of 5 attempts; explicit 0 still means at least one.
+        config.max_reconnect_attempts.unwrap_or(5).max(1)
     } else {
         1 // Single attempt if auto-reconnect disabled
     };

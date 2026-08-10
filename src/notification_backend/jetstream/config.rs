@@ -41,8 +41,11 @@ pub struct JetStreamConfig {
     pub discard_policy: JetStreamDiscardPolicy,
     /// Enable automatic reconnection on failures
     pub enable_auto_reconnect: bool,
-    /// Maximum reconnection attempts before giving up temporarily
-    pub max_reconnect_attempts: u32,
+    /// Maximum connection reconnect attempts before the client gives up
+    /// permanently. `None` (unset) and `Some(0)` both mean unlimited:
+    /// giving up leaves the backend dead until a process restart, which
+    /// is never the desired trade for a notification server.
+    pub max_reconnect_attempts: Option<u32>,
     /// Base delay between reconnection attempts in milliseconds
     pub reconnect_delay_ms: u64,
     /// Maximum publish attempts when transient channel-closed errors occur.
@@ -85,9 +88,7 @@ impl JetStreamConfig {
             enable_auto_reconnect: js_settings
                 .and_then(|js| js.enable_auto_reconnect)
                 .unwrap_or(true),
-            max_reconnect_attempts: js_settings
-                .and_then(|js| js.max_reconnect_attempts)
-                .unwrap_or(5),
+            max_reconnect_attempts: js_settings.and_then(|js| js.max_reconnect_attempts),
             reconnect_delay_ms: js_settings
                 .and_then(|js| js.reconnect_delay_ms)
                 .unwrap_or(2000),
@@ -175,7 +176,7 @@ mod tests {
             retention_policy: JetStreamRetentionPolicy::Limits,
             discard_policy: JetStreamDiscardPolicy::Old,
             enable_auto_reconnect: true,
-            max_reconnect_attempts: 5,
+            max_reconnect_attempts: Some(5),
             reconnect_delay_ms: 2000,
             publish_retry_attempts: 5,
             publish_retry_base_delay_ms: 150,
