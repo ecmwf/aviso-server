@@ -136,8 +136,10 @@ pub fn extract_bearer_token(header_value: &HeaderValue) -> Option<&str> {
 /// Returns the decoded claims if the token is valid and not expired.
 /// Audience validation is disabled to match auth-o-tron behavior.
 pub fn validate_jwt(token: &str, secret: &str) -> Result<JwtClaims, jsonwebtoken::errors::Error> {
-    let mut validation = Validation::default();
-    validation.validate_aud = false;
+    let validation = Validation {
+        validate_aud: false,
+        ..Validation::default()
+    };
 
     let token_data = decode::<JwtClaims>(
         token,
