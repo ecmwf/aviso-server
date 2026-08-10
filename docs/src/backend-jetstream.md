@@ -235,6 +235,11 @@ python3 scripts/smoke_test.py
   positive value. A bounded value means the client gives up permanently once
   exhausted and the backend stays disconnected until a process restart, while
   the HTTP surface keeps serving.
+- `GET /ready` reflects the connection state: 200 while the NATS connection
+  is live, 503 while it is down or reconnecting. Point Kubernetes readiness
+  probes at `/ready` so traffic routes away during a backend outage and
+  resumes on reconnect; keep liveness on `/health` (process-only) so pods
+  are not killed during an outage the client recovers from by itself.
 - `max_reconnect_attempts` also bounds subscription-creation retries, where
   unset keeps a default of 5 attempts (a subscribe call has a caller waiting
   on it, so it never retries forever).

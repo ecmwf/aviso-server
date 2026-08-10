@@ -91,6 +91,14 @@ curl -sS http://127.0.0.1:8000/health
 
 Expected response: `200 OK`
 
+`/health` is process liveness only. `/ready` additionally reflects the
+notification backend connection (200 when connected, 503 while down or
+reconnecting) and is the endpoint to use for Kubernetes readiness probes:
+
+```bash
+curl -sS http://127.0.0.1:8000/ready
+```
+
 ---
 
 ## 5. Open a Watch Stream

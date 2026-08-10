@@ -34,7 +34,7 @@ use crate::{
         validate_stream_auth_settings, validate_stream_plugin_settings,
     },
     notification_backend::{MeteredBackend, NotificationBackend, build_backend},
-    routes::{health_check::health_check, notify::notify},
+    routes::{health_check::health_check, notify::notify, ready::ready},
     telemetry::{SERVICE_NAME, SERVICE_VERSION},
 };
 use actix_files as fs;
@@ -322,6 +322,7 @@ fn configure_ops_routes(cfg: &mut web::ServiceConfig) {
         .clone();
     cfg.service(fs::Files::new("/static", static_path).show_files_listing())
         .route("/health", web::get().to(health_check))
+        .route("/ready", web::get().to(ready))
         .route("/", web::get().to(homepage));
 }
 
