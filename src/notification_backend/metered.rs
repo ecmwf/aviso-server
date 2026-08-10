@@ -92,6 +92,12 @@ impl NotificationBackend for MeteredBackend {
         self.inner.capabilities()
     }
 
+    fn connection_healthy(&self) -> bool {
+        // Pass-through, not a timed operation: readiness probes hit this
+        // on a short period and metric noise would outweigh the signal.
+        self.inner.connection_healthy()
+    }
+
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()> {
         let started = Instant::now();
         let result = self.inner.put_messages(topic, payload).await;

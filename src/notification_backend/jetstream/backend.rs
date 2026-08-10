@@ -46,6 +46,13 @@ impl NotificationBackend for JetStreamBackend {
         JETSTREAM_CAPABILITIES
     }
 
+    fn connection_healthy(&self) -> bool {
+        // Pending (reconnecting) and Disconnected both mean requests
+        // against the backend will fail right now; only a live connection
+        // counts as ready.
+        self.client.connection_state() == async_nats::connection::State::Connected
+    }
+
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()> {
         publisher::put_messages(self, topic, payload).await
     }

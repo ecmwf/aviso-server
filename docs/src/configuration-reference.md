@@ -232,7 +232,7 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue` (parsed as typed enum at config load). |
 | `discard_policy` | `string?` | `old` | `old`/`new` (parsed as typed enum at config load). |
 | `enable_auto_reconnect` | `bool?` | `true` | Enables/disables NATS client reconnect behavior. |
-| `max_reconnect_attempts` | `u32?` | `5` | Mapped to NATS `max_reconnects` (`0` => unlimited). |
+| `max_reconnect_attempts` | `u32?` | unlimited | Mapped to NATS `max_reconnects`; unset and `0` both mean unlimited. A positive value makes the client give up permanently once exhausted. |
 | `reconnect_delay_ms` | `u64?` | `2000` | Reconnect delay and startup connect retry backoff (`> 0`). |
 | `publish_retry_attempts` | `u32?` | `5` | Retry attempts for transient publish `channel closed` failures (`> 0`). |
 | `publish_retry_base_delay_ms` | `u64?` | `150` | Base backoff in milliseconds for publish retries (`> 0`). |

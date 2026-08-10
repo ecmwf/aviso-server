@@ -25,10 +25,15 @@ fn build_connection_policy(config: &JetStreamConfig) -> ConnectionPolicy {
     let initial_connect_attempts = config.retry_attempts.max(1);
 
     let max_reconnects = if config.enable_auto_reconnect {
-        if config.max_reconnect_attempts == 0 {
-            None
-        } else {
-            Some(config.max_reconnect_attempts as usize)
+        match config.max_reconnect_attempts {
+            // Unset and explicit 0 both mean "never give up". A client
+            // that abandons the connection permanently leaves the backend
+            // dead until a process restart while the HTTP surface keeps
+            // serving, which is the zombie mode described in issue #106;
+            // any NATS outage longer than attempts x delay (a routine pod
+            // reschedule) used to trigger it.
+            None | Some(0) => None,
+            Some(bounded) => Some(bounded as usize),
         }
     } else {
         Some(0)
@@ -136,7 +141,7 @@ mod tests {
             retention_policy: JetStreamRetentionPolicy::Limits,
             discard_policy: JetStreamDiscardPolicy::Old,
             enable_auto_reconnect: true,
-            max_reconnect_attempts: 5,
+            max_reconnect_attempts: Some(5),
             reconnect_delay_ms: 2000,
             publish_retry_attempts: 5,
             publish_retry_base_delay_ms: 150,
@@ -164,9 +169,30 @@ mod tests {
     #[test]
     fn policy_uses_unlimited_reconnects_when_enabled_and_max_is_zero() {
         let mut cfg = base_config();
-        cfg.max_reconnect_attempts = 0;
+        cfg.max_reconnect_attempts = Some(0);
         let policy = build_connection_policy(&cfg);
 
         assert_eq!(policy.max_reconnects, None);
+    }
+
+    #[test]
+    fn policy_defaults_to_unlimited_reconnects_when_max_is_unset() {
+        // Regression test for issue #106: the old default of 5 attempts at
+        // 2s spacing made the client give up ~10s into a NATS restart and
+        // never come back.
+        let mut cfg = base_config();
+        cfg.max_reconnect_attempts = None;
+        let policy = build_connection_policy(&cfg);
+
+        assert_eq!(policy.max_reconnects, None);
+    }
+
+    #[test]
+    fn policy_keeps_bounded_reconnects_when_explicitly_configured() {
+        let mut cfg = base_config();
+        cfg.max_reconnect_attempts = Some(7);
+        let policy = build_connection_policy(&cfg);
+
+        assert_eq!(policy.max_reconnects, Some(7));
     }
 }

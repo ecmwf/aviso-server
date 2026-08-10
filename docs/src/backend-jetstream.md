@@ -68,7 +68,7 @@ All fields live under `notification_backend.jetstream`.
 | Field | Default | Notes |
 |---|---|---|
 | `enable_auto_reconnect` | `true` | Enables/disables NATS client reconnect after startup. |
-| `max_reconnect_attempts` | `5` | `0` means unlimited reconnect retries. |
+| `max_reconnect_attempts` | unlimited | Unset and `0` both mean unlimited reconnect retries; set a positive value only if you explicitly want the client to give up (the backend then stays disconnected until a process restart). |
 | `reconnect_delay_ms` | `2000` | Delay between reconnect attempts and startup connect retries (`> 0`). |
 
 ### Publish resilience
@@ -106,7 +106,6 @@ notification_backend:
     timeout_seconds: 30
     retry_attempts: 3
     enable_auto_reconnect: true
-    max_reconnect_attempts: 5
     reconnect_delay_ms: 2000
     publish_retry_attempts: 5
     publish_retry_base_delay_ms: 150
@@ -232,4 +231,15 @@ python3 scripts/smoke_test.py
 - Runtime reconnect is controlled by `enable_auto_reconnect`, `max_reconnect_attempts`, `reconnect_delay_ms`.
 - Publish retry is a narrow resilience path for transient `channel closed` failures; non-transient failures fail fast.
 - `retry_attempts` applies only to startup; post-startup reconnect uses the reconnect settings.
-- Setting `max_reconnect_attempts = 0` enables unlimited reconnect retries.
+- Reconnect retries are unlimited unless `max_reconnect_attempts` is set to a
+  positive value. A bounded value means the client gives up permanently once
+  exhausted and the backend stays disconnected until a process restart, while
+  the HTTP surface keeps serving.
+- `GET /ready` reflects the connection state: 200 while the NATS connection
+  is live, 503 while it is down or reconnecting. Point Kubernetes readiness
+  probes at `/ready` so traffic routes away during a backend outage and
+  resumes on reconnect; keep liveness on `/health` (process-only) so pods
+  are not killed during an outage the client recovers from by itself.
+- `max_reconnect_attempts` also bounds subscription-creation retries, where
+  unset keeps a default of 5 attempts (a subscribe call has a caller waiting
+  on it, so it never retries forever).

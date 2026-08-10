@@ -12,6 +12,7 @@ use crate::routes::admin;
 use crate::routes::health_check;
 use crate::routes::home;
 use crate::routes::notify;
+use crate::routes::ready;
 use crate::routes::replay;
 use crate::routes::schema;
 use crate::routes::watch;
@@ -46,6 +47,7 @@ impl Modify for SecurityAddon {
     modifiers(&SecurityAddon),
     paths(
         health_check::health_check,
+        ready::ready,
         home::homepage,
         schema::get_notification_schema,
         schema::get_event_schema,
@@ -60,6 +62,7 @@ impl Modify for SecurityAddon {
         schemas(
             // Health endpoints
             health_check::HealthResponse,
+            ready::ReadyResponse,
 
             // Core request/response types
             crate::types::request::NotificationRequest,

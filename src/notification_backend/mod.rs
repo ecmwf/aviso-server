@@ -90,6 +90,17 @@ pub fn capabilities_for_backend_kind(kind: &str) -> Option<BackendCapabilities> 
 #[async_trait]
 pub trait NotificationBackend: Send + Sync {
     fn capabilities(&self) -> BackendCapabilities;
+
+    /// Whether the connection to the backing service is currently healthy.
+    ///
+    /// Drives the `/ready` endpoint: a disconnected backend makes the pod
+    /// unready so traffic routes away until the connection recovers, while
+    /// process liveness (`/health`) stays untouched so the pod is not
+    /// killed during an outage the client can recover from by itself.
+    /// Backends without a remote connection report healthy.
+    fn connection_healthy(&self) -> bool {
+        true
+    }
     async fn put_messages(&self, topic: &str, payload: String) -> Result<()>;
     async fn put_message_with_headers(
         &self,
