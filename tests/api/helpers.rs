@@ -937,6 +937,21 @@ pub async fn spawn_app() -> TestApp {
     }
 }
 
+/// Streaming-schema app on a private server instance. Stream-level
+/// destructive tests (admin wipe) use this instead of
+/// `spawn_streaming_test_app`: the shared server would leak the wipe into
+/// sibling tests that publish to the same streams. Dropping the returned
+/// server handle leaves the task running for the rest of the process, the
+/// same lifetime the shared apps have.
+pub async fn spawn_isolated_streaming_test_app() -> TestApp {
+    let mut configuration = base_test_settings();
+    set_streaming_test_notification_schema(&mut configuration);
+    let running = spawn_server(configuration, None).await;
+    TestApp {
+        address: running.address.clone(),
+    }
+}
+
 pub async fn spawn_streaming_test_app() -> TestApp {
     let running = STREAMING_SERVER
         .get_or_init(|| async {

@@ -54,7 +54,7 @@ pub async fn ready(backend: web::Data<Arc<dyn NotificationBackend>>) -> HttpResp
 mod tests {
     use super::*;
     use crate::notification_backend::{
-        BackendCapabilities, DeleteMessageResult, NotificationMessage,
+        BackendCapabilities, DeleteMessageResult, NotificationMessage, WipeStreamResult,
     };
     use async_trait::async_trait;
     use futures::Stream;
@@ -97,7 +97,7 @@ mod tests {
             unreachable!("readiness must not touch the data path")
         }
 
-        async fn wipe_stream(&self, _stream_name: &str) -> anyhow::Result<()> {
+        async fn wipe_stream(&self, _stream_key: &str) -> anyhow::Result<WipeStreamResult> {
             unreachable!("readiness must not touch the data path")
         }
 

@@ -25,7 +25,10 @@ use async_trait::async_trait;
 use futures::Stream;
 
 use super::replay::BatchParams;
-use super::{BackendCapabilities, DeleteMessageResult, NotificationBackend, NotificationMessage};
+use super::{
+    BackendCapabilities, DeleteMessageResult, NotificationBackend, NotificationMessage,
+    WipeStreamResult,
+};
 use crate::metrics::AppMetrics;
 use crate::types::BatchResult;
 
@@ -120,9 +123,9 @@ impl NotificationBackend for MeteredBackend {
         result
     }
 
-    async fn wipe_stream(&self, stream_name: &str) -> Result<()> {
+    async fn wipe_stream(&self, stream_key: &str) -> Result<WipeStreamResult> {
         let started = Instant::now();
-        let result = self.inner.wipe_stream(stream_name).await;
+        let result = self.inner.wipe_stream(stream_key).await;
         self.record(OP_WIPE_STREAM, started, result.is_ok());
         result
     }
@@ -190,8 +193,8 @@ mod tests {
         ) -> Result<()> {
             Ok(())
         }
-        async fn wipe_stream(&self, _stream_name: &str) -> Result<()> {
-            Ok(())
+        async fn wipe_stream(&self, _stream_key: &str) -> Result<WipeStreamResult> {
+            Ok(WipeStreamResult::Wiped)
         }
         async fn wipe_all(&self) -> Result<()> {
             Ok(())

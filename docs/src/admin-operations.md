@@ -108,16 +108,20 @@ Request body:
 
 ```json
 {
-  "stream_name": "MARS"
+  "stream_name": "mars"
 }
 ```
+
+`stream_name` accepts the event type as configured in the notification schema
+or the backend stream name, case-insensitively: `mars` and `MARS` wipe the
+same stream.
 
 Example:
 
 ```bash
 curl -X DELETE "http://127.0.0.1:8000/api/v1/admin/wipe/stream" \
   -H "Content-Type: application/json" \
-  -d '{"stream_name":"MARS"}'
+  -d '{"stream_name":"mars"}'
 ```
 
 What it does:
@@ -125,6 +129,10 @@ What it does:
 - Removes all stored messages for the selected stream.
 - Keeps the stream definition/configuration in place.
 - New notifications can still be written to that stream immediately after wipe.
+
+When no stream matches the name, the response is `404` and the message lists
+the configured event types, so a typo is distinguishable from a backend
+failure (`500`).
 
 When to use:
 
