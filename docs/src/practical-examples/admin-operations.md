@@ -23,12 +23,16 @@ Expected:
 ```bash
 curl -X DELETE "http://127.0.0.1:8000/api/v1/admin/wipe/stream" \
   -H "Content-Type: application/json" \
-  -d '{"stream_name":"EXTREME_EVENT"}'
+  -d '{"stream_name":"extreme_event"}'
 ```
+
+The name is case-insensitive and accepts the event type or the backend
+stream name (`extreme_event` and `EXTREME_EVENT` target the same stream).
 
 Expected:
 
-- `200`
+- `200` if the stream exists
+- `404` if no stream matches; the message lists the configured event types
 - stream definition remains, messages are removed
 
 ## Wipe All Streams
