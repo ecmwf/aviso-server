@@ -48,6 +48,15 @@ pub enum DeleteMessageResult {
     NotFound,
 }
 
+/// Outcome of a stream wipe: the stream was purged, or no stream by that
+/// name exists. A missing stream is a caller-addressable condition (typo,
+/// wrong environment), not a backend failure, so it is not an `Err`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WipeStreamResult {
+    Wiped,
+    NotFound,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BackendCapabilities {
     pub retention_time: bool,
@@ -108,7 +117,7 @@ pub trait NotificationBackend: Send + Sync {
         headers: Option<HashMap<String, String>>,
         payload: String,
     ) -> Result<()>;
-    async fn wipe_stream(&self, stream_name: &str) -> Result<()>;
+    async fn wipe_stream(&self, stream_key: &str) -> Result<WipeStreamResult>;
     async fn wipe_all(&self) -> Result<()>;
     async fn delete_message(&self, stream_key: &str, sequence: u64) -> Result<DeleteMessageResult>;
     async fn get_messages_batch(

@@ -7,7 +7,7 @@
 // does it submit to any jurisdiction.
 
 use crate::configuration::Settings;
-use crate::notification_backend::{DeleteMessageResult, NotificationBackend};
+use crate::notification_backend::{DeleteMessageResult, NotificationBackend, WipeStreamResult};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpResponse, Result as ActixResult, web};
 use serde::{Deserialize, Serialize};
@@ -17,6 +17,8 @@ use utoipa::ToSchema;
 
 #[derive(Deserialize, ToSchema)]
 pub struct WipeStreamRequest {
+    /// Event type or backend stream name, case-insensitive: "mars" and
+    /// "MARS" both wipe the stream that serves the `mars` event type.
     pub stream_name: String,
 }
 
@@ -66,6 +68,19 @@ fn parse_notification_id(value: &str) -> Result<ParsedNotificationId, &'static s
     })
 }
 
+/// Suffix for not-found messages naming the configured event types, so a
+/// typo'd wipe request tells the operator what would have worked.
+fn known_event_types_suffix() -> String {
+    match Settings::get_global_notification_schema().as_ref() {
+        Some(schema) if !schema.is_empty() => {
+            let mut names: Vec<&str> = schema.keys().map(String::as_str).collect();
+            names.sort_unstable();
+            format!(". Known event types: {}", names.join(", "))
+        }
+        _ => String::new(),
+    }
+}
+
 fn resolve_stream_key_alias(stream_or_event_type: &str) -> String {
     let Some(schema) = Settings::get_global_notification_schema().as_ref() else {
         return stream_or_event_type.to_string();
@@ -99,6 +114,7 @@ fn resolve_stream_key_alias(stream_or_event_type: &str) -> String {
         (status = 200, description = "Stream wiped successfully", body = WipeResponse),
         (status = 401, description = "Missing or invalid credentials"),
         (status = 403, description = "Valid credentials but missing admin role"),
+        (status = 404, description = "No stream by that name", body = WipeResponse),
         (status = 500, description = "Failed to wipe stream", body = WipeResponse),
         (status = 503, description = "Authentication service unavailable (direct mode)")
     ),
@@ -113,22 +129,25 @@ pub async fn wipe_stream(
     request_id: RequestId,
 ) -> ActixResult<HttpResponse> {
     let request_id_str = request_id.to_string();
+    let resolved_stream_key = resolve_stream_key_alias(&req.stream_name);
     tracing::info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
         event_name = "admin.stream.wipe.requested",
         stream_name = %req.stream_name,
+        stream_key = %resolved_stream_key,
         request_id = %request_id_str,
         "Received request to wipe stream"
     );
 
-    match backend.wipe_stream(&req.stream_name).await {
-        Ok(()) => {
+    match backend.wipe_stream(&resolved_stream_key).await {
+        Ok(WipeStreamResult::Wiped) => {
             tracing::info!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_name = "admin.stream.wipe.succeeded",
                 stream_name = %req.stream_name,
+                stream_key = %resolved_stream_key,
                 request_id = %request_id_str,
                 "Successfully wiped stream"
             );
@@ -138,12 +157,33 @@ pub async fn wipe_stream(
                 request_id: request_id_str,
             }))
         }
+        Ok(WipeStreamResult::NotFound) => {
+            tracing::warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "admin.stream.wipe.not_found",
+                stream_name = %req.stream_name,
+                stream_key = %resolved_stream_key,
+                request_id = %request_id_str,
+                "Stream not found"
+            );
+            Ok(HttpResponse::NotFound().json(WipeResponse {
+                success: false,
+                message: format!(
+                    "Stream not found: {}{}",
+                    req.stream_name,
+                    known_event_types_suffix()
+                ),
+                request_id: request_id_str,
+            }))
+        }
         Err(e) => {
             tracing::error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,
                 event_name = "admin.stream.wipe.failed",
                 stream_name = %req.stream_name,
+                stream_key = %resolved_stream_key,
                 error = %e,
                 request_id = %request_id_str,
                 "Failed to wipe stream"

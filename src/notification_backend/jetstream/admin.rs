@@ -7,7 +7,7 @@
 // does it submit to any jurisdiction.
 
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
-use crate::notification_backend::{DeleteMessageResult, NotificationBackend};
+use crate::notification_backend::{DeleteMessageResult, NotificationBackend, WipeStreamResult};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result};
 use futures::StreamExt;
@@ -18,17 +18,25 @@ use tracing::{info, warn};
 /// The stream can continue to receive new messages after being wiped
 ///
 /// # Arguments
-/// * `stream_name` - Name of the stream to purge (e.g., "DISS", "MARS")
+/// * `stream_key` - Stream key as supplied by the caller; resolved to the
+///   uppercase JetStream stream name the publish path creates (for example
+///   "mars" and "MARS" both target the `MARS` stream)
 ///
 /// # Returns
-/// * `anyhow::Result<()>` - Success or error if stream doesn't exist or purge fails
-pub async fn wipe_stream(backend: &JetStreamBackend, stream_name: &str) -> Result<()> {
-    // Get the stream handle for the specified stream name
-    let mut stream = backend
-        .jetstream
-        .get_stream(stream_name)
-        .await
-        .context(format!("Failed to get stream {}", stream_name))?;
+/// * `Ok(WipeStreamResult::Wiped)` when the stream was purged
+/// * `Ok(WipeStreamResult::NotFound)` when no stream by that name exists
+pub async fn wipe_stream(backend: &JetStreamBackend, stream_key: &str) -> Result<WipeStreamResult> {
+    let stream_name = stream_key.to_ascii_uppercase();
+    let mut stream = match backend.jetstream.get_stream(&stream_name).await {
+        Ok(stream) => stream,
+        Err(error) => {
+            let message = error.to_string().to_ascii_lowercase();
+            if message.contains("stream not found") {
+                return Ok(WipeStreamResult::NotFound);
+            }
+            return Err(error).with_context(|| format!("Failed to get stream {stream_name}"));
+        }
+    };
 
     // Get current stream statistics before purging for logging
     let info = stream.info().await.context("Failed to get stream info")?;
@@ -46,7 +54,7 @@ pub async fn wipe_stream(backend: &JetStreamBackend, stream_name: &str) -> Resul
         "Wiped entire stream - all messages removed but stream configuration preserved"
     );
 
-    Ok(())
+    Ok(WipeStreamResult::Wiped)
 }
 
 /// Remove all notifications from all streams in the JetStream context

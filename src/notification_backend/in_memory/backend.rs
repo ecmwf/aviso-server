@@ -13,7 +13,7 @@ use crate::notification_backend::in_memory::InMemoryStats;
 use crate::notification_backend::replay::{BatchParams, StartAt};
 use crate::notification_backend::{
     BackendCapabilities, DeleteMessageResult, IN_MEMORY_CAPABILITIES, NotificationBackend,
-    NotificationMessage,
+    NotificationMessage, WipeStreamResult,
 };
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::BatchResult;
@@ -285,14 +285,19 @@ impl NotificationBackend for InMemoryBackend {
     /// Example: stream "diss" removes all topics starting with "diss."
     ///
     /// # Arguments
-    /// * `stream_name` - Stream name to match against topic prefixes
+    /// * `stream_key` - Stream key to match against topic prefixes,
+    ///   case-insensitively ("mars" and "MARS" match the same topics)
     ///
     /// # Returns
-    /// * `anyhow::Result<()>` - Always succeeds for in-memory backend
-    async fn wipe_stream(&self, stream_name: &str) -> Result<()> {
+    /// * `Ok(WipeStreamResult::Wiped)` when at least one topic matched
+    /// * `Ok(WipeStreamResult::NotFound)` when no topic matched. Topics are
+    ///   created lazily on first publish, so an unknown stream ("marz") and
+    ///   a known stream that never saw a publish are indistinguishable here;
+    ///   both report `NotFound`.
+    async fn wipe_stream(&self, stream_key: &str) -> Result<WipeStreamResult> {
         let mut state = self.state.lock().await;
         let topics = &mut state.topics;
-        let stream_prefix = format!("{}.", encode_token(&stream_name.to_lowercase()));
+        let stream_prefix = format!("{}.", encode_token(&stream_key.to_lowercase()));
 
         // Collect all topic keys that match the stream prefix
         // Done separately to avoid borrowing issues during HashMap modification
@@ -301,6 +306,10 @@ impl NotificationBackend for InMemoryBackend {
             .filter(|key| key.to_lowercase().starts_with(&stream_prefix))
             .cloned()
             .collect();
+
+        if keys_to_remove.is_empty() {
+            return Ok(WipeStreamResult::NotFound);
+        }
 
         let mut removed_subjects = 0;
         let mut total_notifications = 0;
@@ -322,13 +331,13 @@ impl NotificationBackend for InMemoryBackend {
             service_name = SERVICE_NAME,
             service_version = SERVICE_VERSION,
             event_name = "backend.in_memory.stream.wiped",
-            stream_name = %stream_name,
+            stream_key = %stream_key,
             subjects_removed = removed_subjects,
             notifications_removed = total_notifications,
             "Wiped stream from in-memory backend"
         );
 
-        Ok(())
+        Ok(WipeStreamResult::Wiped)
     }
 
     /// Remove all notifications from all topics

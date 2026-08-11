@@ -6,7 +6,7 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-use crate::helpers::spawn_streaming_test_app;
+use crate::helpers::{spawn_isolated_streaming_test_app, spawn_streaming_test_app};
 use crate::test_utils::{post_mars_notification, unique_suffix};
 use serde_json::json;
 
@@ -20,6 +20,79 @@ fn extract_event_sequence(replay_body: &str, event_type: &str) -> Option<u64> {
 
 fn replay_event_count(replay_body: &str) -> usize {
     replay_body.matches("\nevent: replay\ndata: ").count()
+}
+
+#[tokio::test]
+async fn wipe_stream_accepts_event_type_alias() {
+    let app = spawn_isolated_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let unique_stream = format!("ens.member.{}", unique_suffix());
+    let note = format!("admin-wipe-note-{}", unique_suffix());
+
+    let publish_response =
+        post_mars_notification(&client, &app.address, &note, &unique_stream).await;
+    assert_eq!(publish_response.status().as_u16(), 200);
+
+    let wipe_response = client
+        .delete(format!("{}/api/v1/admin/wipe/stream", app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({ "stream_name": "mars" }))
+        .send()
+        .await
+        .expect("failed to send wipe request");
+
+    assert_eq!(wipe_response.status().as_u16(), 200);
+    let body: serde_json::Value = wipe_response.json().await.expect("wipe body is JSON");
+    assert_eq!(body["success"], json!(true));
+}
+
+#[tokio::test]
+async fn wipe_stream_accepts_uppercase_stream_name() {
+    let app = spawn_isolated_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let unique_stream = format!("ens.member.{}", unique_suffix());
+    let note = format!("admin-wipe-note-{}", unique_suffix());
+
+    let publish_response =
+        post_mars_notification(&client, &app.address, &note, &unique_stream).await;
+    assert_eq!(publish_response.status().as_u16(), 200);
+
+    let wipe_response = client
+        .delete(format!("{}/api/v1/admin/wipe/stream", app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({ "stream_name": "MARS" }))
+        .send()
+        .await
+        .expect("failed to send wipe request");
+
+    assert_eq!(wipe_response.status().as_u16(), 200);
+    let body: serde_json::Value = wipe_response.json().await.expect("wipe body is JSON");
+    assert_eq!(body["success"], json!(true));
+}
+
+#[tokio::test]
+async fn wipe_stream_returns_not_found_for_unknown_stream() {
+    let app = spawn_isolated_streaming_test_app().await;
+    let wipe_response = reqwest::Client::new()
+        .delete(format!("{}/api/v1/admin/wipe/stream", app.address))
+        .header("Content-Type", "application/json")
+        .json(&json!({ "stream_name": "no-such-stream" }))
+        .send()
+        .await
+        .expect("failed to send wipe request");
+
+    assert_eq!(wipe_response.status().as_u16(), 404);
+    let body: serde_json::Value = wipe_response.json().await.expect("wipe body is JSON");
+    assert_eq!(body["success"], json!(false));
+    let message = body["message"].as_str().expect("message is a string");
+    assert!(
+        message.contains("Stream not found: no-such-stream"),
+        "message should name the missing stream; got: {message}"
+    );
+    assert!(
+        message.contains("Known event types:"),
+        "message should list the configured event types; got: {message}"
+    );
 }
 
 #[tokio::test]
