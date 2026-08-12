@@ -6,6 +6,7 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
+use crate::auth::middleware::log_actor;
 use crate::error::{
     ProcessingKind, RequestKind, processing_error_response, request_parse_error_response,
     request_validation_error_response,
@@ -58,6 +59,8 @@ use tracing_actix_web::RequestId;
         topic = tracing::field::Empty,
         request_id = %request_id,
         spatial_enabled = tracing::field::Empty,
+        username = tracing::field::Empty,
+        auth_realm = tracing::field::Empty,
     )
 )]
 pub async fn notify(
@@ -68,6 +71,11 @@ pub async fn notify(
     metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
     let request_id_str = request_id.to_string();
+    // Attribute every event in this request's span (including backend-layer
+    // ones, which inherit span fields) to the authenticated identity.
+    let (username, auth_realm) = log_actor(&http_request);
+    tracing::Span::current().record("username", username.as_str());
+    tracing::Span::current().record("auth_realm", auth_realm.as_str());
     // Parse and validate request structure
     let payload = match parse_and_validate_request(&body) {
         Ok(p) => p,
