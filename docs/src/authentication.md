@@ -271,6 +271,15 @@ Admin endpoints always require authentication and one of the configured `admin_r
 
 See [Admin Operations](./admin-operations.md) for request/response details.
 
+## Audit attribution in logs
+
+Every notify, watch, replay, and admin request records who performed it. The request span carries two fields that appear on every log event the request produces, across all layers (the API-level line, the SSE stream events, and the backend events they trigger):
+
+- `username`: the authenticated username, or `anonymous` when authentication is disabled or the request carried no credentials.
+- `auth_realm`: the realm the identity authenticated through (for example `localrealm` or `ecmwf`), or `none` when the token carries no realm claim.
+
+Both fields are always present, so log queries can rely on them unconditionally: `attributes.username: producer-pgen` finds every notification that identity published, and the `request_id` shared by the same events joins the API-level line with the backend lines it triggered.
+
 ## Disabling Authentication
 
 ```yaml
