@@ -6,10 +6,11 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
+use crate::auth::middleware::log_actor;
 use crate::configuration::Settings;
 use crate::notification_backend::{DeleteMessageResult, NotificationBackend, WipeStreamResult};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
-use actix_web::{HttpResponse, Result as ActixResult, web};
+use actix_web::{HttpRequest, HttpResponse, Result as ActixResult, web};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tracing_actix_web::RequestId;
@@ -123,12 +124,26 @@ fn resolve_stream_key_alias(stream_or_event_type: &str) -> String {
         ("basic" = []),
     )
 )]
+#[tracing::instrument(
+    skip(http_request, backend, req),
+    fields(
+        request_id = %request_id,
+        username = tracing::field::Empty,
+        auth_realm = tracing::field::Empty,
+    )
+)]
 pub async fn wipe_stream(
+    http_request: HttpRequest,
     backend: web::Data<Arc<dyn NotificationBackend>>,
     req: web::Json<WipeStreamRequest>,
     request_id: RequestId,
 ) -> ActixResult<HttpResponse> {
     let request_id_str = request_id.to_string();
+    // Attribute the destructive operation (and the backend-layer events it
+    // triggers, which inherit span fields) to the authenticated identity.
+    let (username, auth_realm) = log_actor(&http_request);
+    tracing::Span::current().record("username", username.as_str());
+    tracing::Span::current().record("auth_realm", auth_realm.as_str());
     let resolved_stream_key = resolve_stream_key_alias(&req.stream_name);
     tracing::info!(
         service_name = SERVICE_NAME,
@@ -214,12 +229,25 @@ pub async fn wipe_stream(
         ("basic" = []),
     )
 )]
-
+#[tracing::instrument(
+    skip(http_request, backend),
+    fields(
+        request_id = %request_id,
+        username = tracing::field::Empty,
+        auth_realm = tracing::field::Empty,
+    )
+)]
 pub async fn wipe_all(
+    http_request: HttpRequest,
     backend: web::Data<Arc<dyn NotificationBackend>>,
     request_id: RequestId,
 ) -> ActixResult<HttpResponse> {
     let request_id_str = request_id.to_string();
+    // Attribute the destructive operation (and the backend-layer events it
+    // triggers, which inherit span fields) to the authenticated identity.
+    let (username, auth_realm) = log_actor(&http_request);
+    tracing::Span::current().record("username", username.as_str());
+    tracing::Span::current().record("auth_realm", auth_realm.as_str());
     tracing::warn!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
@@ -283,12 +311,26 @@ pub async fn wipe_all(
         ("basic" = []),
     )
 )]
+#[tracing::instrument(
+    skip(http_request, backend, path),
+    fields(
+        request_id = %request_id,
+        username = tracing::field::Empty,
+        auth_realm = tracing::field::Empty,
+    )
+)]
 pub async fn delete_notification(
+    http_request: HttpRequest,
     backend: web::Data<Arc<dyn NotificationBackend>>,
     path: web::Path<String>,
     request_id: RequestId,
 ) -> ActixResult<HttpResponse> {
     let request_id_str = request_id.to_string();
+    // Attribute the destructive operation (and the backend-layer events it
+    // triggers, which inherit span fields) to the authenticated identity.
+    let (username, auth_realm) = log_actor(&http_request);
+    tracing::Span::current().record("username", username.as_str());
+    tracing::Span::current().record("auth_realm", auth_realm.as_str());
     let raw_id = path.into_inner();
     let parsed = match parse_notification_id(&raw_id) {
         Ok(parsed) => parsed,

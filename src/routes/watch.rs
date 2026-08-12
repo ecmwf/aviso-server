@@ -6,7 +6,7 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-use crate::auth::middleware::get_username;
+use crate::auth::middleware::{get_username, log_actor};
 use crate::error::{
     RequestKind, request_parse_error_response, request_validation_error_response,
     sse_error_response,
@@ -64,6 +64,8 @@ use tracing_actix_web::RequestId;
         from_id = tracing::field::Empty,
         from_date = tracing::field::Empty,
         endpoint = "watch",
+        username = tracing::field::Empty,
+        auth_realm = tracing::field::Empty,
     )
 )]
 pub async fn watch(
@@ -75,6 +77,12 @@ pub async fn watch(
     metrics: Option<web::Data<AppMetrics>>,
 ) -> HttpResponse {
     let request_id_str = request_id.to_string();
+    // Attribute every event in this request's span (including SSE and
+    // backend-layer ones, which inherit span fields) to the authenticated
+    // identity.
+    let (username, auth_realm) = log_actor(&http_request);
+    tracing::Span::current().record("username", username.as_str());
+    tracing::Span::current().record("auth_realm", auth_realm.as_str());
     // Parse and validate request structure
     let notification_request = match parse_and_validate_request(&body) {
         Ok(req) => req,

@@ -223,6 +223,23 @@ pub fn get_username(req: &HttpRequest) -> Option<String> {
     req.extensions().get::<User>().map(|u| u.username.clone())
 }
 
+/// Actor fields for request-scoped log attribution.
+///
+/// Returns `(username, auth_realm)` for the authenticated identity. When the
+/// request carries no identity (authentication disabled, or an endpoint that
+/// does not require credentials), the markers are `("anonymous", "none")` so
+/// the fields are always present and log queries can rely on them. A user
+/// whose token carries no realm claim reports realm `"none"`.
+pub fn log_actor(req: &HttpRequest) -> (String, String) {
+    match req.extensions().get::<User>() {
+        Some(user) => (
+            user.username.clone(),
+            user.realm.clone().unwrap_or_else(|| "none".to_string()),
+        ),
+        None => ("anonymous".to_string(), "none".to_string()),
+    }
+}
+
 pub fn is_auth_enabled(req: &HttpRequest) -> bool {
     req.extensions()
         .get::<AuthContext>()
@@ -760,5 +777,44 @@ mod tests {
         let response = test::call_service(&app, request).await;
 
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[actix_web::test]
+    async fn log_actor_reports_the_authenticated_identity() {
+        let request = test::TestRequest::get().to_http_request();
+        request.extensions_mut().insert(User {
+            username: "producer-pgen".to_string(),
+            roles: vec!["producer".to_string()],
+            realm: Some("localrealm".to_string()),
+            attributes: HashMap::new(),
+        });
+
+        let (username, realm) = log_actor(&request);
+        assert_eq!(username, "producer-pgen");
+        assert_eq!(realm, "localrealm");
+    }
+
+    #[actix_web::test]
+    async fn log_actor_reports_none_realm_when_claim_is_absent() {
+        let request = test::TestRequest::get().to_http_request();
+        request.extensions_mut().insert(User {
+            username: "svc".to_string(),
+            roles: vec![],
+            realm: None,
+            attributes: HashMap::new(),
+        });
+
+        let (username, realm) = log_actor(&request);
+        assert_eq!(username, "svc");
+        assert_eq!(realm, "none");
+    }
+
+    #[actix_web::test]
+    async fn log_actor_reports_anonymous_without_an_identity() {
+        let request = test::TestRequest::get().to_http_request();
+
+        let (username, realm) = log_actor(&request);
+        assert_eq!(username, "anonymous");
+        assert_eq!(realm, "none");
     }
 }
