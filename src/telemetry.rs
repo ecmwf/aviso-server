@@ -547,7 +547,18 @@ fn promote_trace_correlation(attributes: &mut Map<String, Value>) {
 /// Order matters only for clarity; each field is looked up independently
 /// against every span in scope (innermost-first), so adding or reordering
 /// does not change behaviour for existing fields.
-const HYDRATABLE_SPAN_FIELDS: &[&str] = &["request_id", "event_type", "topic"];
+///
+/// `username` and `auth_realm` attribute the request to the authenticated
+/// identity (route handlers record them at entry); who performed an
+/// operation is request-level triage context in the same way `request_id`
+/// is, so every event in the request span carries it.
+const HYDRATABLE_SPAN_FIELDS: &[&str] = &[
+    "request_id",
+    "event_type",
+    "topic",
+    "username",
+    "auth_realm",
+];
 
 /// Pre-compiled regex per hydratable field, keyed by field name.
 ///
@@ -562,10 +573,10 @@ const HYDRATABLE_SPAN_FIELDS: &[&str] = &["request_id", "event_type", "topic"];
 ///   unquoted and unescaped.
 ///
 /// In production, `request_id` is recorded via `%request_id` (Display,
-/// unquoted) while `event_type` and `topic` go through `record_str`
-/// (quoted). The regex must therefore match either a quoted run
-/// (`"[^"]+"`) or an unquoted contiguous non-space run (`[^ ]+`), which is
-/// what the alternation expresses.
+/// unquoted) while `event_type`, `topic`, `username`, and `auth_realm` go
+/// through `record_str` (quoted). The regex must therefore match either a
+/// quoted run (`"[^"]+"`) or an unquoted contiguous non-space run
+/// (`[^ ]+`), which is what the alternation expresses.
 ///
 /// The `\b` word-boundary anchor prevents `event_type` from accidentally
 /// matching `aviso_event_type` or `event_typeable`.
@@ -962,6 +973,33 @@ mod tests {
         assert_eq!(attrs.get("event_type"), Some(&json!("diss")));
         assert_eq!(attrs.get("topic"), Some(&json!("diss.FOO.E1.od")));
         assert_eq!(attrs.get("request_id"), Some(&json!("req-hydrate-1")));
+    }
+
+    #[test]
+    fn span_recorded_actor_hydrates_onto_inner_event_json() {
+        // Route handlers record username/auth_realm on the request span at
+        // entry; the canonical per-request events and the backend-layer
+        // events they trigger rely on hydration to carry the actor. This
+        // pins the end-to-end integration so the attribution cannot
+        // silently disappear from exported log records.
+        let records = run_with_capturing_subscriber(|| {
+            let span = tracing::info_span!(
+                "test_route",
+                username = tracing::field::Empty,
+                auth_realm = tracing::field::Empty,
+                request_id = "req-actor-1",
+            );
+            span.record("username", "producer-pgen");
+            span.record("auth_realm", "localrealm");
+            span.in_scope(|| {
+                tracing::info!(event_name = "test.processed", "simulated canonical event");
+            });
+        });
+
+        let attrs = first_event_attributes(&records);
+        assert_eq!(attrs.get("username"), Some(&json!("producer-pgen")));
+        assert_eq!(attrs.get("auth_realm"), Some(&json!("localrealm")));
+        assert_eq!(attrs.get("request_id"), Some(&json!("req-actor-1")));
     }
 
     #[test]
