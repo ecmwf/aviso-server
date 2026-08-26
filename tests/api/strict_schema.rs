@@ -26,6 +26,8 @@ const EXPECTED_CONFIGURED_EVENT_TYPES: &[&str] = &[
     "dissemination",
     "extreme",
     "mars",
+    "test_point_cloud",
+    "test_point_cloud_small",
     "test_polygon",
     "test_polygon_auth_admin",
     "test_polygon_auth_any",
@@ -33,6 +35,7 @@ const EXPECTED_CONFIGURED_EVENT_TYPES: &[&str] = &[
     "test_polygon_auth_write",
     "test_polygon_js",
     "test_polygon_optional",
+    "test_polygon_routed",
 ];
 
 #[cfg(feature = "ecpds")]
@@ -42,6 +45,8 @@ const EXPECTED_CONFIGURED_EVENT_TYPES: &[&str] = &[
     "dissemination_ecpds_writable",
     "extreme",
     "mars",
+    "test_point_cloud",
+    "test_point_cloud_small",
     "test_polygon",
     "test_polygon_auth_admin",
     "test_polygon_auth_any",
@@ -49,6 +54,7 @@ const EXPECTED_CONFIGURED_EVENT_TYPES: &[&str] = &[
     "test_polygon_auth_write",
     "test_polygon_js",
     "test_polygon_optional",
+    "test_polygon_routed",
 ];
 
 #[tokio::test]

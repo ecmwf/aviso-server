@@ -163,6 +163,29 @@ notification_schema:
         type: PolygonHandler
         required: true
 
+  # Providers publish point clouds. Subscribers filter them with polygons.
+  test_point_cloud:
+    payload:
+      required: true
+    topic:
+      base: "point_cloud"
+      # Spatial coordinates stay in metadata and never enter the NATS subject.
+      key_order: ["date"]
+    identifier:
+      date:
+        type: DateHandler
+        canonical_format: "%Y%m%d"
+        required: true
+      point_cloud:
+        type: PointCloudHandler
+        required: true
+        max_points: 10000
+        description: >-
+          Publishers provide point_cloud as [[latitude, longitude], ...].
+          Watch and replay requests provide a closed polygon instead. The
+          polygon satisfies this required field; subscribers must not send
+          point_cloud.
+
   # Authenticated stream with read/write role separation.
   # - Any authenticated user in localrealm can read (wildcard).
   # - Only producer or admin roles can write.

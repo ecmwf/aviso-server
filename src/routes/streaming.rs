@@ -33,7 +33,10 @@ pub enum StreamOperation {
 ///   strict=true,  schema_present=true,  known=true  → Ok
 ///   strict=true,  schema_present=true,  known=false → Err 400
 ///   strict=true,  schema_present=false → Err 400 (explicit deny-all "drain" mode)
-pub fn enforce_known_event_type(req: &HttpRequest, event_type: &str) -> Result<(), HttpResponse> {
+pub fn enforce_known_event_type(
+    req: &HttpRequest,
+    event_type: &str,
+) -> Result<(), Box<HttpResponse>> {
     // Fast paths short-circuit the per-request String allocation for
     // `request_id`, which is only needed when we are actually going to build
     // a 400 response body. Two zero-allocation early returns:
@@ -92,7 +95,7 @@ pub(crate) fn enforce_known_event_type_inner(
     schema_map: Option<&HashMap<String, EventSchema>>,
     request_id: &str,
     event_type: &str,
-) -> Result<(), HttpResponse> {
+) -> Result<(), Box<HttpResponse>> {
     if !strict {
         return Ok(());
     }
@@ -110,13 +113,13 @@ pub(crate) fn enforce_known_event_type_inner(
         })
         .unwrap_or_default();
 
-    Err(HttpResponse::BadRequest().json(json!({
+    Err(Box::new(HttpResponse::BadRequest().json(json!({
         "code": "UNKNOWN_EVENT_TYPE",
         "error": "unknown_event_type",
         "message": format!("unknown event type '{event_type}'"),
         "configured_event_types": configured,
         "request_id": request_id,
-    })))
+    }))))
 }
 
 pub fn record_start_at_span_fields(start_at: StartAt) {
@@ -140,7 +143,7 @@ pub fn enforce_stream_auth(
     req: &HttpRequest,
     event_type: &str,
     operation: StreamOperation,
-) -> Result<(), HttpResponse> {
+) -> Result<(), Box<HttpResponse>> {
     if !is_auth_enabled(req) {
         return Ok(());
     }
@@ -162,21 +165,21 @@ pub fn enforce_stream_auth(
 
     let Some(user) = get_user(req) else {
         let auth_mode = auth_mode(req).unwrap_or(AuthMode::Direct);
-        return Err(unauthorized_response(
+        return Err(Box::new(unauthorized_response(
             auth_mode,
             "Authentication is required for this stream",
             &request_id,
-        ));
+        )));
     };
 
     let Some(auth_settings) = req.app_data::<web::Data<Arc<AuthSettings>>>() else {
         tracing::error!("AuthSettings not found in app_data — server misconfiguration");
-        return Err(HttpResponse::InternalServerError().json(json!({
+        return Err(Box::new(HttpResponse::InternalServerError().json(json!({
             "code": "INTERNAL_ERROR",
             "error": "internal_error",
             "message": "Server configuration error",
             "request_id": request_id,
-        })));
+        }))));
     };
     let is_admin = user.is_admin(&auth_settings.admin_roles);
 
@@ -186,26 +189,26 @@ pub fn enforce_stream_auth(
                 && !is_admin
                 && !user.has_any_role(read_roles)
             {
-                return Err(forbidden_response(
+                return Err(Box::new(forbidden_response(
                     "User does not have required read role for this stream",
                     &request_id,
-                ));
+                )));
             }
             // No read_roles → any authenticated user can read.
         }
         StreamOperation::Write => match &stream_auth.write_roles {
             Some(write_roles) if !is_admin && !user.has_any_role(write_roles) => {
-                return Err(forbidden_response(
+                return Err(Box::new(forbidden_response(
                     "User does not have required write role for this stream",
                     &request_id,
-                ));
+                )));
             }
             Some(_) => {}
             None if !is_admin => {
-                return Err(forbidden_response(
+                return Err(Box::new(forbidden_response(
                     "Only administrators can write to this stream",
                     &request_id,
-                ));
+                )));
             }
             None => {}
         },

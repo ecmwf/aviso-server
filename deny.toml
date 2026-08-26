@@ -1,0 +1,29 @@
+[advisories]
+
+[licenses]
+# Permissive software licenses used by the dependency graph, plus the
+# permissive Unicode and CDLA data licenses.
+allow = [
+  "Apache-2.0",
+  "BSD-3-Clause",
+  "CC0-1.0",
+  "CDLA-Permissive-2.0",
+  "ISC",
+  "MIT",
+  "Unicode-3.0",
+  "Zlib",
+]
+confidence-threshold = 0.8
+exceptions = [
+  # MPL-2.0 applies weak copyleft at the file level only.
+  { allow = ["MPL-2.0"], crate = "option-ext@0.2.0" },
+]
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]

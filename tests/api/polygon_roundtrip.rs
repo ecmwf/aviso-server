@@ -7,7 +7,10 @@
 // does it submit to any jurisdiction.
 
 use crate::helpers::spawn_streaming_test_app;
-use crate::test_utils::{post_test_polygon_notification_with_polygon, unique_suffix};
+use crate::test_utils::{
+    post_polygon_notification_for_event_with_identifier,
+    post_test_polygon_notification_with_polygon, unique_suffix,
+};
 use reqwest::StatusCode;
 use serde_json::{Value, json};
 use tokio::time::{Duration, Instant, sleep, timeout};
@@ -54,10 +57,15 @@ async fn replay_emits_cloudevent_carrying_the_producer_polygon_in_data_identifie
         .and_then(Value::as_object)
         .unwrap_or_else(|| panic!("CloudEvent must have data.identifier; got: {cloud_event}"));
     assert_eq!(
-        identifier.get("polygon").and_then(Value::as_str),
-        Some(producer_polygon),
-        "round-trip bug regression: producer-sent polygon must appear in data.identifier.polygon \
-         on the emitted CloudEvent. Got identifier: {identifier:?}"
+        identifier.get("polygon"),
+        Some(&json!([
+            [50.0, 10.0],
+            [52.0, 10.0],
+            [52.0, 12.0],
+            [50.0, 12.0],
+            [50.0, 10.0]
+        ])),
+        "producer polygon must be emitted as a canonical JSON array"
     );
     assert_eq!(
         identifier.get("date").and_then(Value::as_str),
@@ -124,11 +132,88 @@ async fn live_watch_emits_cloudevent_carrying_the_producer_polygon_in_data_ident
         .and_then(Value::as_object)
         .unwrap_or_else(|| panic!("CloudEvent must have data.identifier; got: {cloud_event}"));
     assert_eq!(
-        identifier.get("polygon").and_then(Value::as_str),
-        Some(producer_polygon),
-        "live watch must carry the producer polygon in data.identifier.polygon; \
-         got identifier: {identifier:?}"
+        identifier.get("polygon"),
+        Some(&json!([
+            [50.0, 10.0],
+            [52.0, 10.0],
+            [52.0, 12.0],
+            [50.0, 12.0],
+            [50.0, 10.0]
+        ])),
+        "live watch must carry the canonical producer polygon"
     );
+}
+
+#[tokio::test]
+async fn polygon_in_key_order_filters_and_emits_arrays_for_live_and_replay() {
+    let app = spawn_streaming_test_app().await;
+    let client = reqwest::Client::new();
+    let marker = format!("ROUTED_POLYGON_{}", unique_suffix());
+    let producer_polygon = "(2,2,2,4,4,4,4,2,2,2)";
+    let filter_polygon = json!([[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]);
+    let request = json!({
+        "event_type": "test_polygon_routed",
+        "identifier": {
+            "time": "1230",
+            "polygon": filter_polygon
+        }
+    });
+
+    let mut watch = client
+        .post(format!("{}/api/v1/watch", app.address))
+        .json(&request)
+        .send()
+        .await
+        .expect("routed polygon watch");
+    assert_eq!(watch.status(), StatusCode::OK);
+    sleep(Duration::from_millis(100)).await;
+
+    let publish = post_polygon_notification_for_event_with_identifier(
+        &client,
+        &app.address,
+        "test_polygon_routed",
+        &marker,
+        producer_polygon,
+        "20250706",
+        "1230",
+    )
+    .await;
+    assert_eq!(publish.status(), StatusCode::OK);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    let mut live_body = String::new();
+    while Instant::now() < deadline && !live_body.contains(&marker) {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        match timeout(remaining, watch.chunk()).await {
+            Ok(Ok(Some(chunk))) => live_body.push_str(&String::from_utf8_lossy(&chunk)),
+            Ok(Ok(None)) | Err(_) => break,
+            Ok(Err(error)) => panic!("watch stream read failed: {error}"),
+        }
+    }
+    let live_event =
+        extract_cloud_event_for_type(&live_body, &marker, "int.ecmwf.aviso.test_polygon_routed")
+            .expect("routed polygon live event");
+    assert!(live_event["data"]["identifier"]["polygon"].is_array());
+
+    let replay = client
+        .post(format!("{}/api/v1/replay", app.address))
+        .json(&json!({
+            "event_type": "test_polygon_routed",
+            "identifier": {
+                "time": "1230",
+                "polygon": [[0,0],[0,10],[10,10],[10,0],[0,0]]
+            },
+            "from_id": "0"
+        }))
+        .send()
+        .await
+        .expect("routed polygon replay");
+    assert_eq!(replay.status(), StatusCode::OK);
+    let replay_body = replay.text().await.expect("routed polygon replay body");
+    let replay_event =
+        extract_cloud_event_for_type(&replay_body, &marker, "int.ecmwf.aviso.test_polygon_routed")
+            .expect("routed polygon replay event");
+    assert!(replay_event["data"]["identifier"]["polygon"].is_array());
 }
 
 #[tokio::test]
@@ -249,12 +334,14 @@ async fn notification_response_processed_at_is_compact_rfc3339_utc() {
 /// `int.ecmwf.aviso.test_polygon` whose serialized payload contains `marker`.
 /// Returns the parsed CloudEvent JSON, or `None` if no such event is present.
 fn extract_cloud_event_matching(sse_body: &str, marker: &str) -> Option<Value> {
+    extract_cloud_event_for_type(sse_body, marker, "int.ecmwf.aviso.test_polygon")
+}
+
+fn extract_cloud_event_for_type(sse_body: &str, marker: &str, event_type: &str) -> Option<Value> {
     sse_body
         .lines()
         .filter_map(|line| line.strip_prefix("data:").map(str::trim))
         .filter(|payload| payload.contains(marker))
         .filter_map(|payload| serde_json::from_str::<Value>(payload).ok())
-        .find(|parsed| {
-            parsed.get("type").and_then(Value::as_str) == Some("int.ecmwf.aviso.test_polygon")
-        })
+        .find(|parsed| parsed.get("type").and_then(Value::as_str) == Some(event_type))
 }

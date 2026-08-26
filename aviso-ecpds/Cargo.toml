@@ -1,7 +1,8 @@
 [package]
 name = "aviso-ecpds"
-version = "0.9.3"
+version = "0.10.0"
 edition = "2024"
+rust-version = "1.88"
 description = "ECPDS destination authorization plugin for aviso-server."
 license = "Apache-2.0"
 readme = "README.md"
@@ -10,16 +11,16 @@ homepage = "https://github.com/ecmwf/aviso-server"
 documentation = "https://docs.rs/aviso-ecpds"
 
 [dependencies]
-serde = { version = "1", features = ["derive"] }
-serde_json = "1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 reqwest = { version = "0.13", default-features = false, features = ["json", "rustls"] }
-tokio = { version = "1", features = ["sync", "time", "rt"] }
-futures = "0.3"
+tokio = { version = "1.53", features = ["sync", "time", "rt"] }
+futures = "0.3.34"
 tracing = "0.1"
-thiserror = "2"
-url = "2"
+thiserror = "2.0"
+url = "2.5"
 moka = { version = "0.12", features = ["future"] }
 
 [dev-dependencies]
-mockito = "1"
-tokio = { version = "1", features = ["rt-multi-thread", "macros"] }
+mockito = "1.7"
+tokio = { version = "1.53", features = ["rt-multi-thread", "macros"] }

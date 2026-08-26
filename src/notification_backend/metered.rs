@@ -80,11 +80,11 @@ impl MeteredBackend {
         let outcome = if is_ok { "ok" } else { "error" };
         self.metrics
             .backend_operations_total
-            .with_label_values(&[&self.backend, operation, outcome])
+            .with_label_values(&[self.backend.as_str(), operation, outcome])
             .inc();
         self.metrics
             .backend_operation_duration_seconds
-            .with_label_values(&[&self.backend, operation, outcome])
+            .with_label_values(&[self.backend.as_str(), operation, outcome])
             .observe(started_at.elapsed().as_secs_f64());
     }
 }

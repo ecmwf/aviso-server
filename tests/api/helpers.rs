@@ -90,7 +90,7 @@ pub struct MockEcpds {
 impl MockEcpds {
     /// Snapshot of the request count for a specific username (matched
     /// by exact `id=` query parameter substring). Used by tests that
-    /// run in parallel — global request_count is racy across tests.
+    /// run in parallel because global request_count is racy across tests.
     pub fn count_for(&self, username: &str) -> usize {
         self.per_user_count
             .lock()
@@ -190,6 +190,54 @@ fn build_test_polygon_schema() -> EventSchema {
     }
 }
 
+fn build_test_point_cloud_schema() -> EventSchema {
+    let identifier = HashMap::from([
+        (
+            "date".to_string(),
+            IdentifierFieldConfig::with_rule(ValidationRules::DateHandler {
+                canonical_format: "%Y%m%d".to_string(),
+                required: true,
+            }),
+        ),
+        (
+            "point_cloud".to_string(),
+            IdentifierFieldConfig::with_description(
+                "Publishers provide point_cloud as [[latitude, longitude], ...]. Watch and replay requests provide a closed polygon instead. The polygon satisfies this required field; subscribers must not send point_cloud.",
+                ValidationRules::PointCloudHandler {
+                    required: true,
+                    max_points: 10_000,
+                },
+            ),
+        ),
+    ]);
+
+    EventSchema {
+        payload: Some(PayloadConfig { required: true }),
+        topic: Some(TopicConfig {
+            base: "point_cloud_test".to_string(),
+            key_order: vec!["date".to_string()],
+        }),
+        endpoint: None,
+        identifier,
+        storage_policy: None,
+        auth: None,
+    }
+}
+
+fn build_test_point_cloud_small_schema() -> EventSchema {
+    let mut schema = build_test_point_cloud_schema();
+    schema.topic.as_mut().expect("point-cloud topic").base = "point_cloud_small_test".to_string();
+    let field = schema
+        .identifier
+        .get_mut("point_cloud")
+        .expect("point-cloud identifier");
+    field.rule = ValidationRules::PointCloudHandler {
+        required: true,
+        max_points: 2,
+    };
+    schema
+}
+
 fn build_test_polygon_js_schema() -> EventSchema {
     let mut identifier = HashMap::new();
     identifier.insert(
@@ -220,6 +268,14 @@ fn build_test_polygon_js_schema() -> EventSchema {
         storage_policy: None,
         auth: None,
     }
+}
+
+fn build_test_polygon_routed_schema() -> EventSchema {
+    let mut schema = build_test_polygon_schema();
+    let topic = schema.topic.as_mut().expect("polygon schema topic");
+    topic.base = "polygon_routed_test".to_string();
+    topic.key_order.push("polygon".to_string());
+    schema
 }
 
 fn apply_jetstream_test_polygon_js_policy(schema: &mut HashMap<String, EventSchema>) {
@@ -538,8 +594,20 @@ fn ensure_test_notification_schema(configuration: &mut Settings, include_auth_sc
 
     schema.insert("test_polygon".to_string(), build_test_polygon_schema());
     schema.insert(
+        "test_point_cloud".to_string(),
+        build_test_point_cloud_schema(),
+    );
+    schema.insert(
+        "test_point_cloud_small".to_string(),
+        build_test_point_cloud_small_schema(),
+    );
+    schema.insert(
         "test_polygon_optional".to_string(),
         build_test_polygon_optional_schema(),
+    );
+    schema.insert(
+        "test_polygon_routed".to_string(),
+        build_test_polygon_routed_schema(),
     );
     schema.insert("mars".to_string(), build_mars_schema());
     schema.insert("dissemination".to_string(), build_dissemination_schema());
@@ -899,6 +967,33 @@ pub fn default_test_ecpds_config() -> aviso_ecpds::config::EcpdsConfig {
         partial_outage_policy: aviso_ecpds::config::PartialOutagePolicy::Strict,
         servers: vec![MOCK_ECPDS.url.clone()],
     }
+}
+
+#[cfg(feature = "ecpds")]
+pub fn ecpds_point_cloud_match_key_settings() -> Settings {
+    let mut configuration = base_test_settings();
+    let mut point_cloud_schema = build_test_point_cloud_schema();
+    point_cloud_schema.auth = Some(StreamAuthConfig {
+        required: true,
+        read_roles: None,
+        write_roles: None,
+        plugins: Some(vec!["ecpds".to_string()]),
+    });
+    configuration.notification_schema = Some(HashMap::from([(
+        "test_point_cloud".to_string(),
+        point_cloud_schema,
+    )]));
+    configuration.auth = AuthSettings {
+        enabled: true,
+        auth_o_tron_url: "http://127.0.0.1:1".to_string(),
+        jwt_secret: "test-jwt-secret".to_string(),
+        admin_roles: HashMap::from([("localrealm".to_string(), vec!["admin".to_string()])]),
+        ..AuthSettings::default()
+    };
+    let mut ecpds = default_test_ecpds_config();
+    ecpds.match_key = "point_cloud".to_string();
+    configuration.ecpds = Some(ecpds);
+    configuration
 }
 
 async fn spawn_server(

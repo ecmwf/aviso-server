@@ -42,7 +42,7 @@ For regional use cases, Aviso also supports spatial filtering so clients can sub
 - Watch live updates over SSE with connection and replay controls
 - Replay historical notifications by sequence or timestamp
 - Filter by exact identifier values or constraints (for supported field types)
-- Use spatial filters for polygon/point use cases
+- Use spatial filters for polygon, point, and point-cloud use cases
 - Run with either in-memory storage (local/dev) or JetStream (durable environments)
 - Optional ECPDS destination authorization plugin (Cargo feature `ecpds`)
 - Operational endpoints: `/health` for liveness/readiness, `/metrics` for Prometheus scrapes

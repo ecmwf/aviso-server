@@ -32,7 +32,123 @@ const JETSTREAM_TEST_DATE: &str = "20250706";
 const JETSTREAM_REPLAY_PUBLISH_TEST_TIME: &str = "1310";
 const JETSTREAM_POST_REPLAY_PUBLISH_TEST_TIME: &str = "1410";
 const JETSTREAM_TEST_STREAM: &str = "POLYGON_JS_TEST";
+const JETSTREAM_POINT_CLOUD_STREAM: &str = "POINT_CLOUD_TEST";
 static JETSTREAM_TEST_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+#[tokio::test]
+async fn jetstream_point_cloud_replay_round_trips_array_and_filters_with_polygon() {
+    if !should_run_nats_tests() {
+        return;
+    }
+    let _guard = JETSTREAM_TEST_LOCK.lock().await;
+    reset_test_stream(JETSTREAM_POINT_CLOUD_STREAM).await;
+    let app = spawn_jetstream_test_app().await;
+    let client = reqwest::Client::new();
+    let marker = format!("JETSTREAM_POINT_CLOUD_{}", unique_suffix());
+    let cloud = json!([[20.0, 20.0], [0.0, 0.0], [0.0, 0.0]]);
+
+    let publish = client
+        .post(format!("{}/api/v1/notification", app.address))
+        .json(&json!({
+            "event_type": "test_point_cloud",
+            "identifier": {
+                "date": "20260826",
+                "point_cloud": cloud
+            },
+            "payload": {"marker": marker}
+        }))
+        .send()
+        .await
+        .expect("JetStream point-cloud publish");
+    assert_status_ok_or_panic(publish, "JetStream point-cloud publish").await;
+
+    let replay = client
+        .post(format!("{}/api/v1/replay", app.address))
+        .json(&json!({
+            "event_type": "test_point_cloud",
+            "identifier": {
+                "date": "20260826",
+                "polygon": [[0,0],[0,10],[10,10],[10,0],[0,0]]
+            },
+            "from_id": "0"
+        }))
+        .send()
+        .await
+        .expect("JetStream point-cloud replay");
+    assert_eq!(replay.status(), StatusCode::OK);
+    let body = replay.text().await.expect("JetStream replay body");
+    let event: serde_json::Value = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:").map(str::trim))
+        .filter(|line| line.contains(&marker))
+        .find_map(|line| serde_json::from_str(line).ok())
+        .expect("matching point-cloud CloudEvent");
+    assert_eq!(
+        event["data"]["identifier"]["point_cloud"],
+        json!([[20.0, 20.0], [0.0, 0.0], [0.0, 0.0]])
+    );
+}
+
+#[tokio::test]
+async fn jetstream_near_limit_point_cloud_round_trips_through_headers() {
+    if !should_run_nats_tests() {
+        return;
+    }
+    let _guard = JETSTREAM_TEST_LOCK.lock().await;
+    reset_test_stream(JETSTREAM_POINT_CLOUD_STREAM).await;
+    let app = spawn_jetstream_test_app().await;
+    let client = reqwest::Client::new();
+    let marker = format!("JETSTREAM_LARGE_POINT_CLOUD_{}", unique_suffix());
+    let cloud = json!(vec![[-89.12345678901234, -179.12345678901235]; 1_450]);
+    let cloud_size = cloud.to_string().len();
+    assert!(cloud_size > 56 * 1024);
+    assert!(cloud_size <= aviso_validators::MAX_SERIALIZED_POINT_CLOUD_BYTES);
+
+    let publish = client
+        .post(format!("{}/api/v1/notification", app.address))
+        .json(&json!({
+            "event_type": "test_point_cloud",
+            "identifier": {
+                "date": "20260826",
+                "point_cloud": cloud
+            },
+            "payload": {"marker": marker}
+        }))
+        .send()
+        .await
+        .expect("near-limit JetStream point-cloud publish");
+    assert_status_ok_or_panic(publish, "near-limit JetStream point-cloud publish").await;
+
+    let replay = client
+        .post(format!("{}/api/v1/replay", app.address))
+        .json(&json!({
+            "event_type": "test_point_cloud",
+            "identifier": {
+                "date": "20260826",
+                "polygon": [
+                    [-90,-180],[-90,-178],[-88,-178],[-88,-180],[-90,-180]
+                ]
+            },
+            "from_id": "0"
+        }))
+        .send()
+        .await
+        .expect("near-limit JetStream point-cloud replay");
+    assert_eq!(replay.status(), StatusCode::OK);
+    let body = replay.text().await.expect("near-limit replay body");
+    let event: serde_json::Value = body
+        .lines()
+        .filter_map(|line| line.strip_prefix("data:").map(str::trim))
+        .filter(|line| line.contains(&marker))
+        .find_map(|line| serde_json::from_str(line).ok())
+        .expect("near-limit matching point-cloud CloudEvent");
+    assert_eq!(
+        event["data"]["identifier"]["point_cloud"]
+            .as_array()
+            .map(Vec::len),
+        Some(1_450)
+    );
+}
 
 async fn assert_jetstream_test_schema_is_available(client: &reqwest::Client, base_url: &str) {
     let response = client

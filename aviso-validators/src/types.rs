@@ -8,6 +8,7 @@
 
 //! Validation rule types for field validation
 
+use crate::point_cloud::DEFAULT_MAX_POINTS;
 use serde::Serialize;
 #[cfg(feature = "openapi")]
 use utoipa::ToSchema;
@@ -56,6 +57,13 @@ pub enum ValidationRules {
     /// Polygon coordinate validation for spatial data
     #[cfg_attr(feature = "openapi", schema(title = "PolygonHandler"))]
     PolygonHandler { required: bool },
+    /// Point-cloud validation for non-empty JSON arrays of coordinates
+    #[cfg_attr(feature = "openapi", schema(title = "PointCloudHandler"))]
+    PointCloudHandler {
+        required: bool,
+        #[serde(default = "default_max_points")]
+        max_points: usize,
+    },
 }
 
 impl ValidationRules {
@@ -70,6 +78,11 @@ impl ValidationRules {
             ValidationRules::FloatHandler { required, .. } => *required,
             ValidationRules::TimeHandler { required } => *required,
             ValidationRules::PolygonHandler { required } => *required,
+            ValidationRules::PointCloudHandler { required, .. } => *required,
         }
     }
+}
+
+const fn default_max_points() -> usize {
+    DEFAULT_MAX_POINTS
 }

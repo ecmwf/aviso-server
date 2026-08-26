@@ -4,7 +4,8 @@ This guide explains how to add a new notification backend in Aviso.
 
 ## Required Contract
 
-A backend must implement `NotificationBackend` in `src/notification_backend/mod.rs`.
+A backend must implement `NotificationBackend` in
+`src/notification_backend/mod.rs`.
 
 Core requirements:
 
@@ -42,7 +43,7 @@ When adding backend `<new_backend>`:
 
 ## Minimal Capability Example
 
-```rust
+```text
 BackendCapabilities {
     retention_time: true,
     max_messages: true,
@@ -61,4 +62,5 @@ Meaning:
 
 - Unit tests should verify capability flags are stable.
 - Validation tests should verify fail-fast messages for unsupported fields.
-- Integration tests should use test-local config/schema fixtures, not developer-local YAML files.
+- Integration tests should use test-local config/schema fixtures, not
+  developer-local YAML files.

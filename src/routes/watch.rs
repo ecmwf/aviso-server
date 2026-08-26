@@ -93,7 +93,7 @@ pub async fn watch(
     // metric labels and any stream setup.
     if let Err(response) = enforce_known_event_type(&http_request, &notification_request.event_type)
     {
-        return response;
+        return *response;
     }
 
     // Single source of truth for observability labels: bucket to "generic" when
@@ -108,7 +108,7 @@ pub async fn watch(
         &notification_request.event_type,
         StreamOperation::Read,
     ) {
-        return response;
+        return *response;
     }
 
     // Process request using shared processor

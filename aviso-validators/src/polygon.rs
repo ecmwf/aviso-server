@@ -6,7 +6,9 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
+use crate::coordinate::{Coordinate, coordinates_to_json, parse_coordinate};
 use anyhow::{Result, anyhow, bail};
+use serde_json::Value;
 use tracing::debug;
 
 /// Polygon coordinate validator
@@ -40,11 +42,38 @@ impl PolygonHandler {
         Ok(value.to_string())
     }
 
+    /// Validate a JSON polygon array or a compatible legacy polygon string.
+    pub fn validate_json_and_canonicalize(value: &Value, field_name: &str) -> Result<Value> {
+        let coordinates = Self::parse_polygon_value(value).map_err(|error| {
+            anyhow!("field '{}' must be a valid polygon: {}", field_name, error)
+        })?;
+        Self::validate_polygon_geometry(&coordinates).map_err(|error| {
+            anyhow!("field '{}' must be a valid polygon: {}", field_name, error)
+        })?;
+        coordinates_to_json(&coordinates).map_err(Into::into)
+    }
+
+    /// Parse a JSON polygon coordinate array or a compatible legacy string.
+    pub fn parse_polygon_value(value: &Value) -> Result<Vec<Coordinate>> {
+        match value {
+            Value::Array(points) => points
+                .iter()
+                .enumerate()
+                .map(|(index, point)| {
+                    parse_coordinate(point)
+                        .map_err(|error| anyhow!("polygon point {} is invalid: {}", index, error))
+                })
+                .collect(),
+            Value::String(value) => Self::parse_polygon_coordinates(value),
+            _ => bail!("polygon must be an array of [lat,lon] points or a compatible string"),
+        }
+    }
+
     /// Parse a polygon coordinate string into a vector of `(lat, lon)` tuples.
     ///
     /// Accepted forms (whitespace tolerated everywhere):
-    ///   * `"(lat1,lon1,...,lat1,lon1)"` — parenthesised, balanced
-    ///   * `"lat1,lon1,...,lat1,lon1"`   — no parentheses
+    ///   * `"(lat1,lon1,...,lat1,lon1)"`, parenthesised and balanced
+    ///   * `"lat1,lon1,...,lat1,lon1"`, without parentheses
     ///
     /// Rejected forms (each with a specific error message):
     ///   * Opening `(` without a matching closing `)` (or vice versa)
@@ -59,6 +88,12 @@ impl PolygonHandler {
         let raw = coord_string.trim();
         if raw.is_empty() {
             bail!("polygon coordinate string is empty");
+        }
+
+        if raw.starts_with('[') {
+            let value: Value = serde_json::from_str(raw)
+                .map_err(|error| anyhow!("invalid polygon JSON array: {}", error))?;
+            return Self::parse_polygon_value(&value);
         }
 
         let inner = match (raw.starts_with('('), raw.ends_with(')')) {
@@ -94,7 +129,9 @@ impl PolygonHandler {
         let mut iter = coord_parts.iter();
 
         while let Some(lat_str) = iter.next() {
-            let lon_str = iter.next().unwrap(); // Already checked length above
+            let Some(lon_str) = iter.next() else {
+                bail!("polygon coordinates must be in lat,lon pairs")
+            };
 
             let lat: f64 = lat_str.trim().parse().map_err(|_| {
                 anyhow!("could not parse latitude '{}' as a number", lat_str.trim())
@@ -130,8 +167,12 @@ impl PolygonHandler {
             );
         }
 
-        let first = coordinates.first().unwrap();
-        let last = coordinates.last().unwrap();
+        let first = coordinates
+            .first()
+            .ok_or_else(|| anyhow!("polygon has no first coordinate"))?;
+        let last = coordinates
+            .last()
+            .ok_or_else(|| anyhow!("polygon has no last coordinate"))?;
 
         if first != last {
             bail!("polygon must be closed (first and last coordinates must be identical)");

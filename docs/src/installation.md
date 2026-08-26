@@ -9,8 +9,9 @@ using Docker, or deploying to Kubernetes with Helm.
 
 ### Rust toolchain
 
-Aviso is written in Rust and requires **edition 2024**, which means **Rust 1.85 or newer**.
-The CI always builds against the latest stable toolchain.
+Aviso requires **Rust 1.88 or newer**. Each published crate declares this
+minimum supported Rust version in its package metadata. CI also builds with the
+repository's newer pinned toolchain.
 
 Install or update Rust via [rustup](https://rustup.rs):
 
@@ -22,27 +23,34 @@ Verify your version:
 
 ```bash
 rustc --version
-# rustc 1.85.0 (... ) or newer
+# rustc 1.88.0 (... ) or newer
 ```
 
 ### System dependencies
 
-Aviso links against OpenSSL. On Debian/Ubuntu:
+Aviso does not require OpenSSL. HTTPS uses rustls with AWS-LC. Building AWS-LC
+from source requires a native C/C++ toolchain, CMake, and Perl. The runtime uses
+the platform's native certificate store, so Linux installations also need a
+current CA certificate bundle.
+
+On Debian/Ubuntu:
 
 ```bash
-sudo apt-get install -y libssl-dev pkg-config build-essential
+sudo apt-get install -y build-essential cmake perl ca-certificates
 ```
 
 On Fedora/RHEL:
 
 ```bash
-sudo dnf install -y openssl-devel pkg-config gcc
+sudo dnf install -y gcc gcc-c++ cmake perl ca-certificates
 ```
 
-On macOS (with Homebrew):
+On macOS, install the Command Line Tools and CMake. macOS supplies Perl and the
+native certificate store:
 
 ```bash
-brew install openssl pkg-config
+xcode-select --install
+brew install cmake
 ```
 
 ---
@@ -84,8 +92,8 @@ cargo run --release                # release
 ./target/release/aviso_server      # pre-built binary
 ```
 
-The server loads `./configuration/config.yaml` by default.
-See [Configuration](./configuration.md) for all config loading options.
+The server loads `./configuration/config.yaml` by default. See
+[Configuration](./configuration.md) for all config loading options.
 
 ---
 
@@ -128,10 +136,10 @@ docker run --rm \
 
 ### Build targets summary
 
-| Target | Base image | Size | Use |
-|---|---|---|---|
-| `release` | `distroless/cc` | minimal | Production |
-| `debug` | `debian:bookworm-slim` | larger | Troubleshooting |
+| Target    | Base image             | Size    | Use             |
+| --------- | ---------------------- | ------- | --------------- |
+| `release` | `distroless/cc`        | minimal | Production      |
+| `debug`   | `debian:bookworm-slim` | larger  | Troubleshooting |
 
 ---
 
@@ -170,7 +178,7 @@ ENABLE_AUTH=true ./scripts/init_nats.sh
 
 The script prints the generated token at the end of its output, for example:
 
-```
+```text
 Authentication enabled with token: aviso_secure_token_1712345678
 ```
 
@@ -195,7 +203,8 @@ notification_backend:
     token: "aviso_secure_token_1712345678"
 ```
 
-Alternatively, set the token as an environment variable (Aviso reads `NATS_TOKEN` automatically):
+Alternatively, set the token as an environment variable (Aviso reads
+`NATS_TOKEN` automatically):
 
 ```bash
 export NATS_TOKEN=aviso_secure_token_1712345678

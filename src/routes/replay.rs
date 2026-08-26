@@ -85,7 +85,7 @@ pub async fn replay(
     // metric labels and any replay setup.
     if let Err(response) = enforce_known_event_type(&http_request, &notification_request.event_type)
     {
-        return response;
+        return *response;
     }
 
     // Single source of truth for observability labels: bucket to "generic" when
@@ -100,7 +100,7 @@ pub async fn replay(
         &notification_request.event_type,
         StreamOperation::Read,
     ) {
-        return response;
+        return *response;
     }
 
     let context = match StreamingRequestProcessor::process_request(

@@ -1,8 +1,11 @@
 use crate::helpers::{
-    mock_ecpds, mock_ecpds_always_down, spawn_streaming_test_app_with_auth,
-    spawn_streaming_test_app_with_auth_partial_outage, test_jwt,
+    ecpds_point_cloud_match_key_settings, mock_ecpds, mock_ecpds_always_down,
+    spawn_streaming_test_app_with_auth, spawn_streaming_test_app_with_auth_partial_outage,
+    test_jwt,
 };
+use aviso_server::startup::Application;
 use serde_json::json;
+use tokio_util::sync::CancellationToken;
 
 fn ecpds_token(username: &str, roles: &[&str]) -> String {
     test_jwt(username, roles)
@@ -27,6 +30,26 @@ fn diss_ecpds_replay_body(destination: &str) -> serde_json::Value {
         },
         "from_id": "1"
     })
+}
+
+#[tokio::test]
+async fn startup_rejects_point_cloud_handler_as_ecpds_match_key() {
+    let error = match Application::build(
+        ecpds_point_cloud_match_key_settings(),
+        CancellationToken::new(),
+    )
+    .await
+    {
+        Ok(_) => panic!("startup must reject a point-cloud ECPDS match key"),
+        Err(error) => error,
+    };
+
+    assert_eq!(
+        error.to_string(),
+        "ecpds.match_key 'point_cloud' in schema 'test_point_cloud' must not use \
+         PointCloudHandler; watch/replay replace subscriber point_cloud with the polygon filter \
+         and wildcard routing before ECPDS authorization"
+    );
 }
 
 #[tokio::test]
