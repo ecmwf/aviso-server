@@ -9,7 +9,7 @@
 //! Wildcard analysis and matching for watch/replay.
 
 use anyhow::{Context, Result};
-use aviso_validators::{PointHandler, polygon::PolygonHandler};
+use aviso_validators::{HARD_MAX_POINTS, PointCloudHandler, PointHandler, polygon::PolygonHandler};
 use geo::{BoundingRect, Contains, Intersects, Point};
 use std::collections::HashMap;
 use tracing::debug;
@@ -18,7 +18,39 @@ use crate::configuration::{EventSchema, Settings};
 use crate::notification::IdentifierConstraint;
 use crate::notification::topic_codec::{decode_subject, encode_subject, encode_token};
 use crate::notification::topic_parser::topic_to_request;
-use crate::notification::{SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY};
+use crate::notification::{
+    SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY, SPATIAL_POINT_CLOUD_METADATA_KEY,
+};
+
+/// Polygon filter parsed once for a live or replay request.
+#[derive(Clone)]
+pub struct PreparedSpatialFilter {
+    polygon: geo::Polygon<f64>,
+    bounding_box: geo::Rect<f64>,
+}
+
+/// Parse a canonical request polygon once for reuse across candidate messages.
+pub fn prepare_spatial_filter(request: &HashMap<String, String>) -> Option<PreparedSpatialFilter> {
+    let request_polygon = request.get("polygon")?;
+    if request_polygon == "*" {
+        return None;
+    }
+    let coordinates = PolygonHandler::parse_polygon_coordinates(request_polygon).ok()?;
+    let polygon = geo::Polygon::new(
+        geo::LineString::from(
+            coordinates
+                .iter()
+                .map(|(lat, lon)| (*lon, *lat))
+                .collect::<Vec<_>>(),
+        ),
+        vec![],
+    );
+    let bounding_box = polygon.bounding_rect()?;
+    Some(PreparedSpatialFilter {
+        polygon,
+        bounding_box,
+    })
+}
 
 /// Build backend coarse pattern plus decoded full pattern.
 pub fn analyze_watch_pattern(watch_topic: &str) -> Result<(String, Vec<String>)> {
@@ -117,6 +149,26 @@ pub fn matches_notification_filters(
     metadata: Option<&HashMap<String, String>>,
     payload: &str,
 ) -> bool {
+    let prepared_spatial_filter = prepare_spatial_filter(request);
+    matches_notification_filters_prepared(
+        notification_topic,
+        request,
+        constraints,
+        prepared_spatial_filter.as_ref(),
+        metadata,
+        payload,
+    )
+}
+
+/// Apply request filters using a polygon prepared at stream setup.
+pub fn matches_notification_filters_prepared(
+    notification_topic: &str,
+    request: &HashMap<String, String>,
+    constraints: &HashMap<String, IdentifierConstraint>,
+    prepared_spatial_filter: Option<&PreparedSpatialFilter>,
+    metadata: Option<&HashMap<String, String>>,
+    payload: &str,
+) -> bool {
     if !constraints.is_empty() && !matches_identifier_constraints(notification_topic, constraints) {
         return false;
     }
@@ -146,34 +198,9 @@ pub fn matches_notification_filters(
         request_polygon
     );
 
-    let coords_latlon = match PolygonHandler::parse_polygon_coordinates(request_polygon) {
-        Ok(coords) => {
-            debug!("Parsed request polygon: {} coordinate pairs", coords.len());
-            coords
-        }
-        Err(e) => {
-            debug!("Invalid request polygon format: {}", e);
-            return false;
-        }
-    };
-
-    let filter_poly = {
-        let coords_lonlat: Vec<(f64, f64)> = coords_latlon
-            .iter()
-            .map(|(lat, lon)| (*lon, *lat))
-            .collect();
-        geo::Polygon::new(geo::LineString::from(coords_lonlat), vec![])
-    };
-
-    let filter_bbox = match filter_poly.bounding_rect() {
-        Some(bbox) => {
-            debug!("Request polygon bounding box calculated successfully");
-            bbox
-        }
-        None => {
-            debug!("Failed to calculate bounding box for request polygon");
-            return false;
-        }
+    let Some(filter) = prepared_spatial_filter else {
+        debug!("Request polygon was not prepared successfully");
+        return false;
     };
 
     let candidate_bbox = extract_candidate_bbox(metadata);
@@ -183,12 +210,19 @@ pub fn matches_notification_filters(
         return false;
     };
 
-    if !candidate_bbox.intersects(&filter_bbox) {
+    if !candidate_bbox.intersects(&filter.bounding_box) {
         debug!("Bounding boxes do not intersect - filtering out notification");
         return false;
     }
 
     debug!("Bounding boxes intersect - proceeding to polygon intersection check");
+
+    if let Some(point_cloud) = extract_candidate_point_cloud(metadata) {
+        return point_cloud.iter().any(|(lat, lon)| {
+            let point = Point::new(*lon, *lat);
+            filter.polygon.intersects(&point)
+        });
+    }
 
     let candidate_poly = extract_candidate_polygon(metadata, payload);
 
@@ -197,7 +231,7 @@ pub fn matches_notification_filters(
         return false;
     };
 
-    let polygons_intersect = candidate_poly.intersects(&filter_poly);
+    let polygons_intersect = candidate_poly.intersects(&filter.polygon);
 
     if polygons_intersect {
         debug!("Polygon intersection successful - notification passes spatial filter");
@@ -206,6 +240,19 @@ pub fn matches_notification_filters(
     }
 
     polygons_intersect
+}
+
+fn extract_candidate_point_cloud(
+    metadata: Option<&HashMap<String, String>>,
+) -> Option<Vec<(f64, f64)>> {
+    let serialized = metadata?.get(SPATIAL_POINT_CLOUD_METADATA_KEY)?;
+    let value: serde_json::Value = serde_json::from_str(serialized).ok()?;
+    PointCloudHandler::parse_coordinates(
+        &value,
+        HARD_MAX_POINTS,
+        crate::notification::POINT_CLOUD_IDENTIFIER_FIELD,
+    )
+    .ok()
 }
 
 fn matches_identifier_constraints(
@@ -901,6 +948,87 @@ mod tests {
             &constraints,
             None,
             ""
+        ));
+    }
+
+    fn point_cloud_metadata(points: serde_json::Value, bbox: &str) -> HashMap<String, String> {
+        HashMap::from([
+            (SPATIAL_BBOX_METADATA_KEY.to_string(), bbox.to_string()),
+            (
+                SPATIAL_POINT_CLOUD_METADATA_KEY.to_string(),
+                points.to_string(),
+            ),
+        ])
+    }
+
+    fn square_filter() -> HashMap<String, String> {
+        HashMap::from([(
+            "polygon".to_string(),
+            "[[0.0,0.0],[0.0,10.0],[10.0,10.0],[10.0,0.0],[0.0,0.0]]".to_string(),
+        )])
+    }
+
+    #[test]
+    fn point_cloud_matches_first_or_last_inside_point() {
+        let request = square_filter();
+        let constraints = HashMap::new();
+        for points in [
+            serde_json::json!([[5.0, 5.0], [20.0, 20.0]]),
+            serde_json::json!([[20.0, 20.0], [5.0, 5.0]]),
+        ] {
+            let metadata = point_cloud_metadata(points, "5,5,20,20");
+            assert!(matches_notification_filters(
+                "cloud.20250706",
+                &request,
+                &constraints,
+                Some(&metadata),
+                "null"
+            ));
+        }
+    }
+
+    #[test]
+    fn point_cloud_polygon_boundary_is_inclusive_for_edges_and_vertices() {
+        let request = square_filter();
+        let constraints = HashMap::new();
+        for point in [
+            serde_json::json!([[0.0, 5.0]]),
+            serde_json::json!([[0.0, 0.0]]),
+        ] {
+            let metadata = point_cloud_metadata(point, "0,0,0,5");
+            assert!(matches_notification_filters(
+                "cloud.20250706",
+                &request,
+                &constraints,
+                Some(&metadata),
+                "null"
+            ));
+        }
+    }
+
+    #[test]
+    fn point_cloud_rejects_all_outside_and_bbox_misses() {
+        let request = square_filter();
+        let constraints = HashMap::new();
+        let outside = point_cloud_metadata(
+            serde_json::json!([[20.0, 20.0], [-10.0, -10.0]]),
+            "-10,-10,20,20",
+        );
+        assert!(!matches_notification_filters(
+            "cloud.20250706",
+            &request,
+            &constraints,
+            Some(&outside),
+            "null"
+        ));
+
+        let bbox_miss = point_cloud_metadata(serde_json::json!([[5.0, 5.0]]), "20,20,21,21");
+        assert!(!matches_notification_filters(
+            "cloud.20250706",
+            &request,
+            &constraints,
+            Some(&bbox_miss),
+            "null"
         ));
     }
 

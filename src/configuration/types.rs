@@ -511,6 +511,20 @@ mod tests {
     }
 
     #[test]
+    fn point_cloud_handler_defaults_max_points() {
+        let field: IdentifierFieldConfig =
+            serde_json::from_str(r#"{"type":"PointCloudHandler","required":true}"#)
+                .expect("point-cloud handler should deserialize");
+        assert!(matches!(
+            field.rule,
+            ValidationRules::PointCloudHandler {
+                required: true,
+                max_points: 10_000
+            }
+        ));
+    }
+
+    #[test]
     fn identifier_field_config_serializes_flat_without_rule_wrapper() {
         let field =
             IdentifierFieldConfig::with_rule(ValidationRules::TimeHandler { required: false });

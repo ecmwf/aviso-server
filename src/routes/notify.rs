@@ -100,7 +100,7 @@ pub async fn notify(
     // no-op when strict mode is off.
     if let Err(response) = enforce_known_event_type(&http_request, event_type) {
         record_notification(&metrics, "unknown", "rejected");
-        return response;
+        return *response;
     }
 
     // Single source of truth for observability labels: bucket to "generic" when
@@ -124,7 +124,7 @@ pub async fn notify(
     // Reject unauthorized requests before validation/topic work.
     if let Err(response) = enforce_stream_auth(&http_request, event_type, StreamOperation::Write) {
         record_notification(&metrics, event_type_label, "rejected");
-        return response;
+        return *response;
     }
 
     let notification_result = match process_notification_request(

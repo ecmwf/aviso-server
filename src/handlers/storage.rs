@@ -8,13 +8,12 @@
 
 use crate::notification::ProcessingResult;
 use crate::notification::{
-    POLYGON_IDENTIFIER_FIELD, SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY,
-    decode_subject_for_display,
+    SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY, SPATIAL_POINT_CLOUD_METADATA_KEY,
+    SpatialGeometry, decode_subject_for_display,
 };
 use crate::notification_backend::NotificationBackend;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::Result;
-use aviso_validators::PolygonHandler;
 use std::collections::HashMap;
 use tracing::debug;
 
@@ -53,12 +52,16 @@ pub async fn save_to_backend(
             SPATIAL_BBOX_METADATA_KEY.to_string(),
             spatial_metadata.bounding_box.clone(),
         );
-        let polygon_geometry = find_polygon_geometry(&result.canonicalized_params);
-        if let Some((polygon_geometry, _)) = &polygon_geometry {
-            headers.insert(
-                SPATIAL_GEOMETRY_METADATA_KEY.to_string(),
-                polygon_geometry.clone(),
-            );
+        match &spatial_metadata.geometry {
+            SpatialGeometry::Polygon(polygon) => {
+                headers.insert(SPATIAL_GEOMETRY_METADATA_KEY.to_string(), polygon.clone());
+            }
+            SpatialGeometry::PointCloud(point_cloud) => {
+                headers.insert(
+                    SPATIAL_POINT_CLOUD_METADATA_KEY.to_string(),
+                    point_cloud.clone(),
+                );
+            }
         }
 
         // Keep payload unchanged and attach spatial metadata via headers.
@@ -93,51 +96,66 @@ pub async fn save_to_backend(
     Ok(())
 }
 
-fn find_polygon_geometry(
-    canonicalized_params: &HashMap<String, String>,
-) -> Option<(String, Vec<(f64, f64)>)> {
-    let polygon = canonicalized_params.get(POLYGON_IDENTIFIER_FIELD)?;
-    let coordinates = PolygonHandler::parse_polygon_coordinates(polygon).ok()?;
-    Some((polygon.clone(), coordinates))
-}
-
 #[cfg(test)]
 mod tests {
-    use super::find_polygon_geometry;
+    use super::save_to_backend;
+    use crate::notification::{
+        ProcessingResult, SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY,
+        SPATIAL_POINT_CLOUD_METADATA_KEY, SpatialGeometry, spatial::SpatialMetadata,
+    };
+    use crate::notification_backend::{
+        NotificationBackend,
+        in_memory::{InMemoryBackend, InMemoryConfig},
+        replay::{BatchParams, StartAt},
+    };
     use std::collections::HashMap;
 
     #[test]
-    fn finds_valid_polygon_and_ignores_non_polygon_parenthesized_values() {
-        let mut params = HashMap::new();
-        params.insert("foo".to_string(), "(not-a-polygon)".to_string());
-        params.insert(
-            "polygon".to_string(),
-            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+    fn spatial_header_keys_are_distinct() {
+        assert_ne!(
+            super::SPATIAL_GEOMETRY_METADATA_KEY,
+            super::SPATIAL_POINT_CLOUD_METADATA_KEY
         );
-
-        let found = find_polygon_geometry(&params);
-        assert!(found.is_some());
-        let (raw, coordinates) = found.expect("must find polygon geometry");
-        assert!(raw.starts_with('(') && raw.ends_with(')'));
-        assert_eq!(coordinates.len(), 5);
     }
 
-    #[test]
-    fn does_not_extract_polygon_from_non_polygon_key() {
-        let mut params = HashMap::new();
-        params.insert(
-            "shape".to_string(),
-            "(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)".to_string(),
+    #[tokio::test]
+    async fn point_cloud_uses_dedicated_metadata_and_not_polygon_geometry() {
+        let backend = InMemoryBackend::new(InMemoryConfig {
+            max_history_per_topic: 10,
+            max_topics: 10,
+            enable_metrics: false,
+        });
+        let result = ProcessingResult {
+            event_type: "cloud".to_string(),
+            topic: "cloud.20260826".to_string(),
+            canonicalized_params: HashMap::new(),
+            identifier_constraints: HashMap::new(),
+            spatial_metadata: Some(SpatialMetadata {
+                bounding_box: "1,2,3,4".to_string(),
+                geometry: SpatialGeometry::PointCloud("[[1.0,2.0],[3.0,4.0]]".to_string()),
+            }),
+            from_schema: true,
+        };
+
+        save_to_backend(&result, "null".to_string(), &backend)
+            .await
+            .expect("point cloud must store");
+        let batch = backend
+            .get_messages_batch(
+                BatchParams::new("cloud.20260826".to_string(), 10)
+                    .with_start_at(StartAt::Sequence(0)),
+            )
+            .await
+            .expect("stored cloud batch");
+        let metadata = batch.messages[0].metadata.as_ref().expect("metadata");
+        assert_eq!(
+            metadata.get(SPATIAL_POINT_CLOUD_METADATA_KEY),
+            Some(&"[[1.0,2.0],[3.0,4.0]]".to_string())
         );
-
-        assert!(find_polygon_geometry(&params).is_none());
-    }
-
-    #[test]
-    fn returns_none_when_no_valid_polygon_value_exists() {
-        let mut params = HashMap::new();
-        params.insert("shape".to_string(), "(not-a-polygon)".to_string());
-        params.insert("time".to_string(), "1200".to_string());
-        assert!(find_polygon_geometry(&params).is_none());
+        assert_eq!(
+            metadata.get(SPATIAL_BBOX_METADATA_KEY),
+            Some(&"1,2,3,4".to_string())
+        );
+        assert!(!metadata.contains_key(SPATIAL_GEOMETRY_METADATA_KEY));
     }
 }

@@ -21,9 +21,11 @@ use std::collections::HashMap;
 use crate::configuration::Settings;
 use crate::notification::topic_parser::{derive_event_type_from_topic, topic_to_request};
 use crate::notification::{
-    POLYGON_IDENTIFIER_FIELD, SPATIAL_GEOMETRY_METADATA_KEY, decode_subject_for_display,
+    POINT_CLOUD_IDENTIFIER_FIELD, POLYGON_IDENTIFIER_FIELD, SPATIAL_GEOMETRY_METADATA_KEY,
+    SPATIAL_POINT_CLOUD_METADATA_KEY, decode_subject_for_display,
 };
 use crate::notification_backend::NotificationMessage;
+use aviso_validators::{PointCloudHandler, PolygonHandler};
 use cloudevents::AttributesReader;
 use tracing::debug;
 
@@ -116,13 +118,33 @@ impl CloudEventCreator {
             .parse_payload_to_json(payload)
             .context("Failed to parse notification payload as JSON")?;
 
-        let mut identifier: HashMap<String, String> = identifier_params.clone();
+        let mut identifier: HashMap<String, serde_json::Value> = identifier_params
+            .iter()
+            .map(|(key, value)| (key.clone(), serde_json::Value::String(value.clone())))
+            .collect();
         if let Some(meta) = metadata
             && let Some(polygon) = meta.get(SPATIAL_GEOMETRY_METADATA_KEY)
         {
+            let coordinates = PolygonHandler::parse_polygon_coordinates(polygon)
+                .context("Failed to parse stored polygon metadata")?;
+            let canonical = aviso_validators::coordinates_to_json(&coordinates)
+                .context("Failed to canonicalize stored polygon metadata")?;
+            identifier.insert(POLYGON_IDENTIFIER_FIELD.to_string(), canonical);
+        }
+        if let Some(meta) = metadata
+            && let Some(point_cloud) = meta.get(SPATIAL_POINT_CLOUD_METADATA_KEY)
+        {
+            let value: serde_json::Value = serde_json::from_str(point_cloud)
+                .context("Failed to parse stored point-cloud metadata")?;
+            let canonical = PointCloudHandler::validate_and_canonicalize(
+                &value,
+                aviso_validators::HARD_MAX_POINTS,
+                POINT_CLOUD_IDENTIFIER_FIELD,
+            )
+            .context("Failed to validate stored point-cloud metadata")?;
             identifier
-                .entry(POLYGON_IDENTIFIER_FIELD.to_string())
-                .or_insert_with(|| polygon.clone());
+                .entry(POINT_CLOUD_IDENTIFIER_FIELD.to_string())
+                .or_insert(canonical);
         }
 
         Ok(json!({
@@ -291,11 +313,43 @@ mod tests {
             Some("1200")
         );
         assert_eq!(
-            identifier
-                .get(POLYGON_IDENTIFIER_FIELD)
-                .and_then(|v| v.as_str()),
-            Some(polygon),
-            "polygon must be re-injected from spatial_geometry metadata header"
+            identifier.get(POLYGON_IDENTIFIER_FIELD),
+            Some(&json!([
+                [50.0, 10.0],
+                [52.0, 10.0],
+                [52.0, 12.0],
+                [50.0, 12.0],
+                [50.0, 10.0]
+            ])),
+            "polygon must be re-injected as a canonical JSON array"
+        );
+    }
+
+    #[test]
+    fn spatial_metadata_overrides_topic_derived_polygon() {
+        let creator = CloudEventCreator::new("http://test.com".to_string());
+        let identifier_params = HashMap::from([(
+            POLYGON_IDENTIFIER_FIELD.to_string(),
+            "legacy-topic-polygon".to_string(),
+        )]);
+        let metadata = HashMap::from([(
+            SPATIAL_GEOMETRY_METADATA_KEY.to_string(),
+            "(50,10,52,10,52,12,50,12,50,10)".to_string(),
+        )]);
+
+        let data = creator
+            .build_cloud_event_data(&identifier_params, "null", Some(&metadata))
+            .expect("stored metadata must override topic-derived polygon");
+
+        assert_eq!(
+            data["identifier"][POLYGON_IDENTIFIER_FIELD],
+            json!([
+                [50.0, 10.0],
+                [52.0, 10.0],
+                [52.0, 12.0],
+                [50.0, 12.0],
+                [50.0, 10.0]
+            ])
         );
     }
 
@@ -318,6 +372,25 @@ mod tests {
         assert!(
             !identifier.contains_key(POLYGON_IDENTIFIER_FIELD),
             "must not invent a polygon field when none was sent"
+        );
+    }
+
+    #[test]
+    fn build_cloud_event_data_reinjects_point_cloud_as_json_array() {
+        let creator = CloudEventCreator::new("http://test.com".to_string());
+        let identifier_params = HashMap::from([("date".to_string(), "20260522".to_string())]);
+        let metadata = HashMap::from([(
+            SPATIAL_POINT_CLOUD_METADATA_KEY.to_string(),
+            "[[1.0,2.0],[1.0,2.0],[-3.0,4.0]]".to_string(),
+        )]);
+
+        let data = creator
+            .build_cloud_event_data(&identifier_params, "null", Some(&metadata))
+            .expect("data builder must succeed");
+
+        assert_eq!(
+            data["identifier"][POINT_CLOUD_IDENTIFIER_FIELD],
+            json!([[1.0, 2.0], [1.0, 2.0], [-3.0, 4.0]])
         );
     }
 

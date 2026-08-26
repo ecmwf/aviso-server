@@ -23,6 +23,9 @@ use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
 use crate::notification::IdentifierConstraint;
 use crate::notification::decode_subject_for_display;
+use crate::notification::wildcard_matcher::{
+    PreparedSpatialFilter, matches_notification_filters_prepared, prepare_spatial_filter,
+};
 use crate::notification_backend::{NotificationBackend, NotificationMessage};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
@@ -62,6 +65,7 @@ pub(crate) async fn create_watch_sse_stream(
 
     let request_params_clone = request_params.clone();
     let request_constraints_clone = request_constraints.clone();
+    let prepared_spatial_filter = Arc::new(prepare_spatial_filter(&request_params));
     let filtered_stream = futures_util::StreamExt::filter_map(
         notification_stream,
         move |message: NotificationMessage| {
@@ -69,6 +73,7 @@ pub(crate) async fn create_watch_sse_stream(
                 message,
                 request_params_clone.clone(),
                 request_constraints_clone.clone(),
+                prepared_spatial_filter.clone(),
             )
         },
     );
@@ -134,11 +139,13 @@ pub async fn filter_notification_message(
     message: NotificationMessage,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
+    prepared_spatial_filter: Arc<Option<PreparedSpatialFilter>>,
 ) -> Option<NotificationMessage> {
-    let result = crate::notification::wildcard_matcher::matches_notification_filters(
+    let result = matches_notification_filters_prepared(
         &message.topic,
         &request_params,
         &request_constraints,
+        prepared_spatial_filter.as_ref().as_ref(),
         message.metadata.as_ref(),
         &message.payload,
     );

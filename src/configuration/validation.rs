@@ -12,6 +12,7 @@ use super::{
 };
 use crate::notification_backend::{BackendCapabilities, capabilities_for_backend_kind};
 use anyhow::{Result, bail};
+use aviso_validators::{HARD_MAX_POINTS, ValidationRules};
 use std::collections::HashMap;
 
 /// Validates a realm → roles map: rejects empty, whitespace-only, and whitespace-padded entries.
@@ -42,6 +43,67 @@ fn validate_realm_roles(
             }
         }
     }
+    Ok(())
+}
+
+/// Validate reserved spatial identifier names and point-cloud routing invariants.
+pub fn validate_spatial_schema_settings(settings: &Settings) -> Result<()> {
+    let Some(schema_map) = settings.notification_schema.as_ref() else {
+        return Ok(());
+    };
+
+    for (event_type, schema) in schema_map {
+        let point_cloud_handlers: Vec<_> = schema
+            .identifier
+            .iter()
+            .filter(|(_, field)| matches!(field.rule, ValidationRules::PointCloudHandler { .. }))
+            .collect();
+
+        if point_cloud_handlers.len() > 1 {
+            bail!("Schema '{event_type}' may define only one PointCloudHandler");
+        }
+
+        if let Some((field_name, field)) = point_cloud_handlers.first() {
+            if field_name.as_str() != "point_cloud" {
+                bail!(
+                    "Schema '{event_type}' PointCloudHandler must use the reserved identifier key 'point_cloud'"
+                );
+            }
+            if schema.identifier.contains_key("polygon") {
+                bail!(
+                    "Schema '{event_type}' uses PointCloudHandler, so 'polygon' is reserved for watch/replay filters and must not be declared"
+                );
+            }
+            if schema.topic.is_none() {
+                bail!(
+                    "Schema '{event_type}' uses PointCloudHandler and must define topic configuration"
+                );
+            }
+            let max_points = match &field.rule {
+                ValidationRules::PointCloudHandler { max_points, .. } => *max_points,
+                _ => continue,
+            };
+            if max_points == 0 || max_points > HARD_MAX_POINTS {
+                bail!(
+                    "Schema '{event_type}' point_cloud max_points must be between 1 and {HARD_MAX_POINTS}, got {max_points}"
+                );
+            }
+            if schema
+                .topic
+                .as_ref()
+                .is_some_and(|topic| topic.key_order.iter().any(|key| key == "point_cloud"))
+            {
+                bail!(
+                    "Schema '{event_type}' topic.key_order must not contain reserved spatial key 'point_cloud'"
+                );
+            }
+        } else if schema.identifier.contains_key("point_cloud") {
+            bail!(
+                "Schema '{event_type}' reserves identifier key 'point_cloud' for PointCloudHandler"
+            );
+        }
+    }
+
     Ok(())
 }
 
@@ -539,6 +601,15 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
                     ecpds_config.match_key,
                     stream_name
                 ),
+                Some(field) if matches!(field.rule, ValidationRules::PointCloudHandler { .. }) => {
+                    bail!(
+                        "ecpds.match_key '{}' in schema '{}' must not use PointCloudHandler; \
+                         watch/replay replace subscriber point_cloud with the polygon filter and \
+                         wildcard routing before ECPDS authorization",
+                        ecpds_config.match_key,
+                        stream_name
+                    )
+                }
                 Some(_) => {}
             }
         }
@@ -551,12 +622,15 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
 mod tests {
     use super::{
         validate_auth_settings, validate_metrics_settings, validate_schema_storage_policy_support,
-        validate_stream_auth_settings, validate_stream_plugin_settings,
+        validate_spatial_schema_settings, validate_stream_auth_settings,
+        validate_stream_plugin_settings,
     };
     use crate::configuration::{
         ApplicationSettings, AuthMode, AuthSettings, EventSchema, EventStoragePolicy,
-        MetricsSettings, NotificationBackendSettings, Settings, TopicConfig, WatchEndpointSettings,
+        IdentifierFieldConfig, MetricsSettings, NotificationBackendSettings, Settings, TopicConfig,
+        WatchEndpointSettings,
     };
+    use aviso_validators::ValidationRules;
     use std::collections::HashMap;
 
     fn settings_with_policy(
@@ -600,6 +674,110 @@ mod tests {
             metrics: MetricsSettings::default(),
             ecpds: None,
         }
+    }
+
+    fn settings_with_point_cloud(field_name: &str, max_points: usize) -> Settings {
+        let mut settings =
+            settings_with_policy("jetstream", EventStoragePolicy::default(), "cloud");
+        let schema = settings
+            .notification_schema
+            .as_mut()
+            .and_then(|schemas| schemas.get_mut("cloud"))
+            .expect("cloud schema");
+        schema.identifier.insert(
+            field_name.to_string(),
+            IdentifierFieldConfig::with_rule(ValidationRules::PointCloudHandler {
+                required: true,
+                max_points,
+            }),
+        );
+        settings
+    }
+
+    #[test]
+    fn accepts_valid_point_cloud_schema() {
+        let settings = settings_with_point_cloud("point_cloud", 10_000);
+        validate_spatial_schema_settings(&settings).expect("valid point-cloud schema");
+    }
+
+    #[test]
+    fn rejects_point_cloud_in_topic_key_order() {
+        let mut settings = settings_with_point_cloud("point_cloud", 10_000);
+        settings
+            .notification_schema
+            .as_mut()
+            .and_then(|schemas| schemas.get_mut("cloud"))
+            .and_then(|schema| schema.topic.as_mut())
+            .expect("cloud topic")
+            .key_order
+            .push("point_cloud".to_string());
+        assert!(validate_spatial_schema_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn rejects_point_cloud_wrong_name_duplicate_handler_and_invalid_limits() {
+        assert!(
+            validate_spatial_schema_settings(&settings_with_point_cloud("cloud", 10_000)).is_err()
+        );
+        assert!(
+            validate_spatial_schema_settings(&settings_with_point_cloud("point_cloud", 0)).is_err()
+        );
+        assert!(
+            validate_spatial_schema_settings(&settings_with_point_cloud("point_cloud", 10_001))
+                .is_err()
+        );
+
+        let mut settings = settings_with_point_cloud("point_cloud", 10_000);
+        settings
+            .notification_schema
+            .as_mut()
+            .and_then(|schemas| schemas.get_mut("cloud"))
+            .expect("cloud schema")
+            .identifier
+            .insert(
+                "another_cloud".to_string(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PointCloudHandler {
+                    required: false,
+                    max_points: 1,
+                }),
+            );
+        assert!(validate_spatial_schema_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn rejects_polygon_declaration_on_point_cloud_schema() {
+        let mut settings = settings_with_point_cloud("point_cloud", 10_000);
+        settings
+            .notification_schema
+            .as_mut()
+            .and_then(|schemas| schemas.get_mut("cloud"))
+            .expect("cloud schema")
+            .identifier
+            .insert(
+                "polygon".to_string(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler {
+                    required: false,
+                }),
+            );
+        assert!(validate_spatial_schema_settings(&settings).is_err());
+    }
+
+    #[test]
+    fn rejects_point_cloud_schema_without_topic() {
+        let mut settings = settings_with_point_cloud("point_cloud", 10_000);
+        settings
+            .notification_schema
+            .as_mut()
+            .and_then(|schemas| schemas.get_mut("cloud"))
+            .expect("cloud schema")
+            .topic = None;
+        let error = validate_spatial_schema_settings(&settings)
+            .expect_err("point-cloud schemas need explicit routing");
+        assert!(
+            error
+                .to_string()
+                .contains("must define topic configuration")
+        );
     }
 
     fn basic_settings_with_schema(schema: HashMap<String, EventSchema>) -> Settings {
@@ -1910,6 +2088,32 @@ mod tests {
         fn accepts_well_formed_settings() {
             let settings = settings_with_ecpds(good_ecpds_config(), "destination", true);
             validate_ecpds_settings(&settings).expect("should accept");
+        }
+
+        #[test]
+        fn rejects_point_cloud_handler_as_match_key() {
+            let mut config = good_ecpds_config();
+            config.match_key = "point_cloud".to_string();
+            let mut settings = settings_with_ecpds(config, "point_cloud", true);
+            settings
+                .notification_schema
+                .as_mut()
+                .and_then(|schemas| schemas.get_mut("diss"))
+                .and_then(|schema| schema.identifier.get_mut("point_cloud"))
+                .expect("point_cloud identifier")
+                .rule = ValidationRules::PointCloudHandler {
+                required: true,
+                max_points: 10_000,
+            };
+
+            let error = validate_ecpds_settings(&settings)
+                .expect_err("point-cloud match keys must fail closed");
+            assert_eq!(
+                error.to_string(),
+                "ecpds.match_key 'point_cloud' in schema 'diss' must not use \
+                 PointCloudHandler; watch/replay replace subscriber point_cloud with the polygon \
+                 filter and wildcard routing before ECPDS authorization"
+            );
         }
 
         #[test]

@@ -21,8 +21,8 @@ use crate::notification::{
 use crate::types::NotificationRequest;
 use aviso_validators::ValidationRules;
 use aviso_validators::{
-    DateHandler, EnumHandler, ExpverHandler, FloatHandler, IntHandler, PolygonHandler,
-    StringHandler, TimeHandler, parse_enum_constraint, parse_float_constraint,
+    DateHandler, EnumHandler, ExpverHandler, FloatHandler, IntHandler, PointCloudHandler,
+    PolygonHandler, StringHandler, TimeHandler, parse_enum_constraint, parse_float_constraint,
     parse_int_constraint,
 };
 
@@ -71,36 +71,51 @@ impl<'a> NotificationProcessor<'a> {
         payload: &Option<serde_json::Value>,
         operation: OperationType,
     ) -> Result<ProcessingResult> {
-        let has_schema = self.registry.has_schema(event_type);
+        let schema = self.registry.get_schema(event_type);
+        let has_schema = schema.is_some();
 
         // Schema-driven when available. Strict mode rejects everything else.
         // Non-strict mode preserves the legacy generic fallback for backward compat.
-        let (canonicalized_params, identifier_constraints, spatial_metadata) = if has_schema {
-            let schema = self.registry.get_schema(event_type).unwrap();
-            match operation {
-                OperationType::Notify => {
-                    self.process_notify_request(schema, request_params, payload)?
+        let (canonicalized_params, identifier_constraints, spatial_metadata) =
+            if let Some(schema) = schema {
+                match operation {
+                    OperationType::Notify => {
+                        self.process_notify_request(schema, request_params, payload)?
+                    }
+                    OperationType::Watch => self.process_watch_request(schema, request_params)?,
+                    OperationType::Replay => self.process_replay_request(schema, request_params)?,
                 }
-                OperationType::Watch => self.process_watch_request(schema, request_params)?,
-                OperationType::Replay => self.process_replay_request(schema, request_params)?,
-            }
-        } else if self.registry.is_strict() {
-            bail!(
-                "unknown event type '{}'. Configured event types: {:?}",
-                event_type,
-                self.registry.get_schema_names()
-            );
-        } else {
-            (
-                self.process_generic_request(request_params, operation)?,
-                HashMap::new(),
-                None,
-            )
-        };
+            } else if self.registry.is_strict() {
+                bail!(
+                    "unknown event type '{}'. Configured event types: {:?}",
+                    event_type,
+                    self.registry.get_schema_names()
+                );
+            } else {
+                (
+                    self.process_generic_request(request_params, operation)?,
+                    HashMap::new(),
+                    None,
+                )
+            };
 
-        // Topic always comes from canonicalized values.
-        let topic = if let Some(schema) = self.registry.get_schema(event_type) {
-            TopicBuilder::build_topic_with_schema(event_type, schema, &canonicalized_params)?
+        // Spatial polygons are application-level filters for streaming requests.
+        // Keep the canonical polygon for exact matching, but wildcard its subject
+        // token for compatibility with schemas that historically routed polygons.
+        let topic = if let Some(schema) = schema {
+            if matches!(operation, OperationType::Watch | OperationType::Replay)
+                && schema
+                    .topic
+                    .as_ref()
+                    .is_some_and(|topic| topic.key_order.iter().any(|key| key == "polygon"))
+                && canonicalized_params.contains_key("polygon")
+            {
+                let mut routing_params = canonicalized_params.clone();
+                routing_params.insert("polygon".to_string(), "*".to_string());
+                TopicBuilder::build_topic_with_schema(event_type, schema, &routing_params)?
+            } else {
+                TopicBuilder::build_topic_with_schema(event_type, schema, &canonicalized_params)?
+            }
         } else {
             TopicBuilder::build_generic_topic(event_type, &canonicalized_params)
         };
@@ -145,27 +160,35 @@ impl<'a> NotificationProcessor<'a> {
                     field_name
                 );
             }
-            let scalar_value =
-                NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+            if let ValidationRules::PointCloudHandler { max_points, .. } = &field_config.rule {
+                let validated = PointCloudHandler::validate(value, *max_points, field_name)?;
+                let (coordinates, canonical_json) = validated.into_parts();
+                let canonicalized_value = canonical_json.to_string();
+                spatial_metadata = Some(SpatialMetadata::from_point_cloud(
+                    &coordinates,
+                    canonicalized_value.clone(),
+                )?);
+                canonicalized.insert(field_name.clone(), canonicalized_value);
+                continue;
+            }
 
-            let canonicalized_value = self.validate_and_canonicalize_field(
-                field_name,
-                &scalar_value,
-                &field_config.rule,
-            )?;
+            let canonicalized_value =
+                self.validate_and_canonicalize_field(field_name, value, &field_config.rule)?;
 
             // Polygon fields attach spatial metadata for downstream filtering.
             if matches!(&field_config.rule, ValidationRules::PolygonHandler { .. }) {
-                let coordinates = PolygonHandler::parse_polygon_coordinates(&scalar_value)?;
+                let coordinates = PolygonHandler::parse_polygon_coordinates(&canonicalized_value)?;
 
-                spatial_metadata = Some(SpatialMetadata::from_coordinates(&coordinates)?);
+                let metadata =
+                    SpatialMetadata::from_polygon(&coordinates, canonicalized_value.clone())?;
 
                 tracing::debug!(
                     field_name = field_name,
                     coordinate_count = coordinates.len(),
-                    bounding_box = %spatial_metadata.as_ref().unwrap().bounding_box,
+                    bounding_box = %metadata.bounding_box,
                     "Extracted spatial metadata from polygon field"
                 );
+                spatial_metadata = Some(metadata);
             }
 
             canonicalized.insert(field_name.clone(), canonicalized_value);
@@ -224,6 +247,20 @@ impl<'a> NotificationProcessor<'a> {
         let mut canonicalized = HashMap::new();
         let mut identifier_constraints = HashMap::new();
         let has_point = request_params.contains_key("point");
+        let has_polygon = request_params.contains_key("polygon");
+        let has_point_cloud_schema = schema
+            .identifier
+            .values()
+            .any(|field| matches!(field.rule, ValidationRules::PointCloudHandler { .. }));
+
+        if request_params.contains_key("point_cloud") {
+            bail!("identifier.point_cloud is only supported for notify operations");
+        }
+        if has_point_cloud_schema && has_point {
+            bail!(
+                "identifier.point is not supported for point-cloud schemas; use identifier.polygon"
+            );
+        }
 
         for (field_name, field_config) in &schema.identifier {
             let is_required = field_config.is_required();
@@ -235,17 +272,21 @@ impl<'a> NotificationProcessor<'a> {
                     canonicalized.insert(field_name.clone(), "*".to_string());
                     identifier_constraints.insert(field_name.clone(), constraint);
                 } else {
-                    let scalar_value =
-                        NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
                     let canonicalized_value = self.validate_and_canonicalize_field(
                         field_name,
-                        &scalar_value,
+                        value,
                         &field_config.rule,
                     )?;
                     canonicalized.insert(field_name.clone(), canonicalized_value);
                 }
             } else if is_required {
                 if field_name == "polygon" && has_point {
+                    canonicalized.insert(field_name.clone(), "*".to_string());
+                    continue;
+                }
+                if matches!(field_config.rule, ValidationRules::PointCloudHandler { .. })
+                    && has_polygon
+                {
                     canonicalized.insert(field_name.clone(), "*".to_string());
                     continue;
                 }
@@ -265,8 +306,13 @@ impl<'a> NotificationProcessor<'a> {
                 bail!("Field 'point' constraint object is not supported");
             }
             let point_value =
-                NotificationRequest::scalar_identifier_value_as_string("point", point)?;
-            canonicalized.insert("point".to_string(), point_value);
+                aviso_validators::PointHandler::validate_json_and_canonicalize(point, "point")?;
+            canonicalized.insert("point".to_string(), point_value.to_string());
+        }
+
+        if has_point_cloud_schema && let Some(polygon) = request_params.get("polygon") {
+            let polygon = PolygonHandler::validate_json_and_canonicalize(polygon, "polygon")?;
+            canonicalized.insert("polygon".to_string(), polygon.to_string());
         }
 
         Ok((canonicalized, identifier_constraints, None))
@@ -319,34 +365,54 @@ impl<'a> NotificationProcessor<'a> {
     fn validate_and_canonicalize_field(
         &self,
         field_name: &str,
-        value: &str,
+        value: &Value,
         rule: &ValidationRules,
     ) -> Result<String> {
         match rule {
             ValidationRules::StringHandler { max_length, .. } => {
-                StringHandler::validate_and_canonicalize(value, *max_length, field_name)
+                let value =
+                    NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                StringHandler::validate_and_canonicalize(&value, *max_length, field_name)
             }
             ValidationRules::DateHandler {
                 canonical_format, ..
-            } => DateHandler::validate_and_canonicalize(value, canonical_format, field_name),
+            } => {
+                let value =
+                    NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                DateHandler::validate_and_canonicalize(&value, canonical_format, field_name)
+            }
             ValidationRules::EnumHandler { values, .. } => {
-                EnumHandler::validate_and_canonicalize(value, values, field_name)
+                let value =
+                    NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                EnumHandler::validate_and_canonicalize(&value, values, field_name)
             }
             ValidationRules::ExpverHandler { default, .. } => {
-                ExpverHandler::validate_and_canonicalize(value, default.as_deref(), field_name)
+                let value =
+                    NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                ExpverHandler::validate_and_canonicalize(&value, default.as_deref(), field_name)
             }
             ValidationRules::IntHandler { range, .. } => {
-                IntHandler::validate_and_canonicalize(value, range.as_ref(), field_name)
+                let value =
+                    NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                IntHandler::validate_and_canonicalize(&value, range.as_ref(), field_name)
             }
             ValidationRules::FloatHandler { range, .. } => {
-                FloatHandler::validate_and_canonicalize(value, range.as_ref(), field_name)
+                let value =
+                    NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                FloatHandler::validate_and_canonicalize(&value, range.as_ref(), field_name)
             }
             ValidationRules::TimeHandler { .. } => {
-                TimeHandler::validate_and_canonicalize(value, field_name)
+                let value =
+                    NotificationRequest::scalar_identifier_value_as_string(field_name, value)?;
+                TimeHandler::validate_and_canonicalize(&value, field_name)
             }
             ValidationRules::PolygonHandler { .. } => {
-                PolygonHandler::validate_and_canonicalize(value, field_name)
+                Ok(PolygonHandler::validate_json_and_canonicalize(value, field_name)?.to_string())
             }
+            ValidationRules::PointCloudHandler { max_points, .. } => Ok(
+                PointCloudHandler::validate_and_canonicalize(value, *max_points, field_name)?
+                    .to_string(),
+            ),
         }
     }
 
@@ -441,6 +507,36 @@ mod tests {
             topic: Some(TopicConfig {
                 base: "polygon".to_string(),
                 key_order: vec!["date".to_string(), "time".to_string()],
+            }),
+            endpoint: None,
+            identifier,
+            storage_policy: None,
+            auth: None,
+        }
+    }
+
+    fn create_point_cloud_test_schema() -> EventSchema {
+        let identifier = HashMap::from([
+            (
+                "date".to_string(),
+                IdentifierFieldConfig::with_rule(ValidationRules::DateHandler {
+                    canonical_format: "%Y%m%d".to_string(),
+                    required: true,
+                }),
+            ),
+            (
+                "point_cloud".to_string(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PointCloudHandler {
+                    required: true,
+                    max_points: 10_000,
+                }),
+            ),
+        ]);
+        EventSchema {
+            payload: Some(PayloadConfig { required: false }),
+            topic: Some(TopicConfig {
+                base: "cloud".to_string(),
+                key_order: vec!["date".to_string()],
             }),
             endpoint: None,
             identifier,
@@ -780,7 +876,7 @@ mod tests {
         );
         assert_eq!(
             processing_result.canonicalized_params.get("point"),
-            Some(&"52.55,13.5".to_string())
+            Some(&"[52.55,13.5]".to_string())
         );
     }
 
@@ -807,7 +903,7 @@ mod tests {
         );
         assert_eq!(
             processing_result.canonicalized_params.get("point"),
-            Some(&"52.55,13.5".to_string())
+            Some(&"[52.55,13.5]".to_string())
         );
     }
 
@@ -1126,6 +1222,105 @@ mod tests {
         assert!(
             result.is_err(),
             "strict mode with empty schema must reject all event_types (drain mode)"
+        );
+    }
+
+    #[test]
+    fn point_cloud_notify_is_canonical_and_absent_from_subject() {
+        let schemas = HashMap::from([("cloud".to_string(), create_point_cloud_test_schema())]);
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+        let params = HashMap::from([
+            ("date".to_string(), serde_json::json!("2026-08-26")),
+            (
+                "point_cloud".to_string(),
+                serde_json::json!([[1.0, 2.0], [1.0, 2.0], [-3.0, 4.0]]),
+            ),
+        ]);
+
+        let result = processor
+            .process_request_with_values("cloud", &params, &None, OperationType::Notify)
+            .expect("valid point cloud must process");
+
+        assert_eq!(result.topic, "cloud.20260826");
+        assert!(!result.topic.contains("point_cloud"));
+        assert_eq!(
+            result.canonicalized_params.get("point_cloud"),
+            Some(&"[[1.0,2.0],[1.0,2.0],[-3.0,4.0]]".to_string())
+        );
+        let spatial = result.spatial_metadata.expect("cloud metadata");
+        assert_eq!(spatial.bounding_box, "-3,2,1,4");
+        assert!(matches!(
+            spatial.geometry,
+            crate::notification::SpatialGeometry::PointCloud(_)
+        ));
+    }
+
+    #[test]
+    fn point_cloud_streaming_requires_polygon_instead_of_cloud() {
+        let schemas = HashMap::from([("cloud".to_string(), create_point_cloud_test_schema())]);
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+        let params = HashMap::from([
+            ("date".to_string(), serde_json::json!("20260826")),
+            (
+                "polygon".to_string(),
+                serde_json::json!([[0, 0], [0, 10], [10, 10], [10, 0], [0, 0]]),
+            ),
+        ]);
+
+        let result = processor
+            .process_request_with_values("cloud", &params, &None, OperationType::Replay)
+            .expect("polygon satisfies required point cloud for replay");
+        assert_eq!(
+            result.canonicalized_params.get("point_cloud"),
+            Some(&"*".to_string())
+        );
+        assert_eq!(
+            result.canonicalized_params.get("polygon"),
+            Some(&"[[0.0,0.0],[0.0,10.0],[10.0,10.0],[10.0,0.0],[0.0,0.0]]".to_string())
+        );
+
+        let cloud_filter = HashMap::from([
+            ("date".to_string(), serde_json::json!("20260826")),
+            ("point_cloud".to_string(), serde_json::json!([[1, 2]])),
+        ]);
+        assert!(
+            processor
+                .process_request_with_values("cloud", &cloud_filter, &None, OperationType::Watch)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn streaming_polygon_in_key_order_is_wildcarded_only_for_routing() {
+        let mut schema = create_polygon_test_schema();
+        schema
+            .topic
+            .as_mut()
+            .expect("polygon topic")
+            .key_order
+            .push("polygon".to_string());
+        let schemas = HashMap::from([("polygon".to_string(), schema)]);
+        let registry = NotificationRegistry::from_config(&schemas);
+        let processor = NotificationProcessor::new(&registry);
+        let polygon = serde_json::json!([
+            [0.0, 0.0],
+            [0.0, 10.0],
+            [10.0, 10.0],
+            [10.0, 0.0],
+            [0.0, 0.0]
+        ]);
+        let params = HashMap::from([("polygon".to_string(), polygon)]);
+
+        let result = processor
+            .process_request_with_values("polygon", &params, &None, OperationType::Replay)
+            .expect("routed polygon filter");
+
+        assert!(result.topic.ends_with(".%2A"));
+        assert_eq!(
+            result.canonicalized_params.get("polygon"),
+            Some(&"[[0.0,0.0],[0.0,10.0],[10.0,10.0],[10.0,0.0],[0.0,0.0]]".to_string())
         );
     }
 

@@ -26,7 +26,9 @@ use super::types::{ControlEvent, DeliveryKind, StreamFrame};
 use crate::configuration::Settings;
 use crate::notification::IdentifierConstraint;
 use crate::notification::decode_subject_for_display;
-use crate::notification::wildcard_matcher::matches_notification_filters;
+use crate::notification::wildcard_matcher::{
+    PreparedSpatialFilter, matches_notification_filters_prepared, prepare_spatial_filter,
+};
 use crate::notification_backend::{
     NotificationBackend, NotificationMessage,
     replay::{BatchParams, StartAt},
@@ -44,6 +46,7 @@ pub(crate) fn create_historical_replay_stream(
     start_at: StartAt,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
+    prepared_spatial_filter: Arc<Option<PreparedSpatialFilter>>,
     request_id: String,
 ) -> impl tokio_stream::Stream<Item = StreamFrame> {
     // Fetch configuration values from global settings
@@ -52,7 +55,6 @@ pub(crate) fn create_historical_replay_stream(
     // Build the initial pagination params based on either sequence or date
     let initial_params =
         BatchParams::new(topic.clone(), watch_config.replay_batch_size).with_start_at(start_at);
-
     // State tuple: (backend, params, has_more, delay_ms, request_params,
     // request_constraints, request_id), all owned by the unfold closure.
     unfold(
@@ -63,6 +65,7 @@ pub(crate) fn create_historical_replay_stream(
             watch_config.replay_batch_delay_ms,
             request_params,
             request_constraints,
+            prepared_spatial_filter,
             request_id,
         ),
         move |(
@@ -72,6 +75,7 @@ pub(crate) fn create_historical_replay_stream(
             delay_ms,
             request_params,
             request_constraints,
+            prepared_spatial_filter,
             request_id,
         )| async move {
             if !has_more {
@@ -101,10 +105,11 @@ pub(crate) fn create_historical_replay_stream(
 
                     for message in batch_result.messages {
                         // Filtering: Only send if message matches request fields (including spatial)
-                        if !matches_notification_filters(
+                        if !matches_notification_filters_prepared(
                             &message.topic,
                             &request_params,
                             &request_constraints,
+                            prepared_spatial_filter.as_ref().as_ref(),
                             message.metadata.as_ref(),
                             &message.payload,
                         ) {
@@ -141,6 +146,7 @@ pub(crate) fn create_historical_replay_stream(
                             delay_ms,
                             request_params,
                             request_constraints,
+                            prepared_spatial_filter,
                             request_id,
                         ),
                     ))
@@ -170,6 +176,7 @@ pub(crate) fn create_historical_replay_stream(
                             delay_ms,
                             request_params,
                             request_constraints,
+                            prepared_spatial_filter,
                             request_id,
                         ),
                     ))
@@ -198,6 +205,7 @@ pub(crate) async fn create_historical_then_live_stream(
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let app_settings = Settings::get_global_application_settings();
+    let prepared_spatial_filter = Arc::new(prepare_spatial_filter(&request_params));
 
     // Create historical replay stream
     let historical_stream = create_historical_replay_stream(
@@ -206,6 +214,7 @@ pub(crate) async fn create_historical_then_live_stream(
         start_at,
         request_params.clone(),
         request_constraints.clone(),
+        prepared_spatial_filter.clone(),
         request_id.clone(),
     );
 
@@ -236,6 +245,7 @@ pub(crate) async fn create_historical_then_live_stream(
                 message,
                 request_params_clone.clone(),
                 request_constraints_clone.clone(),
+                prepared_spatial_filter.clone(),
             )
         },
     );
@@ -315,6 +325,7 @@ pub(crate) async fn create_replay_only_stream(
     request_id: String,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
+    let prepared_spatial_filter = Arc::new(prepare_spatial_filter(&request_params));
 
     // Create historical replay stream
     let historical_stream = create_historical_replay_stream(
@@ -323,6 +334,7 @@ pub(crate) async fn create_replay_only_stream(
         start_at,
         request_params.clone(),
         request_constraints.clone(),
+        prepared_spatial_filter,
         request_id.clone(),
     );
 

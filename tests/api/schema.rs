@@ -105,6 +105,26 @@ async fn event_schema_omits_identifier_description_when_not_configured() {
 }
 
 #[tokio::test]
+async fn event_schema_exposes_point_cloud_handler_and_limit() {
+    let app = spawn_streaming_test_app().await;
+    let response = reqwest::Client::new()
+        .get(format!("{}/api/v1/schema/test_point_cloud", app.address))
+        .send()
+        .await
+        .expect("failed to call point-cloud schema endpoint");
+    assert_eq!(response.status().as_u16(), 200);
+    let body: Value = response.json().await.expect("point-cloud schema JSON");
+    let field = &body["schema"]["identifier"]["point_cloud"];
+    assert_eq!(field["type"], "PointCloudHandler");
+    assert_eq!(field["required"], true);
+    assert_eq!(field["max_points"], 10_000);
+    assert_eq!(
+        field["description"],
+        "Publishers provide point_cloud as [[latitude, longitude], ...]. Watch and replay requests provide a closed polygon instead. The polygon satisfies this required field; subscribers must not send point_cloud."
+    );
+}
+
+#[tokio::test]
 async fn schema_list_is_public_when_auth_is_enabled() {
     let app = spawn_streaming_test_app_with_auth().await;
     let response = reqwest::Client::new()

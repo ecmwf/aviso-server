@@ -6,10 +6,10 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-//! Spatial helpers for polygon notifications.
+//! Spatial helpers for polygon and point-cloud notifications.
 
 use anyhow::Result;
-use geo::{BoundingRect, Intersects};
+use geo::Intersects;
 use geo_types::{Polygon, Rect};
 use serde::{Deserialize, Serialize};
 use tracing::debug;
@@ -38,6 +38,9 @@ pub const SPATIAL_GEOMETRY_METADATA_KEY: &str = "spatial_geometry";
 /// Centralised here for the same reason as [`SPATIAL_GEOMETRY_METADATA_KEY`].
 pub const SPATIAL_BBOX_METADATA_KEY: &str = "spatial_bbox";
 
+/// Backend metadata key containing canonical point-cloud JSON.
+pub const SPATIAL_POINT_CLOUD_METADATA_KEY: &str = "spatial_point_cloud";
+
 /// Identifier field name conventionally used for the polygon-typed field in
 /// a notification schema. The storage layer extracts the polygon string by
 /// this exact key, and the CloudEvent builder re-injects it under the same
@@ -45,18 +48,44 @@ pub const SPATIAL_BBOX_METADATA_KEY: &str = "spatial_bbox";
 /// both sides together and is tracked as a follow-up.
 pub const POLYGON_IDENTIFIER_FIELD: &str = "polygon";
 
+/// Reserved identifier field for provider point clouds.
+pub const POINT_CLOUD_IDENTIFIER_FIELD: &str = "point_cloud";
+
+/// Spatial geometry carried separately from routing subjects.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SpatialGeometry {
+    /// Canonical polygon JSON.
+    Polygon(String),
+    /// Canonical point-cloud JSON.
+    PointCloud(String),
+}
+
 /// Spatial metadata derived from polygon fields.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SpatialMetadata {
     /// Bounding box string: `min_lat,min_lon,max_lat,max_lon`.
     pub bounding_box: String,
+    /// Canonical geometry stored in the matching backend header.
+    pub geometry: SpatialGeometry,
 }
 
 impl SpatialMetadata {
     /// Build metadata from polygon coordinates.
-    pub fn from_coordinates(coordinates: &[(f64, f64)]) -> Result<Self> {
+    pub fn from_polygon(coordinates: &[(f64, f64)], canonical: String) -> Result<Self> {
         let bounding_box = calculate_bounding_box_string(coordinates)?;
-        Ok(Self { bounding_box })
+        Ok(Self {
+            bounding_box,
+            geometry: SpatialGeometry::Polygon(canonical),
+        })
+    }
+
+    /// Build metadata from point-cloud coordinates.
+    pub fn from_point_cloud(coordinates: &[(f64, f64)], canonical: String) -> Result<Self> {
+        let bounding_box = calculate_bounding_box_string(coordinates)?;
+        Ok(Self {
+            bounding_box,
+            geometry: SpatialGeometry::PointCloud(canonical),
+        })
     }
 
     /// Parse bounding box to `geo_types::Rect`.
@@ -83,19 +112,18 @@ pub fn calculate_bounding_box_string(coordinates: &[(f64, f64)]) -> Result<Strin
         anyhow::bail!("Cannot calculate bounding box for empty coordinates");
     }
 
-    let polygon = coordinates_to_geo_polygon(coordinates)?;
+    let &(mut min_lat, mut min_lon) = coordinates
+        .first()
+        .ok_or_else(|| anyhow::anyhow!("Cannot calculate bounding box for empty coordinates"))?;
+    let (mut max_lat, mut max_lon) = (min_lat, min_lon);
+    for &(lat, lon) in &coordinates[1..] {
+        min_lat = min_lat.min(lat);
+        min_lon = min_lon.min(lon);
+        max_lat = max_lat.max(lat);
+        max_lon = max_lon.max(lon);
+    }
 
-    let bounding_rect = polygon
-        .bounding_rect()
-        .ok_or_else(|| anyhow::anyhow!("Failed to calculate bounding rectangle for polygon"))?;
-
-    Ok(format!(
-        "{},{},{},{}",
-        bounding_rect.min().y, // min_lat
-        bounding_rect.min().x, // min_lon
-        bounding_rect.max().y, // max_lat
-        bounding_rect.max().x  // max_lon
-    ))
+    Ok(format!("{min_lat},{min_lon},{max_lat},{max_lon}"))
 }
 
 /// Convert `(lat, lon)` pairs to a geo polygon.
@@ -213,7 +241,7 @@ mod tests {
     #[test]
     fn test_spatial_metadata_from_coordinates() {
         let coordinates = berlin_polygon();
-        let result = SpatialMetadata::from_coordinates(&coordinates);
+        let result = SpatialMetadata::from_polygon(&coordinates, "[]".to_string());
 
         assert!(result.is_ok());
         let metadata = result.unwrap();
@@ -233,7 +261,7 @@ mod tests {
     #[test]
     fn test_spatial_metadata_from_empty_coordinates() {
         let coordinates = vec![];
-        let result = SpatialMetadata::from_coordinates(&coordinates);
+        let result = SpatialMetadata::from_polygon(&coordinates, "[]".to_string());
 
         assert!(result.is_err());
     }
@@ -241,7 +269,7 @@ mod tests {
     #[test]
     fn test_spatial_metadata_as_geo_rect() {
         let coordinates = berlin_polygon();
-        let metadata = SpatialMetadata::from_coordinates(&coordinates).unwrap();
+        let metadata = SpatialMetadata::from_polygon(&coordinates, "[]".to_string()).unwrap();
         let result = metadata.as_geo_rect();
 
         assert!(result.is_ok());
@@ -255,7 +283,7 @@ mod tests {
     #[test]
     fn test_spatial_metadata_json_serialization() {
         let coordinates = berlin_polygon();
-        let metadata = SpatialMetadata::from_coordinates(&coordinates).unwrap();
+        let metadata = SpatialMetadata::from_polygon(&coordinates, "[]".to_string()).unwrap();
 
         let json_result = metadata.to_json_string();
         assert!(json_result.is_ok());
@@ -263,7 +291,7 @@ mod tests {
 
     #[test]
     fn test_spatial_metadata_json_deserialization() {
-        let json_str = r#"{"bounding_box":"52.5,13.4,52.6,13.5"}"#;
+        let json_str = r#"{"bounding_box":"52.5,13.4,52.6,13.5","geometry":{"Polygon":"[]"}}"#;
         let result = SpatialMetadata::from_json_string(json_str);
 
         assert!(result.is_ok());

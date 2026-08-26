@@ -6,12 +6,14 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
+use crate::coordinate::{Coordinate, coordinate_to_json, parse_coordinate, validate_coordinate};
 use anyhow::{Result, bail};
+use serde_json::Value;
 use tracing::debug;
 
 /// Point coordinate validator.
 ///
-/// Accepts `lat,lon` and `(lat,lon)` input.
+/// Accepts `[lat,lon]`, `lat,lon`, and `(lat,lon)` input.
 pub struct PointHandler;
 
 impl PointHandler {
@@ -23,13 +25,36 @@ impl PointHandler {
             lon = lon,
             "Point validated successfully"
         );
-        Ok(format!("{},{}", lat, lon))
+        Ok(format!("{lat},{lon}"))
+    }
+
+    /// Validate a JSON point value and return canonical `[lat,lon]` JSON.
+    pub fn validate_json_and_canonicalize(value: &Value, field_name: &str) -> Result<Value> {
+        let coordinate = Self::parse_point_value(value).map_err(|error| {
+            anyhow::anyhow!("field '{}' must be a valid point: {}", field_name, error)
+        })?;
+        coordinate_to_json(coordinate).map_err(Into::into)
+    }
+
+    /// Parse a JSON point array or a compatible legacy point string.
+    pub fn parse_point_value(value: &Value) -> Result<Coordinate> {
+        match value {
+            Value::Array(_) => parse_coordinate(value).map_err(Into::into),
+            Value::String(value) => Self::parse_point_coordinates(value),
+            _ => bail!("point must be a two-element array [lat,lon] or a compatible string"),
+        }
     }
 
     pub fn parse_point_coordinates(value: &str) -> Result<(f64, f64)> {
         let trimmed = value.trim();
         if trimmed.is_empty() {
             bail!("Point coordinate string cannot be empty");
+        }
+
+        if trimmed.starts_with('[') {
+            let value: Value = serde_json::from_str(trimmed)
+                .map_err(|error| anyhow::anyhow!("invalid point JSON array: {}", error))?;
+            return Self::parse_point_value(&value);
         }
 
         let inner = trimmed
@@ -57,14 +82,7 @@ impl PointHandler {
             .parse()
             .map_err(|_| anyhow::anyhow!("Invalid longitude value: {}", lon_str))?;
 
-        if !(-90.0..=90.0).contains(&lat) {
-            bail!("Latitude out of range [-90, 90]: {}", lat);
-        }
-        if !(-180.0..=180.0).contains(&lon) {
-            bail!("Longitude out of range [-180, 180]: {}", lon);
-        }
-
-        Ok((lat, lon))
+        validate_coordinate(lat, lon).map_err(Into::into)
     }
 }
 
@@ -87,6 +105,12 @@ mod tests {
     }
 
     #[test]
+    fn parse_point_coordinates_accepts_canonical_json_string() {
+        let point = PointHandler::parse_point_coordinates("[52.55,13.5]").unwrap();
+        assert_eq!(point, (52.55, 13.5));
+    }
+
+    #[test]
     fn parse_point_coordinates_rejects_bad_format() {
         assert!(PointHandler::parse_point_coordinates("52.55").is_err());
         assert!(PointHandler::parse_point_coordinates("52.55,13.5,1.0").is_err());
@@ -102,5 +126,15 @@ mod tests {
     fn validate_and_canonicalize_returns_canonical_form() {
         let canonical = PointHandler::validate_and_canonicalize("(52.5500,13.5000)", "p").unwrap();
         assert_eq!(canonical, "52.55,13.5");
+    }
+
+    #[test]
+    fn json_array_is_canonical() {
+        let canonical = PointHandler::validate_json_and_canonicalize(
+            &serde_json::json!([52.5500, 13.5000]),
+            "point",
+        )
+        .unwrap();
+        assert_eq!(canonical, serde_json::json!([52.55, 13.5]));
     }
 }

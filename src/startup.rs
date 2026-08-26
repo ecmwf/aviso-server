@@ -31,7 +31,8 @@ use crate::routes::watch::watch;
 use crate::{
     configuration::{
         Settings, validate_auth_settings, validate_schema_storage_policy_support,
-        validate_stream_auth_settings, validate_stream_plugin_settings,
+        validate_spatial_schema_settings, validate_stream_auth_settings,
+        validate_stream_plugin_settings,
     },
     notification_backend::{MeteredBackend, NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify, ready::ready},
@@ -63,6 +64,17 @@ impl Application {
                 event_name = "startup.configuration.validation.failed",
                 error = %e,
                 "Configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
+        if let Err(e) = validate_spatial_schema_settings(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.spatial_schema.validation.failed",
+                error = %e,
+                "Spatial schema configuration validation failed"
             );
             return Err(std::io::Error::other(e));
         }

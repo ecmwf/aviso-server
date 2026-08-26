@@ -9,9 +9,8 @@ ARG CARGO_FEATURES="ecpds"
 ###############################
 FROM rust:1.90-slim-bookworm AS chef
 RUN cargo install cargo-chef --locked
-# cmake is required by the aws-lc-rs crypto provider that backs reqwest's
-# `rustls` feature (default since reqwest 0.13) and the aws-lc-sys crate.
-RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential cmake && rm -rf /var/lib/apt/lists/*
+# AWS-LC backs rustls and builds bundled native code. OpenSSL is not used.
+RUN apt-get update && apt-get install -y build-essential cmake perl ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 RUN cargo chef prepare --recipe-path recipe.json
@@ -22,7 +21,7 @@ RUN cargo chef prepare --recipe-path recipe.json
 FROM rust:1.90-slim-bookworm AS cacher
 ARG CARGO_FEATURES
 RUN cargo install cargo-chef --locked
-RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential cmake curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y build-essential cmake perl ca-certificates curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY --from=chef /app/recipe.json recipe.json
 # Both subcrates are path-dependencies and need their full source for
@@ -46,7 +45,7 @@ RUN if [ -n "$CARGO_FEATURES" ]; then \
 ###############################
 FROM rust:1.90-slim-bookworm AS builder
 ARG CARGO_FEATURES
-RUN apt-get update && apt-get install -y libssl-dev pkg-config build-essential cmake curl && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y build-essential cmake perl ca-certificates curl && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY . .
 COPY --from=cacher /app/target target

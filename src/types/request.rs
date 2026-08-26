@@ -322,11 +322,9 @@ impl NotificationRequest {
         }
 
         if let Some(point) = point {
-            let point_str = Self::scalar_identifier_value_as_string("point", point)
-                .map_err(|e| anyhow::anyhow!("identifier.point must be a scalar value: {}", e))?;
-            PointHandler::parse_point_coordinates(&point_str).map_err(|e| {
+            PointHandler::parse_point_value(point).map_err(|e| {
                 anyhow::anyhow!(
-                    "identifier.point must be a valid 'lat,lon' coordinate pair: {}",
+                    "identifier.point must be a valid [lat,lon] coordinate pair or compatible string: {}",
                     e
                 )
             })?;

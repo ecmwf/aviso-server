@@ -215,7 +215,12 @@ notification_schema:
 
 The plugin requires (and startup validation enforces):
 
-- `match_key` (default `"destination"`) is present in the schema's `identifier` and marked `required: true` there. Without this, an operator could deploy a schema where the destination value is optional and a client could bypass the check by simply omitting the field. The plugin reads `match_key` from the request's canonicalized identifier params at runtime, so the field does NOT have to appear in `topic.key_order`.
+- `match_key` (default `"destination"`) is present in the schema's `identifier`
+  and marked `required: true` there. It must not use `PointCloudHandler`, because
+  watch/replay subscribers provide a polygon and Aviso replaces `point_cloud`
+  with wildcard routing before plugin authorization. For other handlers, the
+  plugin reads the canonicalized identifier at runtime, so the field does not
+  have to appear in `topic.key_order`.
 - `auth.required` is `true`. The plugin runs after standard stream auth, so plugins on a stream where `auth.required` is `false` would never execute.
 
 ### How it works at runtime

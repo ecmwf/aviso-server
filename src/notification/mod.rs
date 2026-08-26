@@ -22,7 +22,8 @@ pub use handler::NotificationHandler;
 pub use processor::NotificationProcessor;
 pub use registry::NotificationRegistry;
 pub use spatial::{
-    POLYGON_IDENTIFIER_FIELD, SPATIAL_BBOX_METADATA_KEY, SPATIAL_GEOMETRY_METADATA_KEY,
+    POINT_CLOUD_IDENTIFIER_FIELD, POLYGON_IDENTIFIER_FIELD, SPATIAL_BBOX_METADATA_KEY,
+    SPATIAL_GEOMETRY_METADATA_KEY, SPATIAL_POINT_CLOUD_METADATA_KEY, SpatialGeometry,
 };
 pub use topic_codec::{
     decode_subject, decode_subject_base, decode_subject_for_display, decode_token, encode_subject,
