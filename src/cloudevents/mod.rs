@@ -142,9 +142,7 @@ impl CloudEventCreator {
                 POINT_CLOUD_IDENTIFIER_FIELD,
             )
             .context("Failed to validate stored point-cloud metadata")?;
-            identifier
-                .entry(POINT_CLOUD_IDENTIFIER_FIELD.to_string())
-                .or_insert(canonical);
+            identifier.insert(POINT_CLOUD_IDENTIFIER_FIELD.to_string(), canonical);
         }
 
         Ok(json!({
@@ -391,6 +389,28 @@ mod tests {
         assert_eq!(
             data["identifier"][POINT_CLOUD_IDENTIFIER_FIELD],
             json!([[1.0, 2.0], [1.0, 2.0], [-3.0, 4.0]])
+        );
+    }
+
+    #[test]
+    fn spatial_metadata_overrides_topic_derived_point_cloud() {
+        let creator = CloudEventCreator::new("http://test.com".to_string());
+        let identifier_params = HashMap::from([(
+            POINT_CLOUD_IDENTIFIER_FIELD.to_string(),
+            "legacy-topic-point-cloud".to_string(),
+        )]);
+        let metadata = HashMap::from([(
+            SPATIAL_POINT_CLOUD_METADATA_KEY.to_string(),
+            "[[1.0,2.0],[-3.0,4.0]]".to_string(),
+        )]);
+
+        let data = creator
+            .build_cloud_event_data(&identifier_params, "null", Some(&metadata))
+            .expect("stored metadata must override topic-derived point cloud");
+
+        assert_eq!(
+            data["identifier"][POINT_CLOUD_IDENTIFIER_FIELD],
+            json!([[1.0, 2.0], [-3.0, 4.0]])
         );
     }
 
