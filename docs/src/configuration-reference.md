@@ -138,22 +138,82 @@ See [Authentication](./authentication.md) for detailed setup, client usage, and 
 
 ## `ecpds`
 
-Optional ECPDS destination authorization. Only available when built with `--features ecpds`. When configured, streams can reference the `"ecpds"` plugin in their `auth.plugins` list to enforce destination-level access control on `watch` and `replay` requests.
+Optional ECPDS destination authorization, available when built with
+`--features ecpds`. Add `"ecpds"` to a stream's `auth.plugins` list to check
+destination access on watch and replay requests.
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `username` | `string` | none | Service account username used for HTTP Basic Auth to ECPDS. Must not be empty. |
-| `password` | `string` | none | Service account password. Redacted to `[REDACTED]` in `Debug` output (and therefore in any structured-log dump of the configuration). Must not be empty. The `/api/v1/schema` endpoint never exposes the top-level `ecpds` block at all, only per-event identifier and payload fields, so the password is not reachable through it. |
-| `servers` | `string[]` | none | List of ECPDS server base URLs. **Use `https://` for any reachable host**: the plugin authenticates with HTTP Basic Auth, so plain `http://` to a real host would put the service-account password and per-user destination lookups on the wire without TLS. Plain `http://` is accepted only for loopback (`127.0.0.1`, `[::1]`, `localhost`) for local testing; a typo from `https://` to `http://` on a non-loopback host fails closed at startup. Each URL must parse with no query string and no fragment. Path prefixes (e.g. `https://proxy.example/ecpds-api/`) are accepted. The plugin appends `/ecpds/v1/destination/list?id=<username>` itself. |
-| `match_key` | `string` | none | Identifier field to match against the user's destination list (e.g. `"destination"`). Must be a single bare identifier name (no whitespace, `/` or NUL), declared in the schema's `identifier` with `required: true`. Use an ordinary destination identifier: `PolygonHandler`, `PointCloudHandler`, and the field name `polygon` are not allowed as match keys. When the schema defines a topic, include the field in `topic.key_order` so notifications are filtered by the authorized destination. |
-| `target_field` | `string` | `"name"` | JSON field to extract from each ECPDS destination record. Records that lack this field are silently skipped (logged at `debug` as `auth.ecpds.fetch.skipped_record`; flip to `RUST_LOG=info,aviso_ecpds=debug` when triaging missing-destination reports). |
-| `cache_ttl_seconds` | `u64` | `300` | How long (in seconds) to cache a user's destination list before re-fetching. Must be `> 0`. |
-| `max_entries` | `u64` | `10000` | Maximum number of distinct usernames held in the cache; eviction policy is moka's TinyLFU. Must be `> 0`. |
-| `request_timeout_seconds` | `u64` | `30` | Total wall-clock budget for a single ECPDS HTTP request: DNS lookup, TCP connect, TLS handshake, request send, AND response body read must all complete within this. (`reqwest::ClientBuilder::timeout` is a total deadline that starts when the request is issued; tune this as an upper bound that includes connection setup, not just response time.) Must be `> 0`. |
-| `connect_timeout_seconds` | `u64` | `5` | Sub-budget within `request_timeout_seconds` for the dial-through-TLS-handshake phase only (DNS + TCP connect + TLS). If this elapses first the request fails with a connect timeout; otherwise the remainder of `request_timeout_seconds` covers request send and response body. Must be `> 0`. |
-| `partial_outage_policy` | `"strict"\|"any_success"` | `"strict"` | How tolerant the merge is when one configured server fails. The destination list itself is always the union of per-server responses. `strict`: every server must respond successfully or the call fails with 503. `any_success`: take the union of whichever servers responded; only fails if no server responded. See [ECPDS Destination Authorization](./authentication.md#partial-outage-policy) for the failure-tolerance trade-off. |
+| Setting | Default | Purpose |
+|---|---|---|
+| `username` | none | ECPDS service account username. |
+| `password` | none | ECPDS service account password. |
+| `servers` | none | List of ECPDS base URLs. |
+| `match_key` | none | Identifier used for destination access checks. |
+| `target_field` | `"name"` | Destination field returned by ECPDS. |
+| `cache_ttl_seconds` | `300` | How long to cache a user's destination list. |
+| `max_entries` | `10000` | Maximum number of users in the cache. |
+| `request_timeout_seconds` | `30` | Time limit for the whole request. |
+| `connect_timeout_seconds` | `5` | Time limit for establishing the connection. |
+| `partial_outage_policy` | `"strict"` | How to handle unavailable ECPDS servers. |
 
-See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization) for setup and runtime behavior, and the [ECPDS runbook](./ecpds-runbook.md) for operational triage.
+### Credentials and server URLs
+
+`username` and `password` are nonempty strings used for HTTP Basic Auth to
+ECPDS. The password is redacted in configuration debug output. The schema
+discovery API does not expose the top-level `ecpds` settings.
+
+Use HTTPS to protect credentials and destination lookups. HTTP is accepted
+only for local testing with `127.0.0.1`, `[::1]`, or `localhost`; other HTTP
+addresses fail startup validation.
+
+`servers` is a list of base URL strings, without query strings or fragments.
+Path prefixes such as `https://proxy.example/ecpds-api/` are supported. Aviso
+appends `/ecpds/v1/destination/list?id=<username>` to each base URL.
+
+### Destination matching
+
+Set `match_key` to an ordinary identifier such as `destination`, declared in
+the schema with `required: true`. The name must not contain whitespace, `/`,
+or NUL. When the schema defines a topic, include this field in
+`topic.key_order` so delivery is filtered by the authorized destination.
+
+Spatial identifiers cannot be match keys: `PolygonHandler`,
+`PointCloudHandler`, and the field name `polygon` are not allowed. Spatial
+matching does not enforce access to an exact destination value.
+
+`target_field` selects a JSON field from each ECPDS destination record.
+Records missing that field are skipped. To investigate missing destinations,
+set `RUST_LOG=info,aviso_ecpds=debug` and look for
+`auth.ecpds.fetch.skipped_record` events.
+
+### Caching and timeouts
+
+Cache limits and timeout settings are positive whole numbers. Durations are
+in seconds. `cache_ttl_seconds` controls when a cached destination list
+expires; `max_entries` limits the number of users cached. The cache uses
+TinyLFU eviction when it needs to make room.
+
+`request_timeout_seconds` covers the whole request, from DNS lookup through
+reading the response body. `connect_timeout_seconds` limits the connection
+setup, including TCP and TLS. Connection time counts toward the total request
+timeout; it is not an additional allowance.
+
+### Handling unavailable servers
+
+`partial_outage_policy` accepts two values:
+
+- `strict`: every configured server must respond successfully. If any fails,
+  the destination lookup fails with HTTP 503.
+- `any_success`: combine destinations from the servers that respond
+  successfully. The lookup fails if none succeeds.
+
+In both modes, Aviso combines the returned destination lists. With
+`any_success`, destinations known only to an unavailable server may be
+missing. See [Partial outage policy](./authentication.md#partial-outage-policy)
+for the trade-off.
+
+See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization)
+for setup and runtime behavior, and the [ECPDS runbook](./ecpds-runbook.md)
+for troubleshooting.
 
 ## `metrics`
 
