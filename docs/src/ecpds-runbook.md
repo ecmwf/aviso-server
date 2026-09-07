@@ -83,20 +83,134 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 Every event uses the codebase's standard structured shape (`service_name`, `service_version`, `event_name`, plus event-specific fields). The list below covers each event with a one-line meaning. Field-value details follow.
 
-| Event | Level | Meaning |
-|-------|-------|---------|
-| `auth.ecpds.check.started` | debug | The plugin started checking access for a request. |
-| `auth.ecpds.check.allowed` | info | The plugin allowed the request. |
-| `auth.ecpds.check.denied` | warn | The plugin denied the request. See `reason` field. |
-| `auth.ecpds.check.unavailable` | warn | The plugin failed to reach a verdict. See `fetch_outcome` field. |
-| `auth.ecpds.check.error` | error | An unexpected error in the plugin. See `error_kind` or `error` field. |
-| `auth.ecpds.admin.bypass` | debug | An admin user skipped the ECPDS check. Demoted from info because admin bypass is configured behaviour, not an event SREs alert on; the `aviso_ecpds_access_decisions_total{outcome="admin_bypass"}` Prometheus counter still records every occurrence unconditionally. |
-| `auth.ecpds.cache.hit` | debug | The destination list came from cache. |
-| `auth.ecpds.cache.miss` | debug | The destination list was not in cache; a fetch was triggered. |
-| `auth.ecpds.fetch.succeeded` | debug | A fetch to one ECPDS server succeeded. |
-| `auth.ecpds.fetch.failed` | warn | A fetch to one ECPDS server failed. See `error` field. |
-| `auth.ecpds.fetch.skipped_inactive` | debug | One or more ECPDS records returned by a single server had `active != true` (false, missing, or not a boolean) and got dropped from the user's allow-list. Carries `server_index`, `server`, `username`, `skipped`, `total`. Demoted from info because every ECPDS fetch routinely returns inactive records and the skip behaviour is the documented contract; flip to debug only when investigating a denied user whose expected destination appears in this skip count. |
-| `auth.ecpds.fetch.skipped_record` | debug | One or more ECPDS records returned by a single server were active but missing the configured `target_field` and got dropped. Carries `server_index`, `server`, `username`, `target_field`, `skipped`, `total` so on-call can pinpoint which ECPDS server is producing the malformed records. Demoted from info on the same grounds as `skipped_inactive`. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Event | Level |
+|---|---|
+| [`auth.ecpds.check.started`](#ecpds-tracing-check-started) | debug |
+| [`auth.ecpds.check.allowed`](#ecpds-tracing-check-allowed) | info |
+| [`auth.ecpds.check.denied`](#ecpds-tracing-check-denied) | warn |
+| [`auth.ecpds.check.unavailable`](#ecpds-tracing-check-unavailable) | warn |
+| [`auth.ecpds.check.error`](#ecpds-tracing-check-error) | error |
+| [`auth.ecpds.admin.bypass`](#ecpds-tracing-admin-bypass) | debug |
+| [`auth.ecpds.cache.hit`](#ecpds-tracing-cache-hit) | debug |
+| [`auth.ecpds.cache.miss`](#ecpds-tracing-cache-miss) | debug |
+| [`auth.ecpds.fetch.succeeded`](#ecpds-tracing-fetch-succeeded) | debug |
+| [`auth.ecpds.fetch.failed`](#ecpds-tracing-fetch-failed) | warn |
+| [`auth.ecpds.fetch.skipped_inactive`](#ecpds-tracing-fetch-skipped-inactive) | debug |
+| [`auth.ecpds.fetch.skipped_record`](#ecpds-tracing-fetch-skipped-record) | debug |
+
+</div>
+<details class="setting-panel" id="ecpds-tracing-check-started">
+<summary><code>auth.ecpds.check.started</code>
+<span class="setting-meta"><strong>Level:</strong> debug</span>
+</summary>
+
+The plugin started checking access for a request.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-check-allowed">
+<summary><code>auth.ecpds.check.allowed</code>
+<span class="setting-meta"><strong>Level:</strong> info</span>
+</summary>
+
+The plugin allowed the request.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-check-denied">
+<summary><code>auth.ecpds.check.denied</code>
+<span class="setting-meta"><strong>Level:</strong> warn</span>
+</summary>
+
+The plugin denied the request. See `reason` field.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-check-unavailable">
+<summary><code>auth.ecpds.check.unavailable</code>
+<span class="setting-meta"><strong>Level:</strong> warn</span>
+</summary>
+
+The plugin failed to reach a verdict. See `fetch_outcome` field.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-check-error">
+<summary><code>auth.ecpds.check.error</code>
+<span class="setting-meta"><strong>Level:</strong> error</span>
+</summary>
+
+An unexpected error in the plugin. See `error_kind` or `error` field.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-admin-bypass">
+<summary><code>auth.ecpds.admin.bypass</code>
+<span class="setting-meta"><strong>Level:</strong> debug</span>
+</summary>
+
+An admin user skipped the ECPDS check. Demoted from info because admin bypass is
+configured behaviour, not an event SREs alert on; the
+`aviso_ecpds_access_decisions_total{outcome="admin_bypass"}` Prometheus counter
+still records every occurrence unconditionally.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-cache-hit">
+<summary><code>auth.ecpds.cache.hit</code>
+<span class="setting-meta"><strong>Level:</strong> debug</span>
+</summary>
+
+The destination list came from cache.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-cache-miss">
+<summary><code>auth.ecpds.cache.miss</code>
+<span class="setting-meta"><strong>Level:</strong> debug</span>
+</summary>
+
+The destination list was not in cache; a fetch was triggered.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-fetch-succeeded">
+<summary><code>auth.ecpds.fetch.succeeded</code>
+<span class="setting-meta"><strong>Level:</strong> debug</span>
+</summary>
+
+A fetch to one ECPDS server succeeded.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-fetch-failed">
+<summary><code>auth.ecpds.fetch.failed</code>
+<span class="setting-meta"><strong>Level:</strong> warn</span>
+</summary>
+
+A fetch to one ECPDS server failed. See `error` field.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-fetch-skipped-inactive">
+<summary><code>auth.ecpds.fetch.skipped_inactive</code>
+<span class="setting-meta"><strong>Level:</strong> debug</span>
+</summary>
+
+One or more ECPDS records returned by a single server had `active != true`
+(false, missing, or not a boolean) and got dropped from the user's allow-list.
+Carries `server_index`, `server`, `username`, `skipped`, `total`. Demoted from
+info because every ECPDS fetch routinely returns inactive records and the skip
+behaviour is the documented contract; flip to debug only when investigating a
+denied user whose expected destination appears in this skip count.
+
+</details>
+<details class="setting-panel" id="ecpds-tracing-fetch-skipped-record">
+<summary><code>auth.ecpds.fetch.skipped_record</code>
+<span class="setting-meta"><strong>Level:</strong> debug</span>
+</summary>
+
+One or more ECPDS records returned by a single server were active but missing
+the configured `target_field` and got dropped. Carries `server_index`, `server`,
+`username`, `target_field`, `skipped`, `total` so on-call can pinpoint which
+ECPDS server is producing the malformed records. Demoted from info on the same
+grounds as `skipped_inactive`.
+
+</details>
+</div>
 
 ### Common fields
 
