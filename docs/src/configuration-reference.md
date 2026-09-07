@@ -155,7 +155,7 @@ destination access on watch and replay requests.
 | [`connect_timeout_seconds`](#ecpds-connect-timeout) | `5` |
 | [`partial_outage_policy`](#ecpds-outage-policy) | `"strict"` |
 
-<div class="ecpds-settings">
+<div class="settings-reference">
 <details class="setting-panel" id="ecpds-username">
 <summary><code>username</code>
 <span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> nonempty string</span>

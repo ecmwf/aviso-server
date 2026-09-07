@@ -19,8 +19,8 @@ pre.mermaid svg {
     max-width: 100%;
 }
 
-/* ECPDS entries only; the linked index and other configuration tables stay unchanged. */
-.ecpds-settings .setting-panel {
+/* Expandable reference entries; ordinary tables keep the book's styling. */
+.settings-reference .setting-panel {
     margin-block: 1.5em;
     padding: 1em clamp(0.75em, 3vw, 1.5em);
     color: var(--fg);
@@ -31,51 +31,52 @@ pre.mermaid svg {
     overflow-wrap: anywhere;
 }
 
-.ecpds-settings .setting-panel > summary {
+.settings-reference .setting-panel > summary {
     cursor: pointer;
 }
 
-.ecpds-settings .setting-panel > summary:focus-visible {
+.settings-reference .setting-panel > summary:focus-visible {
     outline: 2px solid var(--links);
     outline-offset: 4px;
 }
 
-.ecpds-settings .setting-panel > summary > code {
+.settings-reference .setting-panel > summary > code {
     font-weight: bold;
 }
 
-.ecpds-settings .setting-meta {
+.settings-reference .setting-meta {
     display: block;
     margin-top: 0.5em;
     line-height: 1.6;
 }
 
-.ecpds-settings .setting-panel[open] > summary {
+.settings-reference .setting-panel[open] > summary {
     padding-bottom: 0.75em;
     border-bottom: 1px solid var(--table-border-color);
 }
 
-.ecpds-settings .setting-panel > :last-child {
+.settings-reference .setting-panel > :last-child {
     margin-bottom: 0;
 }
 
-.ecpds-settings .setting-panel code {
+.settings-reference .setting-panel code,
+.settings-reference .setting-index code {
     white-space: normal;
     overflow-wrap: anywhere;
 }
 
-.ecpds-settings .setting-panel a:not(.header) {
+.settings-reference .setting-panel a:not(.header) {
     color: var(--fg);
     text-decoration: underline;
 }
 
 @media print {
-    .ecpds-settings .setting-panel::details-content {
+    .settings-reference .setting-panel::details-content {
         content-visibility: visible;
         display: block;
     }
 
-    .ecpds-settings .setting-panel > :not(summary) {
+    .settings-reference .setting-panel > :not(summary) {
         display: block;
     }
 }
