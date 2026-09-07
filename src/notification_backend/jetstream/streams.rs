@@ -178,7 +178,7 @@ async fn ensure_stream_for_topic_with_schema(
     let compression = stream_config.compression.clone();
 
     // Attempt to create the stream with proper error handling
-    match backend.jetstream.create_stream(stream_config).await {
+    match backend.jetstream.create_stream(&stream_config).await {
         Ok(_) => {
             info!(
                 service_name = SERVICE_NAME,
@@ -199,9 +199,10 @@ async fn ensure_stream_for_topic_with_schema(
             Ok(stream_name)
         }
         Err(e) => {
-            let error_msg = e.to_string();
             // Handle race condition where another replica creates the stream
-            if error_msg.contains("stream name already in use") {
+            if matches!(e.kind(), async_nats::jetstream::context::CreateStreamErrorKind::JetStream(ref error)
+                if error.error_code() == async_nats::jetstream::ErrorCode::STREAM_NAME_EXIST)
+            {
                 info!(
                     service_name = SERVICE_NAME,
                     service_version = SERVICE_VERSION,
@@ -209,7 +210,24 @@ async fn ensure_stream_for_topic_with_schema(
                     stream_name = %stream_name,
                     "Stream created by another replica"
                 );
-                Ok(stream_name)
+                let stream = backend
+                    .jetstream
+                    .get_stream(&stream_name)
+                    .await
+                    .context("Failed to inspect stream after concurrent creation")?;
+                reconcile_existing_stream_config(
+                    backend,
+                    stream,
+                    &stream_name,
+                    &subject_pattern,
+                    &stream_config,
+                    &ReconcileContext {
+                        policy_context: &policy_context,
+                        schema_policy_applied,
+                        schema_policy_owner: schema_policy_owner_field,
+                    },
+                )
+                .await
             } else {
                 warn!(
                     service_name = SERVICE_NAME,
@@ -298,21 +316,13 @@ async fn reconcile_existing_stream_config(
         "Reconciling existing stream mutable configuration"
     );
 
-    if let Err(error) = backend.jetstream.update_stream(update_config).await {
-        warn!(
-            service_name = SERVICE_NAME,
-            service_version = SERVICE_VERSION,
-            event_name = "backend.jetstream.stream.reconcile.failed",
-            stream_name = %stream_name,
-            subject_pattern = %subject_pattern,
-            changed_fields = ?changes,
-            schema_policy_applied = reconcile_context.schema_policy_applied,
-            schema_policy_owner = reconcile_context.schema_policy_owner,
-            error = %error,
-            "Stream reconciliation failed; continuing with existing stream configuration"
-        );
-        return Ok(stream_name.to_string());
-    }
+    backend
+        .jetstream
+        .update_stream(update_config)
+        .await
+        .with_context(|| {
+            format!("Failed to reconcile stream '{stream_name}' fields {changes:?}")
+        })?;
 
     info!(
         service_name = SERVICE_NAME,
@@ -352,6 +362,11 @@ fn merged_reconciled_config(
     if merged.max_age != desired.max_age {
         merged.max_age = desired.max_age;
         changed_fields.push("max_age");
+    }
+    // NATS rejects a duplicate-detection window longer than finite retention.
+    if !merged.max_age.is_zero() && merged.duplicate_window > merged.max_age {
+        merged.duplicate_window = merged.max_age;
+        changed_fields.push("duplicate_window");
     }
     if merged.max_messages_per_subject != desired.max_messages_per_subject {
         merged.max_messages_per_subject = desired.max_messages_per_subject;
@@ -512,7 +527,7 @@ fn resolve_storage_policy_for_base(
         let Some(topic_cfg) = event_schema.topic.as_ref() else {
             continue;
         };
-        if topic_cfg.base != base {
+        if !topic_cfg.base.eq_ignore_ascii_case(&base) {
             continue;
         }
         let Some(policy) = event_schema.storage_policy.clone() else {
@@ -590,16 +605,27 @@ mod tests {
         schema
     }
 
-    async fn connect_or_skip(config: JetStreamConfig, context: &str) -> Option<JetStreamBackend> {
-        match connect(config).await {
-            Ok(backend) => Some(backend),
-            Err(error) => {
-                eprintln!(
-                    "skipping JetStream integration test ({context}): failed to connect to NATS: {error:#}"
-                );
-                None
-            }
-        }
+    #[test]
+    fn storage_policy_lookup_matches_mixed_case_base() {
+        let mut schema = compression_test_schema();
+        schema
+            .get_mut("reconcile_compression")
+            .unwrap()
+            .topic
+            .as_mut()
+            .unwrap()
+            .base = "Reconcile_Compression".to_string();
+        assert!(
+            super::resolve_storage_policy_for_base("RECONCILE_COMPRESSION", Some(&schema))
+                .unwrap()
+                .is_some()
+        );
+    }
+
+    async fn connect_required(config: JetStreamConfig, context: &str) -> JetStreamBackend {
+        connect(config).await.unwrap_or_else(|error| {
+            panic!("JetStream integration test ({context}): failed to connect to NATS: {error:#}")
+        })
     }
 
     #[test]
@@ -756,6 +782,26 @@ mod tests {
     }
 
     #[test]
+    fn shortening_retention_clamps_duplicate_window_only_when_needed() {
+        let current = StreamConfig {
+            duplicate_window: Duration::from_secs(120),
+            ..baseline_stream_config()
+        };
+        for seconds in [0, 2, 120, 3600] {
+            let desired = StreamConfig {
+                max_age: Duration::from_secs(seconds),
+                ..current.clone()
+            };
+            let (merged, changed) = merged_reconciled_config(&current, &desired);
+            assert_eq!(
+                merged.duplicate_window.as_secs(),
+                if seconds == 2 { 2 } else { 120 }
+            );
+            assert_eq!(changed.contains(&"duplicate_window"), seconds == 2);
+        }
+    }
+
+    #[test]
     fn merged_reconciled_config_updates_duplicates_policy_in_isolation() {
         let current = baseline_stream_config();
         let mut desired = current.clone();
@@ -832,7 +878,7 @@ mod tests {
         let topic = format!("{base}.subject");
         let stream_name = base.to_uppercase();
 
-        let Some(backend_v1) = connect_or_skip(
+        let backend_v1 = connect_required(
             JetStreamConfig {
                 nats_url: nats_url.clone(),
                 timeout_seconds: 10,
@@ -853,10 +899,7 @@ mod tests {
             },
             "retention reconcile (initial backend)",
         )
-        .await
-        else {
-            return;
-        };
+        .await;
 
         super::ensure_stream_for_topic_with_schema(&backend_v1, &topic, None)
             .await
@@ -869,7 +912,7 @@ mod tests {
             .expect("stream should exist after create");
         assert_eq!(stream_v1.cached_info().config.max_age.as_secs(), 24 * 3600);
 
-        let Some(backend_v2) = connect_or_skip(
+        let mut backend_v2 = connect_required(
             JetStreamConfig {
                 nats_url,
                 timeout_seconds: 10,
@@ -890,11 +933,7 @@ mod tests {
             },
             "retention reconcile (updated backend)",
         )
-        .await
-        else {
-            let _ = shutdown(&backend_v1).await;
-            return;
-        };
+        .await;
 
         super::ensure_stream_for_topic_with_schema(&backend_v2, &topic, None)
             .await
@@ -910,9 +949,51 @@ mod tests {
             2 * 24 * 3600
         );
 
-        let _ = backend_v2.jetstream.delete_stream(&stream_name).await;
-        let _ = shutdown(&backend_v2).await;
-        let _ = shutdown(&backend_v1).await;
+        // The schema must shorten an existing stream even when its base uses mixed case.
+        let mut schema = compression_test_schema();
+        let event = schema.get_mut("reconcile_compression").unwrap();
+        event.topic.as_mut().unwrap().base = base.to_uppercase();
+        event.storage_policy = Some(EventStoragePolicy {
+            retention_time: Some("2s".to_string()),
+            ..Default::default()
+        });
+        super::ensure_stream_for_topic_with_schema(&backend_v2, &topic, Some(&schema))
+            .await
+            .expect("schema shortening should succeed");
+        let mut stream = backend_v2.jetstream.get_stream(&stream_name).await.unwrap();
+        assert_eq!(stream.cached_info().config.max_age, Duration::from_secs(2));
+
+        backend_v2.config.retention_time = Some(Duration::from_secs(2));
+        backend_v2
+            .jetstream
+            .publish(topic.clone(), "{}".into())
+            .await
+            .unwrap()
+            .await
+            .unwrap();
+        assert_eq!(stream.info().await.unwrap().state.messages, 1);
+        tokio::time::timeout(Duration::from_secs(10), async {
+            while stream.info().await.unwrap().state.messages != 0 {
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        })
+        .await
+        .expect("broker must expire the message");
+
+        // A rejected mutable update must not be reported as successful reconciliation.
+        backend_v2.config.replicas = Some(3);
+        let error = super::ensure_stream_for_topic_with_schema(&backend_v2, &topic, None)
+            .await
+            .expect_err("single-node broker must reject three replicas");
+        assert!(error.to_string().contains("Failed to reconcile stream"));
+
+        backend_v2
+            .jetstream
+            .delete_stream(&stream_name)
+            .await
+            .unwrap();
+        shutdown(&backend_v2).await.unwrap();
+        shutdown(&backend_v1).await.unwrap();
     }
 
     #[tokio::test]
@@ -921,7 +1002,7 @@ mod tests {
             return;
         }
 
-        let schema = compression_test_schema();
+        let mut schema = compression_test_schema();
 
         let nats_url =
             std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".to_string());
@@ -929,11 +1010,18 @@ mod tests {
             .duration_since(UNIX_EPOCH)
             .expect("system clock before unix epoch")
             .as_nanos();
-        let base = "reconcile_compression";
+        let base = format!("reconcile_compression_{suffix}");
+        schema
+            .get_mut("reconcile_compression")
+            .unwrap()
+            .topic
+            .as_mut()
+            .unwrap()
+            .base = base.clone();
         let topic = format!("{base}.subject_{suffix}");
         let stream_name = base.to_uppercase();
 
-        let Some(backend) = connect_or_skip(
+        let backend = connect_required(
             JetStreamConfig {
                 nats_url,
                 timeout_seconds: 10,
@@ -954,13 +1042,9 @@ mod tests {
             },
             "compression reconcile",
         )
-        .await
-        else {
-            return;
-        };
+        .await;
 
         // Create stream with compression disabled to verify reconciliation path upgrades it.
-        let _ = backend.jetstream.delete_stream(&stream_name).await;
         backend
             .jetstream
             .create_stream(StreamConfig {
@@ -996,7 +1080,7 @@ mod tests {
             Some(Compression::S2)
         );
 
-        let _ = backend.jetstream.delete_stream(&stream_name).await;
-        let _ = shutdown(&backend).await;
+        backend.jetstream.delete_stream(&stream_name).await.unwrap();
+        shutdown(&backend).await.unwrap();
     }
 }

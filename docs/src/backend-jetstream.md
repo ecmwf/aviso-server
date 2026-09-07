@@ -147,8 +147,9 @@ are updated if drift is detected:
 - subject binding
 
 If JetStream rejects an update (e.g. the field is not editable in the current
-server/stream state), Aviso logs a warning and continues with the existing
-stream configuration.
+server/stream state), the operation fails. Aviso does not report success while
+using stale retention settings. If another replica creates the stream during
+creation, Aviso reloads and reconciles that stream before proceeding.
 
 ### Precedence
 
@@ -157,6 +158,19 @@ overrides for that stream:
 
 Values under `notification_schema.<event_type>.storage_policy` override the
 matching `notification_backend.jetstream` defaults.
+
+Policy lookup matches the topic base without regard to ASCII case, just as
+startup validation does. NATS subjects themselves remain case-sensitive.
+Retention must be positive and fit signed 64-bit nanoseconds. The largest
+whole-second literal is `9223372036s`; larger values fail validation.
+
+Shortening retention deletes messages older than the new window, including
+messages stored before the change. They are no longer available for replay.
+This does not require deleting or recreating the stream. Keep all Aviso replicas
+on the same configuration so they do not repeatedly change each other's policy.
+When shortening retention below the existing duplicate-detection window, Aviso
+also shortens that window to satisfy NATS's limit. A smaller existing window is
+preserved.
 
 ### Applying config changes to existing streams
 
