@@ -155,11 +155,17 @@ destination access on watch and replay requests.
 | [`connect_timeout_seconds`](#ecpds-connect-timeout) | `5` |
 | [`partial_outage_policy`](#ecpds-outage-policy) | `"strict"` |
 
+<div class="ecpds-settings">
+<div class="setting-panel">
+
 ### `username` {#ecpds-username}
 
 **Default:** none · **Type:** nonempty string
 
 Service account username used for HTTP Basic Auth to ECPDS.
+
+</div>
+<div class="setting-panel">
 
 ### `password` {#ecpds-password}
 
@@ -168,6 +174,9 @@ Service account username used for HTTP Basic Auth to ECPDS.
 Service account password used for HTTP Basic Auth to ECPDS. It is redacted
 in configuration debug output. The schema discovery API does not expose the
 top-level `ecpds` settings.
+
+</div>
+<div class="setting-panel">
 
 ### `servers` {#ecpds-servers}
 
@@ -180,6 +189,9 @@ addresses fail startup validation.
 `servers` is a list of base URL strings, without query strings or fragments.
 Path prefixes such as `https://proxy.example/ecpds-api/` are supported. Aviso
 appends `/ecpds/v1/destination/list?id=<username>` to each base URL.
+
+</div>
+<div class="setting-panel">
 
 ### `match_key` {#ecpds-match-key}
 
@@ -194,6 +206,9 @@ Spatial identifiers cannot be match keys: `PolygonHandler`,
 `PointCloudHandler`, and the field name `polygon` are not allowed. Spatial
 matching does not enforce access to an exact destination value.
 
+</div>
+<div class="setting-panel">
+
 ### `target_field` {#ecpds-target-field}
 
 **Default:** `"name"` · **Type:** string
@@ -203,12 +218,18 @@ Records missing that field are skipped. To investigate missing destinations,
 set `RUST_LOG=info,aviso_ecpds=debug` and look for
 `auth.ecpds.fetch.skipped_record` events.
 
+</div>
+<div class="setting-panel">
+
 ### `cache_ttl_seconds` {#ecpds-cache-ttl}
 
 **Default:** `300` · **Unit:** seconds · **Minimum:** `1`
 
 How long to cache a user's destination list before fetching it again.
 Use a whole number of seconds.
+
+</div>
+<div class="setting-panel">
 
 ### `max_entries` {#ecpds-max-entries}
 
@@ -217,12 +238,18 @@ Use a whole number of seconds.
 Maximum number of users in the destination cache. Use a whole number. The
 cache uses TinyLFU eviction when it needs to make room.
 
+</div>
+<div class="setting-panel">
+
 ### `request_timeout_seconds` {#ecpds-request-timeout}
 
 **Default:** `30` · **Unit:** seconds · **Minimum:** `1`
 
 Maximum time for the whole ECPDS request, from DNS lookup through reading
 the response body. Use a whole number of seconds.
+
+</div>
+<div class="setting-panel">
 
 ### `connect_timeout_seconds` {#ecpds-connect-timeout}
 
@@ -231,6 +258,9 @@ the response body. Use a whole number of seconds.
 Maximum time to establish the connection, including TCP and TLS. This counts
 toward the total request timeout; it is not extra time. Use a whole number
 of seconds.
+
+</div>
+<div class="setting-panel">
 
 ### `partial_outage_policy` {#ecpds-outage-policy}
 
@@ -247,6 +277,9 @@ In both modes, Aviso combines the returned destination lists. With
 `any_success`, destinations known only to an unavailable server may be
 missing. See [Partial outage policy](./authentication.md#partial-outage-policy)
 for the trade-off.
+
+</div>
+</div>
 
 See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization)
 for setup and runtime behavior, and the [ECPDS runbook](./ecpds-runbook.md)

@@ -18,3 +18,41 @@ pre.mermaid svg {
     display: inline-block;
     max-width: 100%;
 }
+
+/* ECPDS entries only; the linked index and other configuration tables stay unchanged. */
+.ecpds-settings .setting-panel {
+    margin-block: 1.5em;
+    padding: 1em clamp(0.75em, 3vw, 1.5em);
+    color: var(--fg);
+    background: var(--table-alternate-bg);
+    border: 1px solid var(--table-border-color);
+    border-left: 3px solid var(--links);
+    border-radius: 4px;
+    overflow-wrap: anywhere;
+}
+
+.ecpds-settings .setting-panel > h3 {
+    margin-block: 0 0.75em;
+}
+
+/* The paragraph immediately after each heading is its metadata row. */
+.ecpds-settings .setting-panel > h3 + p {
+    margin-block: 0 1em;
+    padding-bottom: 0.75em;
+    border-bottom: 1px solid var(--table-border-color);
+    line-height: 1.6;
+}
+
+.ecpds-settings .setting-panel > :last-child {
+    margin-bottom: 0;
+}
+
+.ecpds-settings .setting-panel code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.ecpds-settings .setting-panel a:not(.header) {
+    color: var(--fg);
+    text-decoration: underline;
+}
