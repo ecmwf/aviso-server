@@ -13,9 +13,10 @@ set -euo pipefail
 #
 # Environment variables:
 #   AUTH_O_TRON_IMAGE_REPOSITORY=eccr.ecmwf.int/auth-o-tron/auth-o-tron
-#   AUTH_O_TRON_IMAGE_TAG=0.3.3
+#   AUTH_O_TRON_IMAGE_TAG=0.3.7
 #   AUTH_O_TRON_IMAGE=<repository:tag> (overrides repository/tag split)
 #   AUTH_O_TRON_PORT=8080
+#   AUTH_O_TRON_BIND_ADDRESS=127.0.0.1
 #   AUTH_O_TRON_CONTAINER_NAME=auth-o-tron-local
 #   AUTH_O_TRON_CONFIG_FILE=<repo>/scripts/example_auth_config.yaml
 #
@@ -23,10 +24,11 @@ set -euo pipefail
 # require GitHub/OIDC provider setup.
 
 AUTH_O_TRON_IMAGE_REPOSITORY="${AUTH_O_TRON_IMAGE_REPOSITORY:-eccr.ecmwf.int/auth-o-tron/auth-o-tron}"
-AUTH_O_TRON_IMAGE_TAG="${AUTH_O_TRON_IMAGE_TAG:-0.3.3}"
+AUTH_O_TRON_IMAGE_TAG="${AUTH_O_TRON_IMAGE_TAG:-0.3.7}"
 AUTH_O_TRON_IMAGE_DEFAULT="${AUTH_O_TRON_IMAGE_REPOSITORY}:${AUTH_O_TRON_IMAGE_TAG}"
 AUTH_O_TRON_IMAGE="${AUTH_O_TRON_IMAGE:-$AUTH_O_TRON_IMAGE_DEFAULT}"
 AUTH_O_TRON_PORT="${AUTH_O_TRON_PORT:-8080}"
+AUTH_O_TRON_BIND_ADDRESS="${AUTH_O_TRON_BIND_ADDRESS:-127.0.0.1}"
 AUTH_O_TRON_CONTAINER_NAME="${AUTH_O_TRON_CONTAINER_NAME:-auth-o-tron-local}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 DEFAULT_CONFIG_FILE="${SCRIPT_DIR}/example_auth_config.yaml"
@@ -126,7 +128,7 @@ docker_args=(
   run
   --rm
   --name "$AUTH_O_TRON_CONTAINER_NAME"
-  -p "${AUTH_O_TRON_PORT}:8080"
+  -p "${AUTH_O_TRON_BIND_ADDRESS}:${AUTH_O_TRON_PORT}:8080"
 )
 
 if [[ "$DETACH" == "true" ]]; then

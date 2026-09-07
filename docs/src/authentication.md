@@ -29,7 +29,18 @@ Schema endpoints (`GET /api/v1/schema`, `GET /api/v1/schema/{event_type}`) are a
 ./scripts/auth-o-tron-docker.sh start --detach
 ```
 
-By default this uses `scripts/example_auth_config.yaml`.
+By default this runs auth-o-tron `0.3.7` with
+`scripts/example_auth_config.yaml`, bound to `127.0.0.1:8080`.
+Use `AUTH_O_TRON_PORT` and `AUTH_O_TRON_CONTAINER_NAME` for an isolated instance.
+Set `AUTH_O_TRON_BIND_ADDRESS` explicitly to expose another interface.
+To check the bundled users against a running local instance without printing
+tokens:
+
+```bash
+AVISO_TEST_AUTH_O_TRON_URL=http://127.0.0.1:8080 \
+cargo test --locked --test auth_o_tron_live
+```
+
 To use your own config:
 
 ```bash
