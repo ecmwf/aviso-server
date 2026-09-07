@@ -32,7 +32,7 @@ async fn schema_retention_expires_messages_from_replay() {
         "notification_backend": {
             "kind": "jetstream",
             "jetstream": {
-                "nats_url": std::env::var("NATS_URL").expect("set NATS_URL to an isolated broker"),
+                "nats_url": std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into()),
                 "retention_time": "1d"
             }
         },

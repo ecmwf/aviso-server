@@ -111,13 +111,32 @@ case "$COMMAND" in
     ;;
 esac
 
-printf 'Pulling image %s\n' "$AUTH_O_TRON_IMAGE"
-docker pull "$AUTH_O_TRON_IMAGE"
+# Validate before replacing a running container. Both ::1 and [::1] are valid;
+# malformed addresses such as [::1 are not.
+AUTH_O_TRON_BIND_ADDRESS="$(python3 -c '
+import ipaddress, sys
+address = sys.argv[1]
+if address.startswith("[") and address.endswith("]"):
+    address = address[1:-1]
+try:
+    if "%" in address:
+        raise ValueError("scoped IPv6 addresses are not supported by Docker")
+    ip = ipaddress.ip_address(address)
+    port = sys.argv[2]
+    if not port.isascii() or not port.isdecimal() or not 1 <= int(port) <= 65535:
+        raise ValueError("port must be between 1 and 65535")
+except ValueError as error:
+    sys.exit(f"Invalid auth-o-tron bind address or port: {error}")
+print(f"[{ip}]" if ip.version == 6 else str(ip))
+' "$AUTH_O_TRON_BIND_ADDRESS" "$AUTH_O_TRON_PORT")"
 
 if [[ ! -f "$AUTH_O_TRON_CONFIG_FILE" ]]; then
   printf 'Error: auth-o-tron config does not exist: %s\n' "$AUTH_O_TRON_CONFIG_FILE" >&2
   exit 1
 fi
+
+printf 'Pulling image %s\n' "$AUTH_O_TRON_IMAGE"
+docker pull "$AUTH_O_TRON_IMAGE"
 
 if container_exists; then
   printf 'Restarting %s\n' "$AUTH_O_TRON_CONTAINER_NAME"

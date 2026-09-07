@@ -33,6 +33,10 @@ By default this runs auth-o-tron `0.3.7` with
 `scripts/example_auth_config.yaml`, bound to `127.0.0.1:8080`.
 Use `AUTH_O_TRON_PORT` and `AUTH_O_TRON_CONTAINER_NAME` for an isolated instance.
 Set `AUTH_O_TRON_BIND_ADDRESS` explicitly to expose another interface.
+The launcher requires Python 3 to validate the bind IP and port before replacing
+an existing container. IPv6 addresses can be bare (`::1`) or bracketed (`[::1]`).
+Scoped IPv6 addresses such as `fe80::1%eth0` are not supported by Docker and are
+rejected before container replacement.
 To check the bundled users against a running local instance without printing
 tokens:
 
