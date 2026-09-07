@@ -6,29 +6,95 @@ This page documents runtime-relevant configuration fields and defaults.
 
 - Topic wire subjects always use `.` as separator.
 - Per-schema `topic.separator` is no longer used.
-- Token values are percent-encoded for reserved chars (`.`, `*`, `>`, `%`) before writing to backend subjects.
+- Token values are percent-encoded for reserved chars (`.`, `*`, `>`, `%`)
+  before writing to backend subjects.
 
 See [Topic Encoding](./topic-encoding.md) for rules and examples.
 
 ## `application`
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `host` | `string` | none | Bind address. |
-| `port` | `u16` | none | Bind port. |
-| `base_url` | `string` | `http://localhost` | Used in generated CloudEvent source links. |
-| `static_files_path` | `string` | `/app/static` | Static asset root for homepage assets. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`host`](#application-host) | none |
+| [`port`](#application-port) | none |
+| [`base_url`](#application-base-url) | `http://localhost` |
+| [`static_files_path`](#application-static-files-path) | `/app/static` |
+
+</div>
+<details class="setting-panel" id="application-host">
+<summary><code>host</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Bind address.
+
+</details>
+<details class="setting-panel" id="application-port">
+<summary><code>port</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> <code>u16</code></span>
+</summary>
+
+Bind port.
+
+</details>
+<details class="setting-panel" id="application-base-url">
+<summary><code>base_url</code>
+<span class="setting-meta"><strong>Default:</strong> <code>http://localhost</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Used in generated CloudEvent source links.
+
+</details>
+<details class="setting-panel" id="application-static-files-path">
+<summary><code>static_files_path</code>
+<span class="setting-meta"><strong>Default:</strong> <code>/app/static</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Static asset root for homepage assets.
+
+</details>
+</div>
 
 ## `logging`
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `level` | `string` | `info` | One of `trace`, `debug`, `info`, `warn`, `error`. Unknown values fall back to `info` instead of failing startup. Used as the application-wide level when `RUST_LOG` is unset. |
-| `format` | `string` | implementation default | Kept for compatibility; output is OTel-aligned JSON. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`level`](#logging-level) | `info` |
+| [`format`](#logging-format) | implementation default |
+
+</div>
+<details class="setting-panel" id="logging-level">
+<summary><code>level</code>
+<span class="setting-meta"><strong>Default:</strong> <code>info</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+One of `trace`, `debug`, `info`, `warn`, `error`. Unknown values fall back to
+`info` instead of failing startup. Used as the application-wide level when
+`RUST_LOG` is unset.
+
+</details>
+<details class="setting-panel" id="logging-format">
+<summary><code>format</code>
+<span class="setting-meta"><strong>Default:</strong> implementation default · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Kept for compatibility; output is OTel-aligned JSON.
+
+</details>
+</div>
 
 ### Runtime override via `RUST_LOG`
 
-If the `RUST_LOG` environment variable is set, it takes priority over `logging.level` and gives the operator full [`EnvFilter` directive syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives) for runtime triage without a code change. Examples:
+If the `RUST_LOG` environment variable is set, it takes priority over
+`logging.level` and gives the operator full
+[`EnvFilter` directive syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives)
+for runtime triage without a code change. Examples:
 
 ```bash
 RUST_LOG=info,aviso_server=debug
@@ -36,13 +102,27 @@ RUST_LOG=warn,aviso_server::auth=trace
 RUST_LOG=info,aviso_server::sse=debug,actix_web=warn
 ```
 
-A malformed `RUST_LOG` value is reported on stderr at startup and the server falls back to `logging.level`. The most common parse failures are an empty target before `=` (for example `RUST_LOG==warn`) and a non-level value after `=` (for example `RUST_LOG=info,aviso_server=verbose`).
+A malformed `RUST_LOG` value is reported on stderr at startup and the server
+falls back to `logging.level`. The most common parse failures are an empty
+target before `=` (for example `RUST_LOG==warn`) and a non-level value after
+`=` (for example `RUST_LOG=info,aviso_server=verbose`).
 
-A missing comma like `RUST_LOG=info aviso_server=debug` does **not** trigger the fallback. `EnvFilter` parses the whole string as a single target name with a space, and the directive ends up matching nothing instead of failing loudly. If a `RUST_LOG` value looks correct but no logs appear, double-check the commas first.
+A missing comma like `RUST_LOG=info aviso_server=debug` does **not** trigger the
+fallback. `EnvFilter` parses the whole string as a single target name with a
+space, and the directive ends up matching nothing instead of failing loudly. If
+a `RUST_LOG` value looks correct but no logs appear, double-check the commas
+first.
 
-`RUST_LOG=""` (empty string) is treated as if `RUST_LOG` were unset and falls back to `logging.level`. Without this guard `EnvFilter::try_new("")` silently succeeds with a filter that matches nothing and silences the entire process. This is a real failure mode under deployment systems that export unset variables as empty strings, such as the Kubernetes downward API or docker-compose's `${VAR:-}`.
+`RUST_LOG=""` (empty string) is treated as if `RUST_LOG` were unset and falls
+back to `logging.level`. Without this guard `EnvFilter::try_new("")` silently
+succeeds with a filter that matches nothing and silences the entire process.
+This is a real failure mode under deployment systems that export unset variables
+as empty strings, such as the Kubernetes downward API or docker-compose's
+`${VAR:-}`.
 
-When `RUST_LOG` is unset, the default filter combines `logging.level` with a small set of mute directives so that framework internals do not flood operational logs:
+When `RUST_LOG` is unset, the default filter combines `logging.level` with a
+small set of mute directives so that framework internals do not flood
+operational logs:
 
 | Directive | Effect |
 |---|---|
@@ -50,7 +130,15 @@ When `RUST_LOG` is unset, the default filter combines `logging.level` with a sma
 | `actix_server=warn` | Caps Actix-server lifecycle logs at warn. |
 | `async_nats=info` | Caps the NATS client at info; trace/debug per-message chatter stays off. |
 
-These mute directives are pinned by unit tests, only apply when `RUST_LOG` is unset, and only apply when the directive's level is **more restrictive** than `logging.level`. With `logging.level=warn` or `logging.level=error` the directives are skipped entirely so they never raise the per-target ceiling above what the operator chose; with `logging.level=info` the two `actix_*=warn` directives narrow framework chatter while `async_nats=info` is skipped (it would be neutral); with `logging.level=debug` or `logging.level=trace` all three directives apply. Setting `RUST_LOG` opts out of all of them and gives the operator full directive control.
+These mute directives are pinned by unit tests, only apply when `RUST_LOG` is
+unset, and only apply when the directive's level is **more restrictive** than
+`logging.level`. With `logging.level=warn` or `logging.level=error` the
+directives are skipped entirely so they never raise the per-target ceiling above
+what the operator chose; with `logging.level=info` the two `actix_*=warn`
+directives narrow framework chatter while `async_nats=info` is skipped (it would
+be neutral); with `logging.level=debug` or `logging.level=trace` all three
+directives apply. Setting `RUST_LOG` opts out of all of them and gives the
+operator full directive control.
 
 ### Push-based export via `logging.otlp`
 
@@ -59,11 +147,42 @@ block the server additionally pushes every log record to an OpenTelemetry
 collector over OTLP, for clusters where log collection is push-based
 instead of scraping container output.
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | `bool` | `false` | Turns OTLP log export on. Startup fails when enabled without an `endpoint`. |
-| `endpoint` | `string` | none | Collector endpoint. A missing scheme defaults to `http://`. For `protocol: http` the OTLP path `/v1/logs` is appended when absent. |
-| `protocol` | `"grpc"\|"http"` | `"grpc"` | Transport. Collectors conventionally listen on 4317 for gRPC and 4318 for HTTP. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`enabled`](#logging-otlp-enabled) | `false` |
+| [`endpoint`](#logging-otlp-endpoint) | none |
+| [`protocol`](#logging-otlp-protocol) | `"grpc"` |
+
+</div>
+<details class="setting-panel" id="logging-otlp-enabled">
+<summary><code>enabled</code>
+<span class="setting-meta"><strong>Default:</strong> <code>false</code> · <strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Turns OTLP log export on. Startup fails when enabled without an `endpoint`.
+
+</details>
+<details class="setting-panel" id="logging-otlp-endpoint">
+<summary><code>endpoint</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Collector endpoint. A missing scheme defaults to `http://`. For
+`protocol: http` the OTLP path `/v1/logs` is appended when absent.
+
+</details>
+<details class="setting-panel" id="logging-otlp-protocol">
+<summary><code>protocol</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"grpc"</code> · <strong>Type:</strong> <code>"grpc"|"http"</code></span>
+</summary>
+
+Transport. Collectors conventionally listen on 4317 for gRPC and 4318 for HTTP.
+
+</details>
+</div>
 
 ```yaml
 logging:
@@ -108,33 +227,146 @@ environment overrides, for example
 
 ## `auth`
 
-Authentication is optional. When disabled (default), all API endpoints are publicly accessible only if schemas do not define stream auth rules. Startup fails if global auth is disabled while a schema sets `auth.required=true` or non-empty `auth.read_roles`/`auth.write_roles`.
+Authentication is optional. When disabled (default), all API endpoints are
+publicly accessible only if schemas do not define stream auth rules. Startup
+fails if global auth is disabled while a schema sets `auth.required=true` or
+non-empty `auth.read_roles`/`auth.write_roles`.
 
 When enabled:
-- Admin endpoints always require a valid JWT and an admin role.
-- Stream endpoints (`notify`, `watch`, `replay`) enforce authentication only when the target schema has `auth.required: true`.
-- Schema endpoints (`/api/v1/schema`) are always public.
-- In `trusted_proxy` mode, Aviso validates `Authorization: Bearer <jwt>` locally with `jwt_secret`.
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | `bool` | `false` | Set to `true` to enable authentication. |
-| `mode` | `"direct"\|"trusted_proxy"` | `"direct"` | `direct`: forward credentials to auth-o-tron. `trusted_proxy`: validate forwarded JWT locally. |
-| `auth_o_tron_url` | `string` | `""` | auth-o-tron base URL. Required when `enabled=true` and `mode=direct`. |
-| `jwt_secret` | `string` | `""` | Shared HMAC secret for JWT validation. Required when `enabled=true`. Not exposed via `/api/v1/schema` endpoints and redacted when auth settings are serialized or logged. |
-| `admin_roles` | `map<string, string[]>` | `{}` | Realm-scoped roles for admin endpoints (`/api/v1/admin/*`). Must contain at least one realm with non-empty roles when `enabled=true`. |
-| `timeout_ms` | `u64` | `5000` | Timeout for auth-o-tron requests (milliseconds). Must be `> 0`. |
+- Admin endpoints always require a valid JWT and an admin role.
+- Stream endpoints (`notify`, `watch`, `replay`) enforce authentication only
+  when the target schema has `auth.required: true`.
+- Schema endpoints (`/api/v1/schema`) are always public.
+- In `trusted_proxy` mode, Aviso validates `Authorization: Bearer <jwt>` locally
+  with `jwt_secret`.
+
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`enabled`](#auth-enabled) | `false` |
+| [`mode`](#auth-mode) | `"direct"` |
+| [`auth_o_tron_url`](#auth-auth-o-tron-url) | `""` |
+| [`jwt_secret`](#auth-jwt-secret) | `""` |
+| [`admin_roles`](#auth-admin-roles) | `{}` |
+| [`timeout_ms`](#auth-timeout-ms) | `5000` |
+
+</div>
+<details class="setting-panel" id="auth-enabled">
+<summary><code>enabled</code>
+<span class="setting-meta"><strong>Default:</strong> <code>false</code> · <strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Set to `true` to enable authentication.
+
+</details>
+<details class="setting-panel" id="auth-mode">
+<summary><code>mode</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"direct"</code> · <strong>Type:</strong> <code>"direct"|"trusted_proxy"</code></span>
+</summary>
+
+`direct`: forward credentials to auth-o-tron. `trusted_proxy`: validate
+forwarded JWT locally.
+
+</details>
+<details class="setting-panel" id="auth-auth-o-tron-url">
+<summary><code>auth_o_tron_url</code>
+<span class="setting-meta"><strong>Default:</strong> <code>""</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+auth-o-tron base URL. Required when `enabled=true` and `mode=direct`.
+
+</details>
+<details class="setting-panel" id="auth-jwt-secret">
+<summary><code>jwt_secret</code>
+<span class="setting-meta"><strong>Default:</strong> <code>""</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Shared HMAC secret for JWT validation. Required when `enabled=true`. Not
+exposed via `/api/v1/schema` endpoints and redacted when auth settings are
+serialized or logged.
+
+</details>
+<details class="setting-panel" id="auth-admin-roles">
+<summary><code>admin_roles</code>
+<span class="setting-meta"><strong>Default:</strong> <code>{}</code> · <strong>Type:</strong> <code>map&lt;string, string[]&gt;</code></span>
+</summary>
+
+Realm-scoped roles for admin endpoints (`/api/v1/admin/*`). Must contain at
+least one realm with non-empty roles when `enabled=true`.
+
+</details>
+<details class="setting-panel" id="auth-timeout-ms">
+<summary><code>timeout_ms</code>
+<span class="setting-meta"><strong>Default:</strong> <code>5000</code> · <strong>Type:</strong> <code>u64</code></span>
+</summary>
+
+Timeout for auth-o-tron requests (milliseconds). Must be `> 0`.
+
+</details>
+</div>
 
 ### Per-stream auth (`notification_schema.<event_type>.auth`)
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `required` | `bool` | (none) | Must be explicitly set whenever an `auth` block is present. When `true`, the stream requires authentication. |
-| `read_roles` | `map<string, string[]>` | (none) | Realm-scoped roles for read access (watch/replay). When omitted, any authenticated user can read. Use `["*"]` as the role list to grant realm-wide access. |
-| `write_roles` | `map<string, string[]>` | (none) | Realm-scoped roles for write access (notify). When omitted, only users matching global `admin_roles` can write. Use `["*"]` as the role list to grant realm-wide access. |
-| `plugins` | `string[]` | (none) | Optional list of authorization plugins to run after role-based checks. Currently supported: `"ecpds"` (requires `--features ecpds` build). On a build without the required feature, startup fails with a clear error pointing at the offending stream. (Silent skip would widen access.) Empty `plugins: []` is rejected; omit the field instead. Plugins only run when `auth.required` is `true`. |
+<div class="settings-reference">
+<div class="setting-index">
 
-See [Authentication](./authentication.md) for detailed setup, client usage, and error responses.
+| Setting | Default |
+|---|---|
+| [`required`](#notification-schema-event-type-auth-required) | (none) |
+| [`read_roles`](#notification-schema-event-type-auth-read-roles) | (none) |
+| [`write_roles`](#notification-schema-event-type-auth-write-roles) | (none) |
+| [`plugins`](#notification-schema-event-type-auth-plugins) | (none) |
+
+</div>
+<details class="setting-panel" id="notification-schema-event-type-auth-required">
+<summary><code>required</code>
+<span class="setting-meta"><strong>Default:</strong> (none) · <strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Must be explicitly set whenever an `auth` block is present. When `true`, the
+stream requires authentication.
+
+</details>
+<details class="setting-panel" id="notification-schema-event-type-auth-read-roles">
+<summary><code>read_roles</code>
+<span class="setting-meta"><strong>Default:</strong> (none) · <strong>Type:</strong> <code>map&lt;string, string[]&gt;</code></span>
+</summary>
+
+Realm-scoped roles for read access (watch/replay). When omitted, any
+authenticated user can read. Use `["*"]` as the role list to grant realm-wide
+access.
+
+</details>
+<details class="setting-panel" id="notification-schema-event-type-auth-write-roles">
+<summary><code>write_roles</code>
+<span class="setting-meta"><strong>Default:</strong> (none) · <strong>Type:</strong> <code>map&lt;string, string[]&gt;</code></span>
+</summary>
+
+Realm-scoped roles for write access (notify). When omitted, only users matching
+global `admin_roles` can write. Use `["*"]` as the role list to grant
+realm-wide access.
+
+</details>
+<details class="setting-panel" id="notification-schema-event-type-auth-plugins">
+<summary><code>plugins</code>
+<span class="setting-meta"><strong>Default:</strong> (none) · <strong>Type:</strong> <code>string[]</code></span>
+</summary>
+
+Optional list of authorization plugins to run after role-based checks.
+Currently supported: `"ecpds"` (requires `--features ecpds` build). On a build
+without the required feature, startup fails with a clear error pointing at
+the offending stream. (Silent skip would widen access.) Empty `plugins: []`
+is rejected; omit the field instead. Plugins only run when `auth.required`
+is `true`.
+
+</details>
+</div>
+
+See [Authentication](./authentication.md) for detailed setup, client usage, and
+error responses.
 
 ## `ecpds`
 
@@ -271,13 +503,16 @@ for the trade-off.
 </details>
 </div>
 
-See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization)
+See
+[ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization)
 for setup and runtime behavior, and the [ECPDS runbook](./ecpds-runbook.md)
 for troubleshooting.
 
 ## `metrics`
 
-Optional Prometheus metrics endpoint. When enabled, a separate HTTP server serves `/metrics` on an internal port for scraping by Prometheus/ServiceMonitor. This keeps metrics isolated from the public API.
+Optional Prometheus metrics endpoint. When enabled, a separate HTTP server
+serves `/metrics` on an internal port for scraping by Prometheus/ServiceMonitor.
+This keeps metrics isolated from the public API.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
@@ -304,9 +539,22 @@ Exposed metrics:
 | `aviso_sse_connection_duration_seconds` | histogram | `route` | SSE connection lifetime, observed when the connection closes (buckets 1s-24h). Long-lived open connections appear in `aviso_sse_connections_active`, not here, until they close. |
 | `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. `mode` ∈ {`direct`, `trusted_proxy`}; `outcome` ∈ {`success`, `unauthorized`, `forbidden`, `service_unavailable`}. |
 
-The SSE and HTTP request metrics share a `route` label whose values are real route patterns (e.g. `/api/v1/watch`), so a single dashboard `route` variable spans both. Like the ECPDS counters below, the bounded label combinations of `aviso_auth_requests_total`, `aviso_notifications_total` (including one series per configured stream), and `aviso_backend_operations_total` / `aviso_backend_operation_duration_seconds` (per active backend) are pre-initialised at zero on startup so `rate(...) > 0` alert rules evaluate against existing series.
+The SSE and HTTP request metrics share a `route` label whose values are real
+route patterns (e.g. `/api/v1/watch`), so a single dashboard `route` variable
+spans both. Like the ECPDS counters below, the bounded label combinations of
+`aviso_auth_requests_total`, `aviso_notifications_total` (including one series
+per configured stream), and `aviso_backend_operations_total` /
+`aviso_backend_operation_duration_seconds` (per active backend) are
+pre-initialised at zero on startup so `rate(...) > 0` alert rules evaluate
+against existing series.
 
-A binary built with `--features ecpds` registers the following five metrics. The unlabelled counters and the gauge appear as Prometheus series at process startup. The two labelled counters (`access_decisions_total`, `fetch_total`) are pre-initialised at startup with every documented `outcome` value, so each `outcome` label appears as a series at zero before any ECPDS traffic; this lets alert rules of the form `rate(metric{outcome="error"}[5m]) > 0` start evaluating on a known-zero baseline rather than on a missing series.
+A binary built with `--features ecpds` registers the following five metrics. The
+unlabelled counters and the gauge appear as Prometheus series at process
+startup. The two labelled counters (`access_decisions_total`, `fetch_total`)
+are pre-initialised at startup with every documented `outcome` value, so each
+`outcome` label appears as a series at zero before any ECPDS traffic; this lets
+alert rules of the form `rate(metric{outcome="error"}[5m]) > 0` start evaluating
+on a known-zero baseline rather than on a missing series.
 
 | Metric | Type | Labels | Description |
 |---|---|---|---|
@@ -316,7 +564,8 @@ A binary built with `--features ecpds` registers the following five metrics. The
 | `aviso_ecpds_access_decisions_total` | counter | `outcome` | Access decisions. `outcome` ∈ {`allow`, `deny_destination`, `deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}. |
 | `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check whose request actually ran the upstream call; coalesced waiters do not contribute). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_4xx`, `http_5xx`, `invalid_response`, `unreachable`}. |
 
-Process-level metrics (CPU, memory, open FDs) are automatically collected on Linux.
+Process-level metrics (CPU, memory, open FDs) are automatically collected on
+Linux.
 
 ## `notification_backend`
 
@@ -357,11 +606,13 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `publish_retry_attempts` | `u32?` | `5` | Retry attempts for transient publish `channel closed` failures (`> 0`). |
 | `publish_retry_base_delay_ms` | `u64?` | `150` | Base backoff in milliseconds for publish retries (`> 0`). |
 
-See [JetStream Backend](./backend-jetstream.md#configuration-reference) for detailed behavior.
+See [JetStream Backend](./backend-jetstream.md#configuration-reference) for
+detailed behavior.
 
 ## `notification_schema_strict`
 
-Controls how the server treats `event_type` values that are not declared in `notification_schema`.
+Controls how the server treats `event_type` values that are not declared in
+`notification_schema`.
 
 | Field | Type | Default | Notes |
 |---|---|---|---|
@@ -400,11 +651,13 @@ Schema-level payload contract for notify requests.
 |---|---|---|---|
 | `required` | `bool` | `true` | When `true`, `/notification` rejects requests without `payload`. |
 
-Behavior details and edge cases are documented in [Payload Contract](./payload-contract.md).
+Behavior details and edge cases are documented in
+[Payload Contract](./payload-contract.md).
 
 ## `notification_schema.<event_type>.storage_policy`
 
-Optional per-schema storage settings validated at startup against selected backend capabilities.
+Optional per-schema storage settings validated at startup against selected
+backend capabilities.
 
 | Field | Type | Example | Notes |
 |---|---|---|---|
@@ -419,7 +672,8 @@ Field behavior:
 - `retention_time` overrides backend-level retention for the schema stream.
 - `max_messages` overrides backend-level message cap for the schema stream.
 - `max_size` overrides backend-level byte cap for the schema stream.
-- `allow_duplicates = false` maps to one message per subject (latest kept); `true` removes this cap.
+- `allow_duplicates = false` maps to one message per subject (latest kept);
+  `true` removes this cap.
 - `compression = true` enables stream compression when backend supports it.
 
 Startup behavior:
@@ -431,15 +685,19 @@ Startup behavior:
 - Invalid `retention_time`/`max_size` format fails startup.
 - Unsupported fields for selected backend fail startup.
 - Validation happens before backend initialization.
-- With `in_memory`, all `storage_policy` fields are currently unsupported (startup fails if provided).
+- With `in_memory`, all `storage_policy` fields are currently unsupported
+  (startup fails if provided).
 
 Runtime application behavior:
 
-- `storage_policy` is applied on stream create and reconciled for existing JetStream streams
-  when those streams are accessed by Aviso.
-- Aviso-managed stream subject binding is also reconciled to the expected `<base>.>` pattern.
-- Mutable fields (retention/limits/compression/duplicates/replicas) are updated when drift is detected.
-- Recreate stream(s) only when you need historical data physically rewritten with new settings.
+- `storage_policy` is applied on stream create and reconciled for existing
+  JetStream streams when those streams are accessed by Aviso.
+- Aviso-managed stream subject binding is also reconciled to the expected
+  `<base>.>` pattern.
+- Mutable fields (retention/limits/compression/duplicates/replicas) are updated
+  when drift is detected.
+- Recreate stream(s) only when you need historical data physically rewritten
+  with new settings.
 
 Example:
 
@@ -477,13 +735,17 @@ notification_schema:
 
 ## Custom config file path
 
-Set `AVISOSERVER_CONFIG_FILE` to use a specific config file instead of the default search cascade:
+Set `AVISOSERVER_CONFIG_FILE` to use a specific config file instead of the
+default search cascade:
 
 ```bash
 AVISOSERVER_CONFIG_FILE=/path/to/config.yaml cargo run
 ```
 
-When set, only this file is loaded as a file source (startup fails if it does not exist). The default locations (`./configuration/config.yaml`, `/etc/aviso_server/config.yaml`, `$HOME/.aviso_server/config.yaml`) are skipped. `AVISOSERVER_*` field-level overrides still apply on top.
+When set, only this file is loaded as a file source (startup fails if it does
+not exist). The default locations (`./configuration/config.yaml`,
+`/etc/aviso_server/config.yaml`, `$HOME/.aviso_server/config.yaml`) are
+skipped. `AVISOSERVER_*` field-level overrides still apply on top.
 
 ## Environment override examples
 
