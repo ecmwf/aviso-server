@@ -142,24 +142,36 @@ Optional ECPDS destination authorization, available when built with
 `--features ecpds`. Add `"ecpds"` to a stream's `auth.plugins` list to check
 destination access on watch and replay requests.
 
-| Setting | Default | Purpose |
-|---|---|---|
-| `username` | none | ECPDS service account username. |
-| `password` | none | ECPDS service account password. |
-| `servers` | none | List of ECPDS base URLs. |
-| `match_key` | none | Identifier used for destination access checks. |
-| `target_field` | `"name"` | Destination field returned by ECPDS. |
-| `cache_ttl_seconds` | `300` | How long to cache a user's destination list. |
-| `max_entries` | `10000` | Maximum number of users in the cache. |
-| `request_timeout_seconds` | `30` | Time limit for the whole request. |
-| `connect_timeout_seconds` | `5` | Time limit for establishing the connection. |
-| `partial_outage_policy` | `"strict"` | How to handle unavailable ECPDS servers. |
+| Setting | Default |
+|---|---|
+| [`username`](#ecpds-username) | none |
+| [`password`](#ecpds-password) | none |
+| [`servers`](#ecpds-servers) | none |
+| [`match_key`](#ecpds-match-key) | none |
+| [`target_field`](#ecpds-target-field) | `"name"` |
+| [`cache_ttl_seconds`](#ecpds-cache-ttl) | `300` |
+| [`max_entries`](#ecpds-max-entries) | `10000` |
+| [`request_timeout_seconds`](#ecpds-request-timeout) | `30` |
+| [`connect_timeout_seconds`](#ecpds-connect-timeout) | `5` |
+| [`partial_outage_policy`](#ecpds-outage-policy) | `"strict"` |
 
-### Credentials and server URLs
+### `username` {#ecpds-username}
 
-`username` and `password` are nonempty strings used for HTTP Basic Auth to
-ECPDS. The password is redacted in configuration debug output. The schema
-discovery API does not expose the top-level `ecpds` settings.
+**Default:** none · **Type:** nonempty string
+
+Service account username used for HTTP Basic Auth to ECPDS.
+
+### `password` {#ecpds-password}
+
+**Default:** none · **Type:** nonempty string
+
+Service account password used for HTTP Basic Auth to ECPDS. It is redacted
+in configuration debug output. The schema discovery API does not expose the
+top-level `ecpds` settings.
+
+### `servers` {#ecpds-servers}
+
+**Default:** none · **Type:** list of URL strings
 
 Use HTTPS to protect credentials and destination lookups. HTTP is accepted
 only for local testing with `127.0.0.1`, `[::1]`, or `localhost`; other HTTP
@@ -169,7 +181,9 @@ addresses fail startup validation.
 Path prefixes such as `https://proxy.example/ecpds-api/` are supported. Aviso
 appends `/ecpds/v1/destination/list?id=<username>` to each base URL.
 
-### Destination matching
+### `match_key` {#ecpds-match-key}
+
+**Default:** none · **Type:** string
 
 Set `match_key` to an ordinary identifier such as `destination`, declared in
 the schema with `required: true`. The name must not contain whitespace, `/`,
@@ -180,26 +194,49 @@ Spatial identifiers cannot be match keys: `PolygonHandler`,
 `PointCloudHandler`, and the field name `polygon` are not allowed. Spatial
 matching does not enforce access to an exact destination value.
 
-`target_field` selects a JSON field from each ECPDS destination record.
+### `target_field` {#ecpds-target-field}
+
+**Default:** `"name"` · **Type:** string
+
+Selects a JSON field from each ECPDS destination record.
 Records missing that field are skipped. To investigate missing destinations,
 set `RUST_LOG=info,aviso_ecpds=debug` and look for
 `auth.ecpds.fetch.skipped_record` events.
 
-### Caching and timeouts
+### `cache_ttl_seconds` {#ecpds-cache-ttl}
 
-Cache limits and timeout settings are positive whole numbers. Durations are
-in seconds. `cache_ttl_seconds` controls when a cached destination list
-expires; `max_entries` limits the number of users cached. The cache uses
-TinyLFU eviction when it needs to make room.
+**Default:** `300` · **Unit:** seconds · **Minimum:** `1`
 
-`request_timeout_seconds` covers the whole request, from DNS lookup through
-reading the response body. `connect_timeout_seconds` limits the connection
-setup, including TCP and TLS. Connection time counts toward the total request
-timeout; it is not an additional allowance.
+How long to cache a user's destination list before fetching it again.
+Use a whole number of seconds.
 
-### Handling unavailable servers
+### `max_entries` {#ecpds-max-entries}
 
-`partial_outage_policy` accepts two values:
+**Default:** `10000` · **Unit:** users · **Minimum:** `1`
+
+Maximum number of users in the destination cache. Use a whole number. The
+cache uses TinyLFU eviction when it needs to make room.
+
+### `request_timeout_seconds` {#ecpds-request-timeout}
+
+**Default:** `30` · **Unit:** seconds · **Minimum:** `1`
+
+Maximum time for the whole ECPDS request, from DNS lookup through reading
+the response body. Use a whole number of seconds.
+
+### `connect_timeout_seconds` {#ecpds-connect-timeout}
+
+**Default:** `5` · **Unit:** seconds · **Minimum:** `1`
+
+Maximum time to establish the connection, including TCP and TLS. This counts
+toward the total request timeout; it is not extra time. Use a whole number
+of seconds.
+
+### `partial_outage_policy` {#ecpds-outage-policy}
+
+**Default:** `"strict"` · **Values:** `"strict"`, `"any_success"`
+
+Controls what happens when an ECPDS server is unavailable:
 
 - `strict`: every configured server must respond successfully. If any fails,
   the destination lookup fails with HTTP 503.
