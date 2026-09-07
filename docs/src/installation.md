@@ -154,12 +154,12 @@ spin up a NATS server with JetStream enabled:
 
 This script:
 
-- Generates a NATS config file in `./nats_config/`
-- Creates a Docker volume for persistent JetStream storage
-- Starts a `nats:2-alpine` container on `localhost:4222`
+- Generates a private config under `${XDG_STATE_HOME:-$HOME/.local/state}/aviso/`
+- Uses a persistent Docker volume named `${CONTAINER_NAME}-data`
+- Starts a `nats:2.14.6-alpine` container on loopback port `4222`
 - Waits for the server to be ready and prints a connection summary
 
-**Requires:** Docker
+**Requires:** Docker and the `nats` CLI. Token generation also uses OpenSSL.
 
 Optional environment variables:
 
@@ -176,11 +176,31 @@ Example with auth enabled:
 ENABLE_AUTH=true ./scripts/init_nats.sh
 ```
 
-The script prints the generated token at the end of its output, for example:
+The script stores the generated token in the private configuration file and
+never prints it. Supply `TOKEN` securely to choose your own token; it may contain
+letters, digits, underscores and hyphens.
 
-```text
-Authentication enabled with token: aviso_secure_token_1712345678
+Use `NATS_IMAGE` to override the image. `CONFIG_DIR` accepts an absolute or
+relative path; `SKIP_DOCKER=1` generates configuration without starting a server.
+Existing containers are never removed automatically. Choose a new
+`CONTAINER_NAME`, or stop and remove the old container explicitly to reuse its
+data volume. `NATS_VOLUME` selects an existing volume when needed.
+
+For an isolated test broker, give it separate resources and unused ports:
+
+```bash
+CONTAINER_NAME=aviso-test DOCKER_NETWORK=aviso-test \
+CONFIG_DIR=/tmp/aviso-test NATS_VOLUME=aviso-test-data \
+NATS_PORT=14222 NATS_HTTP_PORT=18222 NATS_CLUSTER_PORT=16222 \
+./scripts/init_nats.sh
+AVISO_RUN_NATS_TESTS=1 NATS_URL=nats://127.0.0.1:14222 cargo test --locked
 ```
+
+Run opt-in tests only against a disposable broker, never shared streams. An
+unreachable broker fails the opted-in tests. The script binds published ports
+to `127.0.0.1`; set `NATS_BIND_ADDRESS` explicitly to expose another interface.
+Readiness checks use that address. Wildcard binds (`0.0.0.0` or `::`) use the
+corresponding loopback address instead. IPv6 addresses may be bracketed or bare.
 
 **After the script completes, configure Aviso to connect:**
 
@@ -193,7 +213,7 @@ notification_backend:
     nats_url: "nats://localhost:4222"
 ```
 
-With auth, pass the token printed by the script:
+With auth, pass the token stored in the private configuration file:
 
 ```yaml
 notification_backend:
