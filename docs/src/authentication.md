@@ -258,11 +258,50 @@ When more than one ECPDS server is configured, the user's effective destination 
 
 ### Error responses
 
-| Code | HTTP Status | When |
-|------|-------------|------|
-| `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. Tracing event: `auth.ecpds.check.denied` (with `reason` ∈ {`DestinationNotInList`, `MatchKeyMissing`}). |
-| `SERVICE_UNAVAILABLE` | `503` | Upstream / network problem: the lookup failed under the active `partial_outage_policy`. Tracing event: `auth.ecpds.check.unavailable`. The cause is on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_4xx`, `http_5xx`, `invalid_response`). Investigate ECPDS, the network, and the service-account credentials. |
-| `INTERNAL_ERROR` | `500` | Aviso-side server error: missing `AuthSettings` in `app_data`, no checker registered, or an unexpected plugin error. Tracing event: `auth.ecpds.check.error` (with `error_kind` for the misconfiguration cases). Investigate Aviso, not ECPDS. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Code | HTTP Status |
+|---|---|
+| [`FORBIDDEN`](#auth-ecpds-error-forbidden) | `403` |
+| [`SERVICE_UNAVAILABLE`](#auth-ecpds-error-service-unavailable) | `503` |
+| [`INTERNAL_ERROR`](#auth-ecpds-error-internal-error) | `500` |
+
+</div>
+<details class="setting-panel" id="auth-ecpds-error-forbidden">
+<summary><code>FORBIDDEN</code>
+<span class="setting-meta"><strong>HTTP Status:</strong> <code>403</code></span>
+</summary>
+
+User does not have access to the requested destination, or the required
+identifier field is missing. Tracing event: `auth.ecpds.check.denied` (with
+`reason` ∈ {`DestinationNotInList`, `MatchKeyMissing`}).
+
+</details>
+<details class="setting-panel" id="auth-ecpds-error-service-unavailable">
+<summary><code>SERVICE_UNAVAILABLE</code>
+<span class="setting-meta"><strong>HTTP Status:</strong> <code>503</code></span>
+</summary>
+
+Upstream / network problem: the lookup failed under the active
+`partial_outage_policy`. Tracing event: `auth.ecpds.check.unavailable`. The cause
+is on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`,
+`http_401`, `http_4xx`, `http_5xx`, `invalid_response`). Investigate ECPDS, the
+network, and the service-account credentials.
+
+</details>
+<details class="setting-panel" id="auth-ecpds-error-internal-error">
+<summary><code>INTERNAL_ERROR</code>
+<span class="setting-meta"><strong>HTTP Status:</strong> <code>500</code></span>
+</summary>
+
+Aviso-side server error: missing `AuthSettings` in `app_data`, no checker
+registered, or an unexpected plugin error. Tracing event:
+`auth.ecpds.check.error` (with `error_kind` for the misconfiguration cases).
+Investigate Aviso, not ECPDS.
+
+</details>
+</div>
 
 ### Caching
 
