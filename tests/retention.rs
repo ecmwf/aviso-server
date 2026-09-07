@@ -6,7 +6,11 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-use aviso_server::configuration::Settings;
+use aviso_server::configuration::{
+    Settings, validate_auth_settings, validate_metrics_settings,
+    validate_schema_storage_policy_support, validate_spatial_schema_settings,
+    validate_stream_auth_settings, validate_stream_plugin_settings, validate_topic_schema_settings,
+};
 use aviso_server::notification_backend::jetstream::{config::JetStreamConfig, connection, replay};
 use aviso_server::notification_backend::replay::BatchParams;
 use futures_util::StreamExt;
@@ -34,13 +38,22 @@ async fn schema_retention_expires_messages_from_replay() {
         },
         "notification_schema": {
             "expiry": {
-                "topic": { "base": base, "key_order": [] },
-                "identifier": {},
+                "topic": { "base": base, "key_order": ["id"] },
+                "identifier": { "id": { "type": "StringHandler", "required": true } },
                 "storage_policy": { "retention_time": "2s" }
             }
         }
     }))
     .unwrap();
+    validate_schema_storage_policy_support(&settings).unwrap();
+    validate_topic_schema_settings(&settings).unwrap();
+    validate_spatial_schema_settings(&settings).unwrap();
+    validate_auth_settings(&settings.auth).unwrap();
+    validate_stream_plugin_settings(&settings).unwrap();
+    validate_stream_auth_settings(&settings).unwrap();
+    validate_metrics_settings(&settings).unwrap();
+    #[cfg(feature = "ecpds")]
+    aviso_server::configuration::validate_ecpds_settings(&settings).unwrap();
     settings.init_global_config();
     let config = JetStreamConfig::from_backend_settings(&settings.notification_backend).unwrap();
     let mut backend = connection::connect(config)
