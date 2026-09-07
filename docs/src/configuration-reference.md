@@ -156,31 +156,28 @@ destination access on watch and replay requests.
 | [`partial_outage_policy`](#ecpds-outage-policy) | `"strict"` |
 
 <div class="ecpds-settings">
-<div class="setting-panel">
-
-### `username` {#ecpds-username}
-
-**Default:** none · **Type:** nonempty string
+<details class="setting-panel" id="ecpds-username">
+<summary><code>username</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> nonempty string</span>
+</summary>
 
 Service account username used for HTTP Basic Auth to ECPDS.
 
-</div>
-<div class="setting-panel">
-
-### `password` {#ecpds-password}
-
-**Default:** none · **Type:** nonempty string
+</details>
+<details class="setting-panel" id="ecpds-password">
+<summary><code>password</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> nonempty string</span>
+</summary>
 
 Service account password used for HTTP Basic Auth to ECPDS. It is redacted
 in configuration debug output. The schema discovery API does not expose the
 top-level `ecpds` settings.
 
-</div>
-<div class="setting-panel">
-
-### `servers` {#ecpds-servers}
-
-**Default:** none · **Type:** list of URL strings
+</details>
+<details class="setting-panel" id="ecpds-servers">
+<summary><code>servers</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> list of URL strings</span>
+</summary>
 
 Use HTTPS to protect credentials and destination lookups. HTTP is accepted
 only for local testing with `127.0.0.1`, `[::1]`, or `localhost`; other HTTP
@@ -190,12 +187,11 @@ addresses fail startup validation.
 Path prefixes such as `https://proxy.example/ecpds-api/` are supported. Aviso
 appends `/ecpds/v1/destination/list?id=<username>` to each base URL.
 
-</div>
-<div class="setting-panel">
-
-### `match_key` {#ecpds-match-key}
-
-**Default:** none · **Type:** string
+</details>
+<details class="setting-panel" id="ecpds-match-key">
+<summary><code>match_key</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> string</span>
+</summary>
 
 Set `match_key` to an ordinary identifier such as `destination`, declared in
 the schema with `required: true`. The name must not contain whitespace, `/`,
@@ -206,65 +202,59 @@ Spatial identifiers cannot be match keys: `PolygonHandler`,
 `PointCloudHandler`, and the field name `polygon` are not allowed. Spatial
 matching does not enforce access to an exact destination value.
 
-</div>
-<div class="setting-panel">
-
-### `target_field` {#ecpds-target-field}
-
-**Default:** `"name"` · **Type:** string
+</details>
+<details class="setting-panel" id="ecpds-target-field">
+<summary><code>target_field</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"name"</code> · <strong>Type:</strong> string</span>
+</summary>
 
 Selects a JSON field from each ECPDS destination record.
 Records missing that field are skipped. To investigate missing destinations,
 set `RUST_LOG=info,aviso_ecpds=debug` and look for
 `auth.ecpds.fetch.skipped_record` events.
 
-</div>
-<div class="setting-panel">
-
-### `cache_ttl_seconds` {#ecpds-cache-ttl}
-
-**Default:** `300` · **Unit:** seconds · **Minimum:** `1`
+</details>
+<details class="setting-panel" id="ecpds-cache-ttl">
+<summary><code>cache_ttl_seconds</code>
+<span class="setting-meta"><strong>Default:</strong> <code>300</code> · <strong>Unit:</strong> seconds · <strong>Minimum:</strong> <code>1</code></span>
+</summary>
 
 How long to cache a user's destination list before fetching it again.
 Use a whole number of seconds.
 
-</div>
-<div class="setting-panel">
-
-### `max_entries` {#ecpds-max-entries}
-
-**Default:** `10000` · **Unit:** users · **Minimum:** `1`
+</details>
+<details class="setting-panel" id="ecpds-max-entries">
+<summary><code>max_entries</code>
+<span class="setting-meta"><strong>Default:</strong> <code>10000</code> · <strong>Unit:</strong> users · <strong>Minimum:</strong> <code>1</code></span>
+</summary>
 
 Maximum number of users in the destination cache. Use a whole number. The
 cache uses TinyLFU eviction when it needs to make room.
 
-</div>
-<div class="setting-panel">
-
-### `request_timeout_seconds` {#ecpds-request-timeout}
-
-**Default:** `30` · **Unit:** seconds · **Minimum:** `1`
+</details>
+<details class="setting-panel" id="ecpds-request-timeout">
+<summary><code>request_timeout_seconds</code>
+<span class="setting-meta"><strong>Default:</strong> <code>30</code> · <strong>Unit:</strong> seconds · <strong>Minimum:</strong> <code>1</code></span>
+</summary>
 
 Maximum time for the whole ECPDS request, from DNS lookup through reading
 the response body. Use a whole number of seconds.
 
-</div>
-<div class="setting-panel">
-
-### `connect_timeout_seconds` {#ecpds-connect-timeout}
-
-**Default:** `5` · **Unit:** seconds · **Minimum:** `1`
+</details>
+<details class="setting-panel" id="ecpds-connect-timeout">
+<summary><code>connect_timeout_seconds</code>
+<span class="setting-meta"><strong>Default:</strong> <code>5</code> · <strong>Unit:</strong> seconds · <strong>Minimum:</strong> <code>1</code></span>
+</summary>
 
 Maximum time to establish the connection, including TCP and TLS. This counts
 toward the total request timeout; it is not extra time. Use a whole number
 of seconds.
 
-</div>
-<div class="setting-panel">
-
-### `partial_outage_policy` {#ecpds-outage-policy}
-
-**Default:** `"strict"` · **Values:** `"strict"`, `"any_success"`
+</details>
+<details class="setting-panel" id="ecpds-outage-policy">
+<summary><code>partial_outage_policy</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"strict"</code> · <strong>Values:</strong> <code>"strict"</code>, <code>"any_success"</code></span>
+</summary>
 
 Controls what happens when an ECPDS server is unavailable:
 
@@ -278,7 +268,7 @@ In both modes, Aviso combines the returned destination lists. With
 missing. See [Partial outage policy](./authentication.md#partial-outage-policy)
 for the trade-off.
 
-</div>
+</details>
 </div>
 
 See [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization)

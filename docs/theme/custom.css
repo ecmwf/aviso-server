@@ -31,16 +31,28 @@ pre.mermaid svg {
     overflow-wrap: anywhere;
 }
 
-.ecpds-settings .setting-panel > h3 {
-    margin-block: 0 0.75em;
+.ecpds-settings .setting-panel > summary {
+    cursor: pointer;
 }
 
-/* The paragraph immediately after each heading is its metadata row. */
-.ecpds-settings .setting-panel > h3 + p {
-    margin-block: 0 1em;
+.ecpds-settings .setting-panel > summary:focus-visible {
+    outline: 2px solid var(--links);
+    outline-offset: 4px;
+}
+
+.ecpds-settings .setting-panel > summary > code {
+    font-weight: bold;
+}
+
+.ecpds-settings .setting-meta {
+    display: block;
+    margin-top: 0.5em;
+    line-height: 1.6;
+}
+
+.ecpds-settings .setting-panel[open] > summary {
     padding-bottom: 0.75em;
     border-bottom: 1px solid var(--table-border-color);
-    line-height: 1.6;
 }
 
 .ecpds-settings .setting-panel > :last-child {
@@ -55,4 +67,15 @@ pre.mermaid svg {
 .ecpds-settings .setting-panel a:not(.header) {
     color: var(--fg);
     text-decoration: underline;
+}
+
+@media print {
+    .ecpds-settings .setting-panel::details-content {
+        content-visibility: visible;
+        display: block;
+    }
+
+    .ecpds-settings .setting-panel > :not(summary) {
+        display: block;
+    }
 }
