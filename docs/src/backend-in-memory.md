@@ -17,6 +17,13 @@
 - Supports replay batch retrieval for `from_id` and `from_date`.
 - Uses in-process fanout only, so subscriptions/replay are node-local.
 
+Historical delivery uses the same request-wide
+`watch_endpoint.max_historical_notifications` cap as JetStream, after request
+filtering and successful rendering. A schema's `max_historical_notifications`
+can override the global cap. This is separate from retention and batch size.
+See [Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
+for truncation controls and watch behavior.
+
 ## Configuration
 
 `notification_backend.kind: in_memory`

@@ -369,6 +369,39 @@ role-matching rules.
 
 ---
 
+## Replay Limit
+
+<div class="settings-reference">
+<details class="setting-panel" id="schema-max-historical-notifications">
+<summary><code>max_historical_notifications</code>
+<span class="setting-meta"><strong>Default:</strong> inherited from watch_endpoint · <strong>Type:</strong> positive integer</span>
+</summary>
+
+Optional cap on historical notifications delivered by one replay or replaying
+watch request. Put it directly under the event schema, not in `storage_policy`:
+
+```yaml
+notification_schema:
+  weather:
+    max_historical_notifications: 20000
+    # Existing topic, identifier and other schema fields go here.
+```
+
+Omitting this field inherits `watch_endpoint.max_historical_notifications`
+(default `10000`). An override can raise or lower that value. Zero and
+`unlimited` are rejected. Both backends support this setting; it does not
+change retention. Batch size stays global at `watch_endpoint.replay_batch_size`
+(default `100`). This operational setting is not exposed by the schema API.
+
+Only notifications that pass request filters and render successfully count.
+Exactly filling the cap completes normally unless another deliverable
+notification exists. Truncation closes the request without `replay_completed`
+or live delivery. See
+[Historical Replay Limits](./streaming-semantics.md#historical-replay-limits).
+
+</details>
+</div>
+
 ## Storage Policy (JetStream Only)
 
 When using the JetStream backend, you can configure per-stream retention limits.

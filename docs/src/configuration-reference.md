@@ -1033,6 +1033,15 @@ Schema-level payload contract for notify requests.
 Behavior details and edge cases are documented in
 [Payload Contract](./payload-contract.md).
 
+## `notification_schema.<event_type>.max_historical_notifications`
+
+Optional positive integer overriding `watch_endpoint.max_historical_notifications`
+for this event type. Omit it to inherit the global cap (default `10000`).
+Zero and `unlimited` are rejected. This field sits outside `storage_policy`
+and works with both backends. See [Replay Limit](./schema-guide.md#replay-limit)
+for an example and [Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
+for the wire behavior.
+
 ## `notification_schema.<event_type>.storage_policy`
 
 Optional per-schema storage settings validated at startup against selected
@@ -1183,7 +1192,9 @@ Maximum live watch duration.
 <span class="setting-meta"><strong>Default:</strong> <code>100</code> · <strong>Type:</strong> <code>usize</code></span>
 </summary>
 
-Historical fetch batch size.
+Historical backend fetch batch size, independent of the request-wide delivery
+cap. Filtering can leave a batch with no notifications to deliver; replay keeps
+advancing through history.
 
 </details>
 <details class="setting-panel" id="watch-endpoint-max-historical-notifications">
@@ -1191,7 +1202,19 @@ Historical fetch batch size.
 <span class="setting-meta"><strong>Default:</strong> <code>10000</code> · <strong>Type:</strong> <code>usize</code></span>
 </summary>
 
-Replay cap for historical delivery.
+Maximum historical notifications delivered per replay or replaying watch
+request, across all batches and after identifier constraints, spatial filters
+and successful CloudEvent rendering. Both backends enforce the same cap.
+Live-only watches are unaffected. A schema can override this default with
+`notification_schema.<event_type>.max_historical_notifications`, outside
+`storage_policy`. Omitting the schema field inherits the global value.
+
+The value must be a positive integer; zero and `unlimited` are rejected. The
+server emits `notification_replay_limit_reached` only when it finds a renderable
+notification beyond the cap. Exactly filling the quota is not truncation.
+A truncated request closes without `replay_completed` or a transition to live
+delivery. See
+[Historical Replay Limits](./streaming-semantics.md#historical-replay-limits).
 
 </details>
 <details class="setting-panel" id="watch-endpoint-replay-batch-delay-ms">

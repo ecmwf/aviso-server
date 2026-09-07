@@ -53,6 +53,40 @@ The first event of any stream is guaranteed to carry the `request_id` (a
 live-only watches, or a `replay-control` event with
 `data.type = "replay_started"` for any stream that begins with replay).
 
+## Historical Replay Limits
+
+`watch_endpoint.max_historical_notifications` limits historical notifications
+delivered by one request, not one backend batch. Identifier matching,
+identifier constraints, spatial filtering and successful CloudEvent rendering
+happen before quota accounting. Render failures emit errors without consuming
+the quota. A schema's `max_historical_notifications` overrides the global cap;
+omitting it inherits the global default of `10000`.
+`replay_batch_size` controls fetching independently of this quota. Excluded
+notifications do not consume it, even when entire batches are excluded.
+
+After filling the quota, replay looks for one more renderable matching
+notification. If history is exhausted first, replay completes normally.
+Otherwise the server emits a `replay-control` event with these data fields:
+
+```json
+{"type":"notification_replay_limit_reached","topic":"example.*","max_allowed":2,"message":"Historical replay limited to 2 messages. Additional historical messages may be available but were not retrieved.","timestamp":"2026-01-01T00:00:00Z"}
+```
+
+The limit control is followed by `connection-closing` with reason
+`end_of_stream`. There is no `replay_completed` event and a watch does not
+transition to live delivery. Treat this as a history gap, not successful
+catch-up. `max_allowed` is always present and reports the effective request
+cap, including a schema override. A new request gets a fresh quota.
+
+Caps must be positive integers. Zero and `unlimited` are not accepted.
+If fetching a historical batch fails, including during lookahead, the server
+emits `event: error` and closes without `replay_completed`, a limit control or
+live delivery. This is failed catch-up, not exhausted history. Individual
+CloudEvent rendering failures remain nonfatal and do not consume the quota.
+
+Live-only watches are not limited. Replay scans available history as pagination
+proceeds; it is not a snapshot taken when the request starts.
+
 ## Reconnecting after disconnect
 
 If a stream drops (network blip, client restart, `connection-closing` with

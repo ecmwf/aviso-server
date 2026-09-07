@@ -51,6 +51,14 @@ For full setup options including authentication and storage limits, see
 - Reconciles existing streams against current config when they are first
   accessed.
 
+Pull batches use `watch_endpoint.replay_batch_size` independently of the
+request-wide `max_historical_notifications` delivery cap. The shared SSE layer
+applies that cap after request filtering and successful rendering, not inside
+each backend batch. A schema's `max_historical_notifications` can override the
+global cap independently of its storage policy.
+See [Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
+for truncation controls and watch behavior.
+
 ---
 
 ## Configuration Reference
