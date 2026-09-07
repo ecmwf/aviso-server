@@ -18,6 +18,16 @@ static GLOBAL_APPLICATION_SETTINGS: OnceLock<ApplicationSettings> = OnceLock::ne
 static GLOBAL_WATCH_SETTINGS: OnceLock<WatchEndpointSettings> = OnceLock::new();
 
 impl Settings {
+    /// Resolve each request's cap by event type, independently of its topic base.
+    pub fn replay_limit_for_event_type(event_type: &str) -> usize {
+        Self::get_global_notification_schema()
+            .as_ref()
+            .and_then(|schemas| schemas.get(event_type))
+            .and_then(|schema| schema.max_historical_notifications)
+            .map(std::num::NonZeroUsize::get)
+            .unwrap_or(Self::get_global_watch_settings().max_historical_notifications)
+    }
+
     /// Stores read-mostly config in global immutable slots.
     ///
     /// Invariant: call once during startup before any request handling path reads

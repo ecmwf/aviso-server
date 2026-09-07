@@ -40,6 +40,8 @@ use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 /// - Fetches batch_size and batch_delay_ms from global configuration
 /// - Performs paginated fetch of notifications from the backend
 /// - Applies request-level filtering (including optional spatial filtering)
+// Replay setup carries the same independent request inputs as the endpoint streams.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn create_historical_replay_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
@@ -48,6 +50,7 @@ pub(crate) fn create_historical_replay_stream(
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     prepared_spatial_filter: Arc<Option<PreparedSpatialFilter>>,
     request_id: String,
+    max_allowed: usize,
 ) -> impl tokio_stream::Stream<Item = StreamFrame> {
     // Fetch configuration values from global settings
     let watch_config = Settings::get_global_watch_settings();
@@ -55,8 +58,7 @@ pub(crate) fn create_historical_replay_stream(
     // Build the initial pagination params based on either sequence or date
     let initial_params =
         BatchParams::new(topic.clone(), watch_config.replay_batch_size).with_start_at(start_at);
-    // State tuple: (backend, params, has_more, delay_ms, request_params,
-    // request_constraints, request_id), all owned by the unfold closure.
+    let base_url = &Settings::get_global_application_settings().base_url;
     unfold(
         (
             backend,
@@ -67,6 +69,7 @@ pub(crate) fn create_historical_replay_stream(
             request_constraints,
             prepared_spatial_filter,
             request_id,
+            0usize,
         ),
         move |(
             backend,
@@ -77,6 +80,7 @@ pub(crate) fn create_historical_replay_stream(
             request_constraints,
             prepared_spatial_filter,
             request_id,
+            mut delivered,
         )| async move {
             if !has_more {
                 // End of stream: terminate unfold
@@ -115,25 +119,49 @@ pub(crate) fn create_historical_replay_stream(
                         ) {
                             continue;
                         }
-                        // Passed all filters: convert to SSE event
-                        frames.push(StreamFrame::Notification {
-                            notification: message,
-                            kind: DeliveryKind::Replay,
-                        });
-                    }
-
-                    // If there was a replay limit, inform client with control event
-                    if let Some(replay_limit_info) = &batch_result.replay_limit {
-                        frames.push(StreamFrame::Control(ControlEvent::ReplayLimitReached {
-                            topic: params.topic.clone(),
-                            max_allowed: replay_limit_info.max_allowed,
-                            timestamp: Utc::now(),
-                        }));
+                        let (bytes, kind) = match super::helpers::frame_to_sse_bytes(
+                            StreamFrame::Notification {
+                                notification: message,
+                                kind: DeliveryKind::Replay,
+                            },
+                            base_url,
+                            &request_id,
+                        ) {
+                            Ok(rendered) => rendered,
+                            Err(error) => {
+                                frames.push(StreamFrame::Error {
+                                    topic: params.topic.clone(),
+                                    message: error.to_string(),
+                                    request_id: request_id.clone(),
+                                });
+                                continue;
+                            }
+                        };
+                        if kind != super::helpers::SseFrameKind::Notification {
+                            frames.push(StreamFrame::Rendered { bytes, kind });
+                            continue;
+                        }
+                        // One rendered notification beyond the quota proves truncation.
+                        // A full quota alone does not: later batches may all be filtered out.
+                        if delivered == max_allowed {
+                            frames.push(StreamFrame::Control(ControlEvent::ReplayLimitReached {
+                                topic: params.topic.clone(),
+                                max_allowed,
+                                timestamp: Utc::now(),
+                            }));
+                            has_more = false;
+                            break;
+                        }
+                        delivered += 1;
+                        frames.push(StreamFrame::Rendered { bytes, kind });
                     }
 
                     // Optional batch delay for rate limiting
                     if delay_ms > 0 && has_more {
                         tokio::time::sleep(Duration::from_millis(delay_ms)).await;
+                    } else if frames.is_empty() && has_more {
+                        // Keep cancellation responsive while scanning excluded history.
+                        tokio::task::yield_now().await;
                     }
 
                     // Return current batch frames and updated replay state.
@@ -148,6 +176,7 @@ pub(crate) fn create_historical_replay_stream(
                             request_constraints,
                             prepared_spatial_filter,
                             request_id,
+                            delivered,
                         ),
                     ))
                 }
@@ -161,8 +190,8 @@ pub(crate) fn create_historical_replay_stream(
                         request_id = %request_id,
                         "Failed to retrieve historical message batch"
                     );
-                    // On error: emit one error frame and stop replay iteration.
-                    let error_frames = vec![StreamFrame::Error {
+                    // Failed catch-up must not complete or transition to live delivery.
+                    let error_frames = vec![StreamFrame::ReplayFailed {
                         topic: params.topic.clone(),
                         message: e.to_string(),
                         request_id: request_id.clone(),
@@ -178,6 +207,7 @@ pub(crate) fn create_historical_replay_stream(
                             request_constraints,
                             prepared_spatial_filter,
                             request_id,
+                            delivered,
                         ),
                     ))
                 }
@@ -202,6 +232,7 @@ pub(crate) async fn create_historical_then_live_stream(
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     sse_guard: Option<crate::metrics::SseConnectionGuard>,
     request_id: String,
+    max_allowed: usize,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let app_settings = Settings::get_global_application_settings();
@@ -216,6 +247,7 @@ pub(crate) async fn create_historical_then_live_stream(
         request_constraints.clone(),
         prepared_spatial_filter.clone(),
         request_id.clone(),
+        max_allowed,
     );
 
     let (from_sequence, from_date) = start_at.as_replay_cursor();
@@ -323,6 +355,7 @@ pub(crate) async fn create_replay_only_stream(
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     sse_guard: Option<crate::metrics::SseConnectionGuard>,
     request_id: String,
+    max_allowed: usize,
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let prepared_spatial_filter = Arc::new(prepare_spatial_filter(&request_params));
@@ -336,6 +369,7 @@ pub(crate) async fn create_replay_only_stream(
         request_constraints.clone(),
         prepared_spatial_filter,
         request_id.clone(),
+        max_allowed,
     );
 
     let (from_sequence, from_date) = start_at.as_replay_cursor();

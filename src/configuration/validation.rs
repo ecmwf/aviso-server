@@ -692,6 +692,7 @@ mod tests {
         schema.insert(
             event_type.to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: event_type.to_ascii_lowercase(),
@@ -1157,6 +1158,7 @@ mod tests {
         schema_map.insert(
             "dissemination".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1174,6 +1176,7 @@ mod tests {
         schema_map.insert(
             "diss_alias".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1224,6 +1227,7 @@ mod tests {
         schema_map.insert(
             "schema_a".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "DISS".to_string(),
@@ -1241,6 +1245,7 @@ mod tests {
         schema_map.insert(
             "schema_b".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1291,6 +1296,7 @@ mod tests {
         schema_map.insert(
             "schema_a".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "shared".to_string(),
@@ -1305,6 +1311,7 @@ mod tests {
         schema_map.insert(
             "schema_b".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "shared".to_string(),
@@ -1572,6 +1579,7 @@ mod tests {
         schema_map.insert(
             "mars".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "mars".to_string(),
@@ -1604,6 +1612,7 @@ mod tests {
         schema_map.insert(
             "diss".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1639,6 +1648,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1680,6 +1690,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1718,6 +1729,7 @@ mod tests {
         schema_map.insert(
             event_type.to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: event_type.to_string(),
@@ -1837,6 +1849,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1878,6 +1891,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1916,6 +1930,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1954,6 +1969,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1989,6 +2005,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -2027,6 +2044,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -2205,6 +2223,7 @@ mod tests {
             schema.insert(
                 "diss".to_string(),
                 EventSchema {
+                    max_historical_notifications: None,
                     payload: None,
                     topic: Some(TopicConfig {
                         base: "diss".to_string(),

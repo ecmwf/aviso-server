@@ -124,6 +124,7 @@ fn init_benchmark_schema() {
         notification_schema.insert(
             "mars".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: Some(PayloadConfig { required: false }),
                 topic: Some(TopicConfig {
                     base: "mars".to_string(),
@@ -173,6 +174,7 @@ fn init_benchmark_schema() {
         notification_schema.insert(
             "extreme".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: Some(PayloadConfig { required: false }),
                 topic: Some(TopicConfig {
                     base: "extreme".to_string(),

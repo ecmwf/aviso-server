@@ -589,6 +589,7 @@ mod tests {
         schema.insert(
             "reconcile_compression".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "reconcile_compression".to_string(),

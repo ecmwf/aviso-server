@@ -93,6 +93,11 @@ pub(crate) enum ControlEvent {
 
 #[derive(Debug, Clone)]
 pub(crate) enum StreamFrame {
+    // Replay renders once before quota accounting; delivery metrics reuse this classification.
+    Rendered {
+        bytes: actix_web::web::Bytes,
+        kind: super::helpers::SseFrameKind,
+    },
     Notification {
         notification: NotificationMessage,
         kind: DeliveryKind,
@@ -103,6 +108,12 @@ pub(crate) enum StreamFrame {
         timestamp: DateTime<Utc>,
     },
     Error {
+        topic: String,
+        message: String,
+        request_id: String,
+    },
+    // Unlike a per-notification error, this terminates catch-up and its continuation.
+    ReplayFailed {
         topic: String,
         message: String,
         request_id: String,

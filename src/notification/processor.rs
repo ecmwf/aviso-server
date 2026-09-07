@@ -476,6 +476,7 @@ mod tests {
         );
 
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: true }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
@@ -507,6 +508,7 @@ mod tests {
         );
 
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: true }),
             topic: Some(TopicConfig {
                 base: "polygon".to_string(),
@@ -537,6 +539,7 @@ mod tests {
             ),
         ]);
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: false }),
             topic: Some(TopicConfig {
                 base: "cloud".to_string(),
@@ -560,6 +563,7 @@ mod tests {
         );
 
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: false }),
             topic: Some(TopicConfig {
                 base: "extreme".to_string(),
@@ -1031,6 +1035,7 @@ mod tests {
         );
 
         let schema = EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig {
                 required: false, // Payload is optional
             }),

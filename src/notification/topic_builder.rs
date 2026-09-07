@@ -105,6 +105,7 @@ mod tests {
         };
 
         let schema = EventSchema {
+            max_historical_notifications: None,
             payload: None,
             topic: Some(topic_config),
             endpoint: None,
@@ -130,6 +131,7 @@ mod tests {
         };
 
         let schema = EventSchema {
+            max_historical_notifications: None,
             payload: None,
             topic: Some(topic_config),
             endpoint: None,
@@ -189,6 +191,7 @@ mod tests {
         };
 
         let schema = EventSchema {
+            max_historical_notifications: None,
             payload: None,
             topic: Some(topic_config),
             endpoint: None,

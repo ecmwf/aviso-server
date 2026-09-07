@@ -178,6 +178,7 @@ fn build_test_polygon_schema() -> EventSchema {
     );
 
     EventSchema {
+        max_historical_notifications: None,
         payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             base: "polygon".to_string(),
@@ -212,6 +213,7 @@ fn build_test_point_cloud_schema() -> EventSchema {
     ]);
 
     EventSchema {
+        max_historical_notifications: None,
         payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             base: "point_cloud_test".to_string(),
@@ -257,6 +259,7 @@ fn build_test_polygon_js_schema() -> EventSchema {
     );
 
     EventSchema {
+        max_historical_notifications: None,
         payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             // Keep this distinct from runtime/default `polygon` base to avoid collisions.
@@ -311,6 +314,7 @@ fn build_test_polygon_optional_schema() -> EventSchema {
     );
 
     EventSchema {
+        max_historical_notifications: None,
         payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             base: "polygon_optional".to_string(),
@@ -403,6 +407,7 @@ fn build_mars_schema() -> EventSchema {
     );
 
     EventSchema {
+        max_historical_notifications: None,
         payload: Some(PayloadConfig { required: false }),
         topic: Some(TopicConfig {
             base: "mars".to_string(),
@@ -514,6 +519,7 @@ fn build_dissemination_schema() -> EventSchema {
     );
 
     EventSchema {
+        max_historical_notifications: None,
         payload: Some(PayloadConfig { required: true }),
         topic: Some(TopicConfig {
             base: "diss".to_string(),
@@ -570,6 +576,7 @@ fn build_extreme_event_schema() -> EventSchema {
     );
 
     EventSchema {
+        max_historical_notifications: None,
         payload: Some(PayloadConfig { required: false }),
         topic: Some(TopicConfig {
             base: "extreme".to_string(),
