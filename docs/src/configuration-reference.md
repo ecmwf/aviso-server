@@ -514,30 +514,204 @@ Optional Prometheus metrics endpoint. When enabled, a separate HTTP server
 serves `/metrics` on an internal port for scraping by Prometheus/ServiceMonitor.
 This keeps metrics isolated from the public API.
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `enabled` | `bool` | `false` | Enable the metrics endpoint. |
-| `host` | `string` | `"127.0.0.1"` | Bind address for the metrics server. Defaults to loopback to avoid public exposure. |
-| `port` | `u16` | none | Required when `enabled=true`. Must differ from `application.port`. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`enabled`](#metrics-enabled) | `false` |
+| [`host`](#metrics-host) | `"127.0.0.1"` |
+| [`port`](#metrics-port) | none |
+
+</div>
+<details class="setting-panel" id="metrics-enabled">
+<summary><code>enabled</code>
+<span class="setting-meta"><strong>Default:</strong> <code>false</code> · <strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Enable the metrics endpoint.
+
+</details>
+<details class="setting-panel" id="metrics-host">
+<summary><code>host</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"127.0.0.1"</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Bind address for the metrics server. Defaults to loopback to avoid public
+exposure.
+
+</details>
+<details class="setting-panel" id="metrics-port">
+<summary><code>port</code>
+<span class="setting-meta"><strong>Default:</strong> none · <strong>Type:</strong> <code>u16</code></span>
+</summary>
+
+Required when `enabled=true`. Must differ from `application.port`.
+
+</details>
+</div>
 
 Exposed metrics:
 
-| Metric | Type | Labels | Description |
-|---|---|---|---|
-| `aviso_build_info` | gauge | `version` | Constant `1` with the server version as a label; join on it in dashboards to annotate deploys. |
-| `aviso_http_requests_total` | counter | `route`, `method`, `status_code` | HTTP requests on the main server by matched route pattern (e.g. `/api/v1/schema/{event_type}`). Reserved label values: unrouted requests (404 scans) collapse into `route="unmatched"`, requests failing with a service-level error (no route information available) record `route="error"`, and non-standard HTTP methods collapse into `method="other"`. The label is named `route` (not `endpoint`) to avoid colliding with the Prometheus Operator target label `endpoint`. |
-| `aviso_http_request_duration_seconds` | histogram | `route`, `method` | Request duration until response headers are ready. For the SSE routes (`/api/v1/watch`, `/api/v1/replay`) this is stream *setup* latency, not connection lifetime; see `aviso_sse_connection_duration_seconds`. |
-| `aviso_http_requests_in_flight` | gauge | `method` | HTTP requests currently being processed, by method. Labelled by method only because the matched route pattern is not known until routing completes (after the request is already in flight). Distinguishes "slow because busy" from "slow because a downstream/backend stalled". |
-| `aviso_backend_operations_total` | counter | `backend`, `operation`, `outcome` | Notification-backend operations at the trait boundary. `operation` ∈ {`publish`, `get_batch`, `wipe_stream`, `wipe_all`, `delete_message`}; `outcome` ∈ {`ok`, `error`}. `subscribe_to_topic` is excluded (its work happens lazily as the stream is polled). |
-| `aviso_backend_operation_duration_seconds` | histogram | `backend`, `operation`, `outcome` | Caller-observed backend operation latency (same labels as above). This is the metric to watch when notification throughput plateaus while pods are underused — it isolates backend (NATS/JetStream) latency from app CPU. |
-| `aviso_notifications_total` | counter | `event_type`, `status` | Total notification requests. `status` ∈ {`success`, `error`, `rejected`}; requests failing before schema validation record `event_type="unknown"`. |
-| `aviso_sse_connections_active` | gauge | `route`, `event_type` | Currently active SSE connections. `route` ∈ {`/api/v1/watch`, `/api/v1/replay`}. |
-| `aviso_sse_connections_total` | counter | `route`, `event_type` | Total SSE connections opened. |
-| `aviso_sse_unique_users_active` | gauge | `route` | Distinct users with active SSE connections. |
-| `aviso_sse_events_sent_total` | counter | `route`, `event_type` | Notification events delivered to SSE clients. Heartbeats, control events, and close frames are not counted. |
-| `aviso_sse_stream_errors_total` | counter | `route`, `event_type` | Error events emitted into SSE streams after the response started (typed stream errors and notification rendering failures); these are invisible to `aviso_http_requests_total` because the stream already returned `200`. |
-| `aviso_sse_connection_duration_seconds` | histogram | `route` | SSE connection lifetime, observed when the connection closes (buckets 1s-24h). Long-lived open connections appear in `aviso_sse_connections_active`, not here, until they close. |
-| `aviso_auth_requests_total` | counter | `mode`, `outcome` | Authentication attempts. `mode` ∈ {`direct`, `trusted_proxy`}; `outcome` ∈ {`success`, `unauthorized`, `forbidden`, `service_unavailable`}. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Metric | Type |
+|---|---|
+| [`aviso_build_info`](#metric-aviso_build_info) | gauge |
+| [`aviso_http_requests_total`](#metric-aviso_http_requests_total) | counter |
+| [`aviso_http_request_duration_seconds`](#metric-aviso_http_request_duration_seconds) | histogram |
+| [`aviso_http_requests_in_flight`](#metric-aviso_http_requests_in_flight) | gauge |
+| [`aviso_backend_operations_total`](#metric-aviso_backend_operations_total) | counter |
+| [`aviso_backend_operation_duration_seconds`](#metric-aviso_backend_operation_duration_seconds) | histogram |
+| [`aviso_notifications_total`](#metric-aviso_notifications_total) | counter |
+| [`aviso_sse_connections_active`](#metric-aviso_sse_connections_active) | gauge |
+| [`aviso_sse_connections_total`](#metric-aviso_sse_connections_total) | counter |
+| [`aviso_sse_unique_users_active`](#metric-aviso_sse_unique_users_active) | gauge |
+| [`aviso_sse_events_sent_total`](#metric-aviso_sse_events_sent_total) | counter |
+| [`aviso_sse_stream_errors_total`](#metric-aviso_sse_stream_errors_total) | counter |
+| [`aviso_sse_connection_duration_seconds`](#metric-aviso_sse_connection_duration_seconds) | histogram |
+| [`aviso_auth_requests_total`](#metric-aviso_auth_requests_total) | counter |
+
+</div>
+<details class="setting-panel" id="metric-aviso_build_info">
+<summary><code>aviso_build_info</code>
+<span class="setting-meta"><strong>Type:</strong> gauge · <strong>Labels:</strong> <code>version</code></span>
+</summary>
+
+Constant `1` with the server version as a label; join on it in dashboards to
+annotate deploys.
+
+</details>
+<details class="setting-panel" id="metric-aviso_http_requests_total">
+<summary><code>aviso_http_requests_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>route</code>, <code>method</code>, <code>status_code</code></span>
+</summary>
+
+HTTP requests on the main server by matched route pattern (e.g.
+`/api/v1/schema/{event_type}`). Reserved label values: unrouted requests (404
+scans) collapse into `route="unmatched"`, requests failing with a service-level
+error (no route information available) record `route="error"`, and non-standard
+HTTP methods collapse into `method="other"`. The label is named `route` (not
+`endpoint`) to avoid colliding with the Prometheus Operator target label
+`endpoint`.
+
+</details>
+<details class="setting-panel" id="metric-aviso_http_request_duration_seconds">
+<summary><code>aviso_http_request_duration_seconds</code>
+<span class="setting-meta"><strong>Type:</strong> histogram · <strong>Labels:</strong> <code>route</code>, <code>method</code></span>
+</summary>
+
+Request duration until response headers are ready. For the SSE routes
+(`/api/v1/watch`, `/api/v1/replay`) this is stream *setup* latency, not
+connection lifetime; see `aviso_sse_connection_duration_seconds`.
+
+</details>
+<details class="setting-panel" id="metric-aviso_http_requests_in_flight">
+<summary><code>aviso_http_requests_in_flight</code>
+<span class="setting-meta"><strong>Type:</strong> gauge · <strong>Labels:</strong> <code>method</code></span>
+</summary>
+
+HTTP requests currently being processed, by method. Labelled by method only
+because the matched route pattern is not known until routing completes (after
+the request is already in flight). Distinguishes "slow because busy" from
+"slow because a downstream/backend stalled".
+
+</details>
+<details class="setting-panel" id="metric-aviso_backend_operations_total">
+<summary><code>aviso_backend_operations_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>backend</code>, <code>operation</code>, <code>outcome</code></span>
+</summary>
+
+Notification-backend operations at the trait boundary. `operation` ∈
+{`publish`, `get_batch`, `wipe_stream`, `wipe_all`, `delete_message`}; `outcome`
+∈ {`ok`, `error`}. `subscribe_to_topic` is excluded (its work happens lazily as
+the stream is polled).
+
+</details>
+<details class="setting-panel" id="metric-aviso_backend_operation_duration_seconds">
+<summary><code>aviso_backend_operation_duration_seconds</code>
+<span class="setting-meta"><strong>Type:</strong> histogram · <strong>Labels:</strong> <code>backend</code>, <code>operation</code>, <code>outcome</code></span>
+</summary>
+
+Caller-observed backend operation latency (same labels as
+`aviso_backend_operations_total`). This is the metric to watch when notification
+throughput plateaus while pods are underused: it isolates backend
+(NATS/JetStream) latency from app CPU.
+
+</details>
+<details class="setting-panel" id="metric-aviso_notifications_total">
+<summary><code>aviso_notifications_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>event_type</code>, <code>status</code></span>
+</summary>
+
+Total notification requests. `status` ∈ {`success`, `error`, `rejected`};
+requests failing before schema validation record `event_type="unknown"`.
+
+</details>
+<details class="setting-panel" id="metric-aviso_sse_connections_active">
+<summary><code>aviso_sse_connections_active</code>
+<span class="setting-meta"><strong>Type:</strong> gauge · <strong>Labels:</strong> <code>route</code>, <code>event_type</code></span>
+</summary>
+
+Currently active SSE connections. `route` ∈ {`/api/v1/watch`, `/api/v1/replay`}.
+
+</details>
+<details class="setting-panel" id="metric-aviso_sse_connections_total">
+<summary><code>aviso_sse_connections_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>route</code>, <code>event_type</code></span>
+</summary>
+
+Total SSE connections opened.
+
+</details>
+<details class="setting-panel" id="metric-aviso_sse_unique_users_active">
+<summary><code>aviso_sse_unique_users_active</code>
+<span class="setting-meta"><strong>Type:</strong> gauge · <strong>Labels:</strong> <code>route</code></span>
+</summary>
+
+Distinct users with active SSE connections.
+
+</details>
+<details class="setting-panel" id="metric-aviso_sse_events_sent_total">
+<summary><code>aviso_sse_events_sent_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>route</code>, <code>event_type</code></span>
+</summary>
+
+Notification events delivered to SSE clients. Heartbeats, control events, and
+close frames are not counted.
+
+</details>
+<details class="setting-panel" id="metric-aviso_sse_stream_errors_total">
+<summary><code>aviso_sse_stream_errors_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>route</code>, <code>event_type</code></span>
+</summary>
+
+Error events emitted into SSE streams after the response started (typed stream
+errors and notification rendering failures); these are invisible to
+`aviso_http_requests_total` because the stream already returned `200`.
+
+</details>
+<details class="setting-panel" id="metric-aviso_sse_connection_duration_seconds">
+<summary><code>aviso_sse_connection_duration_seconds</code>
+<span class="setting-meta"><strong>Type:</strong> histogram · <strong>Labels:</strong> <code>route</code></span>
+</summary>
+
+SSE connection lifetime, observed when the connection closes (buckets 1s-24h).
+Long-lived open connections appear in `aviso_sse_connections_active`, not here,
+until they close.
+
+</details>
+<details class="setting-panel" id="metric-aviso_auth_requests_total">
+<summary><code>aviso_auth_requests_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>mode</code>, <code>outcome</code></span>
+</summary>
+
+Authentication attempts. `mode` ∈ {`direct`, `trusted_proxy`}; `outcome` ∈
+{`success`, `unauthorized`, `forbidden`, `service_unavailable`}.
+
+</details>
+</div>
 
 The SSE and HTTP request metrics share a `route` label whose values are real
 route patterns (e.g. `/api/v1/watch`), so a single dashboard `route` variable
@@ -556,13 +730,69 @@ are pre-initialised at startup with every documented `outcome` value, so each
 alert rules of the form `rate(metric{outcome="error"}[5m]) > 0` start evaluating
 on a known-zero baseline rather than on a missing series.
 
-| Metric | Type | Labels | Description |
-|---|---|---|---|
-| `aviso_ecpds_cache_hits_total` | counter | (none) | ECPDS destination cache hits (requests served from cache without an upstream call). |
-| `aviso_ecpds_cache_misses_total` | counter | (none) | ECPDS destination cache misses (requests not served from cache). Includes coalesced waiters that did not trigger an upstream call themselves; `aviso_ecpds_fetch_total` is the right metric for "actual upstream calls". |
-| `aviso_ecpds_cache_size` | gauge | (none) | Number of usernames in the ECPDS destination cache, sampled from moka after eviction passes. Expired entries are pruned by moka asynchronously, so this gauge can briefly include not-yet-pruned expired entries until the next pending-tasks run. |
-| `aviso_ecpds_access_decisions_total` | counter | `outcome` | Access decisions. `outcome` ∈ {`allow`, `deny_destination`, `deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}. |
-| `aviso_ecpds_fetch_total` | counter | `outcome` | Upstream fetch outcomes (recorded once per access check whose request actually ran the upstream call; coalesced waiters do not contribute). `outcome` ∈ {`success`, `http_401`, `http_403`, `http_4xx`, `http_5xx`, `invalid_response`, `unreachable`}. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Metric | Type |
+|---|---|
+| [`aviso_ecpds_cache_hits_total`](#metric-aviso_ecpds_cache_hits_total) | counter |
+| [`aviso_ecpds_cache_misses_total`](#metric-aviso_ecpds_cache_misses_total) | counter |
+| [`aviso_ecpds_cache_size`](#metric-aviso_ecpds_cache_size) | gauge |
+| [`aviso_ecpds_access_decisions_total`](#metric-aviso_ecpds_access_decisions_total) | counter |
+| [`aviso_ecpds_fetch_total`](#metric-aviso_ecpds_fetch_total) | counter |
+
+</div>
+<details class="setting-panel" id="metric-aviso_ecpds_cache_hits_total">
+<summary><code>aviso_ecpds_cache_hits_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> (none)</span>
+</summary>
+
+ECPDS destination cache hits (requests served from cache without an upstream
+call).
+
+</details>
+<details class="setting-panel" id="metric-aviso_ecpds_cache_misses_total">
+<summary><code>aviso_ecpds_cache_misses_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> (none)</span>
+</summary>
+
+ECPDS destination cache misses (requests not served from cache). Includes
+coalesced waiters that did not trigger an upstream call themselves;
+`aviso_ecpds_fetch_total` is the right metric for "actual upstream calls".
+
+</details>
+<details class="setting-panel" id="metric-aviso_ecpds_cache_size">
+<summary><code>aviso_ecpds_cache_size</code>
+<span class="setting-meta"><strong>Type:</strong> gauge · <strong>Labels:</strong> (none)</span>
+</summary>
+
+Number of usernames in the ECPDS destination cache, sampled from moka after
+eviction passes. Expired entries are pruned by moka asynchronously, so this
+gauge can briefly include not-yet-pruned expired entries until the next
+pending-tasks run.
+
+</details>
+<details class="setting-panel" id="metric-aviso_ecpds_access_decisions_total">
+<summary><code>aviso_ecpds_access_decisions_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>outcome</code></span>
+</summary>
+
+Access decisions. `outcome` ∈ {`allow`, `deny_destination`,
+`deny_match_key_missing`, `unavailable`, `admin_bypass`, `error`}.
+
+</details>
+<details class="setting-panel" id="metric-aviso_ecpds_fetch_total">
+<summary><code>aviso_ecpds_fetch_total</code>
+<span class="setting-meta"><strong>Type:</strong> counter · <strong>Labels:</strong> <code>outcome</code></span>
+</summary>
+
+Upstream fetch outcomes (recorded once per access check whose request actually
+ran the upstream call; coalesced waiters do not contribute). `outcome` ∈
+{`success`, `http_401`, `http_403`, `http_4xx`, `http_5xx`, `invalid_response`,
+`unreachable`}.
+
+</details>
+</div>
 
 Process-level metrics (CPU, memory, open FDs) are automatically collected on
 Linux.
