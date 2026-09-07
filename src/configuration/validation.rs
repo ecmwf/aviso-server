@@ -610,6 +610,20 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
             let Some(event_schema) = schema.get(*stream_name) else {
                 continue;
             };
+            if ecpds_config.match_key == "polygon"
+                || event_schema
+                    .identifier
+                    .get(&ecpds_config.match_key)
+                    .is_some_and(|field| {
+                        matches!(field.rule, ValidationRules::PolygonHandler { .. })
+                    })
+            {
+                bail!(
+                    "ecpds.match_key '{}' in schema '{}' must not use polygon routing or PolygonHandler; watch/replay wildcard the spatial routing position",
+                    ecpds_config.match_key,
+                    stream_name
+                );
+            }
             match event_schema.identifier.get(&ecpds_config.match_key) {
                 None => bail!(
                     "ecpds.match_key '{}' has no identifier rule defined in schema '{}'",
@@ -2272,6 +2286,33 @@ mod tests {
                 err.to_string().contains("no 'ecpds' configuration section"),
                 "got: {err}"
             );
+        }
+
+        #[test]
+        fn rejects_polygon_match_keys_even_with_an_ordinary_handler() {
+            for (key, polygon_handler) in [("polygon", true), ("polygon", false), ("area", true)] {
+                let mut config = good_ecpds_config();
+                config.match_key = key.into();
+                let mut settings = settings_with_ecpds(config, key, true);
+                if polygon_handler {
+                    settings
+                        .notification_schema
+                        .as_mut()
+                        .unwrap()
+                        .get_mut("diss")
+                        .unwrap()
+                        .identifier
+                        .get_mut(key)
+                        .unwrap()
+                        .rule = ValidationRules::PolygonHandler { required: true };
+                }
+                assert!(
+                    validate_ecpds_settings(&settings)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("must not use polygon routing or PolygonHandler")
+                );
+            }
         }
 
         #[test]

@@ -225,7 +225,9 @@ must be in `[-90, 90]`; longitude must be in `[-180, 180]`.
 Spatial identifiers use fixed names: `PolygonHandler` must be named `polygon`,
 and `PointCloudHandler` must be named `point_cloud`. A schema cannot mix the two
 handlers or declare multiple geometries. Polygon metadata and existing routed
-polygon subjects are supported.
+polygon subjects are supported. Neither spatial handler nor the reserved
+`polygon` routing position can be an ECPDS `match_key`; use an ordinary routing
+identifier such as `destination` instead.
 
 Accepts a non-empty JSON array of `[lat,lon]` pairs from providers. Point clouds
 do not have a string syntax and do not need a closing point. Duplicates are
