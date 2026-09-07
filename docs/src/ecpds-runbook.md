@@ -12,12 +12,65 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 
 ### Response codes the plugin emits
 
-| HTTP | Where the problem is | Tracing event | Trigger |
-|------|----------------------|---------------|---------|
-| `200` | Allowed | `auth.ecpds.check.allowed` | Destination is in the user's ECPDS allow-list. |
-| `403` | Authorisation | `auth.ecpds.check.denied` | Destination is not in the user's allow-list (`reason=DestinationNotInList`), or the request omitted the configured `match_key` field (`reason=MatchKeyMissing`). |
-| `503` | Upstream / network | `auth.ecpds.check.unavailable` | The merged ECPDS fetch could not reach a verdict under the active `partial_outage_policy`. Investigate ECPDS, the network, and the service-account credentials. The `fetch_outcome` field on the event narrows it down further. |
-| `500` | Aviso (this binary) | `auth.ecpds.check.error` | A server-side bug or local misconfiguration: `AuthSettings` not registered as `app_data`, no `EcpdsChecker` in `app_data`, or an unexpected plugin error. Investigate Aviso, not ECPDS. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| HTTP | Where to look |
+|---|---|
+| [`200`](#ecpds-response-200) | Allowed |
+| [`403`](#ecpds-response-403) | Authorization |
+| [`503`](#ecpds-response-503) | ECPDS or the network |
+| [`500`](#ecpds-response-500) | Aviso |
+
+</div>
+
+<details class="setting-panel" id="ecpds-response-200">
+<summary><code>200</code> Allowed
+<span class="setting-meta">Destination access approved.</span></summary>
+
+The destination is in the user's ECPDS allow-list.
+
+**Tracing event:** `auth.ecpds.check.allowed`
+
+</details>
+
+<details class="setting-panel" id="ecpds-response-403">
+<summary><code>403</code> Authorization denied
+<span class="setting-meta">Check the requested destination and match key.</span></summary>
+
+The destination is not in the user's allow-list
+(`reason=DestinationNotInList`), or the request omitted the configured
+`match_key` field (`reason=MatchKeyMissing`).
+
+**Tracing event:** `auth.ecpds.check.denied`
+
+</details>
+
+<details class="setting-panel" id="ecpds-response-503">
+<summary><code>503</code> ECPDS or network failure
+<span class="setting-meta">The destination lookup could not reach a verdict.</span></summary>
+
+The combined ECPDS responses could not satisfy the active
+`partial_outage_policy`. Check ECPDS availability, network connectivity and
+service-account credentials. The event's `fetch_outcome` field helps narrow
+down the cause.
+
+**Tracing event:** `auth.ecpds.check.unavailable`
+
+</details>
+
+<details class="setting-panel" id="ecpds-response-500">
+<summary><code>500</code> Aviso error
+<span class="setting-meta">Investigate Aviso, not ECPDS.</span></summary>
+
+A server-side bug or local misconfiguration prevented the check. Possible
+causes include missing `AuthSettings` or `EcpdsChecker` in `app_data`, or an
+unexpected plugin error.
+
+**Tracing event:** `auth.ecpds.check.error`
+
+</details>
+</div>
 
 ## Symptom and first checks
 
