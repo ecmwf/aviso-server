@@ -89,11 +89,43 @@ identifier:
 
 Every field supports these common properties:
 
-| Property      | Type   | Description                                                                                                                                                                                                           |
-| ------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`        | string | Handler type (see below). Required.                                                                                                                                                                                   |
-| `required`    | bool   | Affects `watch` and `replay` only: if `true`, those requests must include this field; if `false`, missing keys become wildcards. Has **no effect on `notify`**, which always requires every declared field. Required. |
-| `description` | string | Human-readable text exposed by `GET /api/v1/schema`. Optional.                                                                                                                                                        |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Property | Type |
+|---|---|
+| [`type`](#schema-identifier-type) | string |
+| [`required`](#schema-identifier-required) | bool |
+| [`description`](#schema-identifier-description) | string |
+
+</div>
+<details class="setting-panel" id="schema-identifier-type">
+<summary><code>type</code>
+<span class="setting-meta"><strong>Type:</strong> string</span>
+</summary>
+
+Handler type (see below). Required.
+
+</details>
+<details class="setting-panel" id="schema-identifier-required">
+<summary><code>required</code>
+<span class="setting-meta"><strong>Type:</strong> bool</span>
+</summary>
+
+Affects `watch` and `replay` only: if `true`, those requests must include this
+field; if `false`, missing keys become wildcards. Has **no effect on `notify`**,
+which always requires every declared field. Required.
+
+</details>
+<details class="setting-panel" id="schema-identifier-description">
+<summary><code>description</code>
+<span class="setting-meta"><strong>Type:</strong> string</span>
+</summary>
+
+Human-readable text exposed by `GET /api/v1/schema`. Optional.
+
+</details>
+</div>
 
 `PointCloudHandler` is operation-specific. Publishers provide the declared
 `point_cloud` field. Watch and replay requests provide a closed `polygon`
@@ -346,13 +378,59 @@ storage_policy:
   compression: true
 ```
 
-| Field              | Type     | Description                                                        |
-| ------------------ | -------- | ------------------------------------------------------------------ |
-| `retention_time`   | duration | Discard messages older than this. Accepts `30m`, `1h`, `7d`, `1w`. |
-| `max_messages`     | integer  | Maximum message count; oldest are discarded when exceeded.         |
-| `max_size`         | size     | Maximum stream size. Accepts `100Mi`, `1Gi`, etc.                  |
-| `allow_duplicates` | bool     | Allow duplicate message IDs. Default: backend-specific.            |
-| `compression`      | bool     | Enable message-level compression. Default: backend-specific.       |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Field | Type |
+|---|---|
+| [`retention_time`](#schema-storage-policy-retention-time) | duration |
+| [`max_messages`](#schema-storage-policy-max-messages) | integer |
+| [`max_size`](#schema-storage-policy-max-size) | size |
+| [`allow_duplicates`](#schema-storage-policy-allow-duplicates) | bool |
+| [`compression`](#schema-storage-policy-compression) | bool |
+
+</div>
+<details class="setting-panel" id="schema-storage-policy-retention-time">
+<summary><code>retention_time</code>
+<span class="setting-meta"><strong>Type:</strong> duration</span>
+</summary>
+
+Discard messages older than this. Accepts `30m`, `1h`, `7d`, `1w`.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-max-messages">
+<summary><code>max_messages</code>
+<span class="setting-meta"><strong>Type:</strong> integer</span>
+</summary>
+
+Maximum message count; oldest are discarded when exceeded.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-max-size">
+<summary><code>max_size</code>
+<span class="setting-meta"><strong>Type:</strong> size</span>
+</summary>
+
+Maximum stream size. Accepts `100Mi`, `1Gi`, etc.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-allow-duplicates">
+<summary><code>allow_duplicates</code>
+<span class="setting-meta"><strong>Type:</strong> bool</span>
+</summary>
+
+Allow duplicate message IDs. Default: backend-specific.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-compression">
+<summary><code>compression</code>
+<span class="setting-meta"><strong>Type:</strong> bool</span>
+</summary>
+
+Enable message-level compression. Default: backend-specific.
+
+</details>
+</div>
 
 All fields are optional. Omitting `storage_policy` entirely uses backend
 defaults.
