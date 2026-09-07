@@ -37,19 +37,11 @@ pub async fn subscribe_to_topic(
         "Starting subscription to topic with hybrid wildcard filtering"
     );
 
-    // Get resilience settings from backend config (your actual structure)
     let config = &backend.config;
 
-    // Determine retry parameters based on configuration
-    let max_attempts = if config.enable_auto_reconnect {
-        // Subscription creation is a bounded retry loop, unlike the
-        // connection policy where unset/0 means unlimited: a subscribe
-        // call has a caller waiting on it. Unset keeps the historical
-        // default of 5 attempts; explicit 0 still means at least one.
-        config.max_reconnect_attempts.unwrap_or(5).max(1)
-    } else {
-        1 // Single attempt if auto-reconnect disabled
-    };
+    // Subscription creation stays bounded because a caller is waiting:
+    // unset means five attempts, and explicit zero means one attempt.
+    let max_attempts = config.max_reconnect_attempts.unwrap_or(5).max(1);
 
     let base_delay = config.reconnect_delay_ms;
 
@@ -89,7 +81,6 @@ pub async fn subscribe_to_topic(
                         error = %e,
                         topic = %topic_owned,
                         attempts = max_attempts,
-                        auto_reconnect = config.enable_auto_reconnect,
                         "Failed to create subscription after all attempts"
                     );
                     return Err(e);

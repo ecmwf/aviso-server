@@ -306,7 +306,6 @@ pub struct JetStreamSettings {
     pub replicas: Option<usize>,
     pub retention_policy: Option<JetStreamRetentionPolicy>,
     pub discard_policy: Option<JetStreamDiscardPolicy>,
-    pub enable_auto_reconnect: Option<bool>,
     pub max_reconnect_attempts: Option<u32>,
     pub reconnect_delay_ms: Option<u64>,
     /// Publish retry attempts for transient channel-closed errors.

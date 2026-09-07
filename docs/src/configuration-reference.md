@@ -833,7 +833,6 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | [`replicas`](#notification-backend-jetstream-replicas) | `None` |
 | [`retention_policy`](#notification-backend-jetstream-retention-policy) | `limits` |
 | [`discard_policy`](#notification-backend-jetstream-discard-policy) | `old` |
-| [`enable_auto_reconnect`](#notification-backend-jetstream-enable-auto-reconnect) | `true` |
 | [`max_reconnect_attempts`](#notification-backend-jetstream-max-reconnect-attempts) | unlimited |
 | [`reconnect_delay_ms`](#notification-backend-jetstream-reconnect-delay-ms) | `2000` |
 | [`publish_retry_attempts`](#notification-backend-jetstream-publish-retry-attempts) | `5` |
@@ -929,14 +928,6 @@ consumers are not supported.
 `old`/`new` (parsed as typed enum at config load).
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-enable-auto-reconnect">
-<summary><code>enable_auto_reconnect</code>
-<span class="setting-meta"><strong>Default:</strong> <code>true</code> · <strong>Type:</strong> <code>bool?</code></span>
-</summary>
-
-Enables/disables NATS client reconnect behavior.
-
-</details>
 <details class="setting-panel" id="notification-backend-jetstream-max-reconnect-attempts">
 <summary><code>max_reconnect_attempts</code>
 <span class="setting-meta"><strong>Default:</strong> unlimited · <strong>Type:</strong> <code>u32?</code></span>
@@ -944,6 +935,10 @@ Enables/disables NATS client reconnect behavior.
 
 Mapped to NATS `max_reconnects`; unset and `0` both mean unlimited. A positive
 value makes the client give up permanently once exhausted.
+
+Subscription creation uses a bounded retry loop: unset means five attempts,
+`0` means one attempt, and a positive value sets the attempt limit. Startup
+connection attempts are controlled separately by `retry_attempts`.
 
 </details>
 <details class="setting-panel" id="notification-backend-jetstream-reconnect-delay-ms">

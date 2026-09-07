@@ -111,19 +111,10 @@ Startup connection attempts before backend init fails (`> 0`).
 
 | Setting | Default |
 |---|---|
-| [`enable_auto_reconnect`](#notification-backend-jetstream-enable-auto-reconnect) | `true` |
 | [`max_reconnect_attempts`](#notification-backend-jetstream-max-reconnect-attempts) | unlimited |
 | [`reconnect_delay_ms`](#notification-backend-jetstream-reconnect-delay-ms) | `2000` |
 
 </div>
-<details class="setting-panel" id="notification-backend-jetstream-enable-auto-reconnect">
-<summary><code>enable_auto_reconnect</code>
-<span class="setting-meta"><strong>Default:</strong> <code>true</code></span>
-</summary>
-
-Enables/disables NATS client reconnect after startup.
-
-</details>
 <details class="setting-panel" id="notification-backend-jetstream-max-reconnect-attempts">
 <summary><code>max_reconnect_attempts</code>
 <span class="setting-meta"><strong>Default:</strong> unlimited</span>
@@ -132,6 +123,9 @@ Enables/disables NATS client reconnect after startup.
 Unset and `0` both mean unlimited reconnect retries; set a positive value only
 if you explicitly want the client to give up (the backend then stays
 disconnected until a process restart).
+
+Subscription creation uses a bounded retry loop: unset means five attempts,
+`0` means one attempt, and a positive value sets the attempt limit.
 
 </details>
 <details class="setting-panel" id="notification-backend-jetstream-reconnect-delay-ms">
@@ -272,7 +266,6 @@ notification_backend:
     nats_url: "nats://localhost:4222"
     timeout_seconds: 30
     retry_attempts: 3
-    enable_auto_reconnect: true
     reconnect_delay_ms: 2000
     publish_retry_attempts: 5
     publish_retry_base_delay_ms: 150
@@ -416,9 +409,20 @@ python3 scripts/smoke_test.py
 
 ## Operational Caveats
 
+Run the opt-in reconnect outage test from the repository root:
+
+```bash
+bash scripts/test_jetstream_reconnect.sh
+```
+
+It requires Docker and uses its own NATS 2.14.6 container with a random
+loopback port. It stops and restarts only that container, checks that bounded
+reconnect gives up while unset and `0` recover, then removes the container.
+It does not use `NATS_URL` or shared NATS storage.
+
 - Startup connectivity is controlled by `timeout_seconds` + `retry_attempts`.
-- Runtime reconnect is controlled by `enable_auto_reconnect`,
-  `max_reconnect_attempts`, `reconnect_delay_ms`.
+- Runtime reconnect is controlled by `max_reconnect_attempts` and
+  `reconnect_delay_ms`.
 - Publish retry is a narrow resilience path for transient `channel closed`
   failures; non-transient failures fail fast.
 - `retry_attempts` applies only to startup; post-startup reconnect uses the
@@ -433,5 +437,5 @@ python3 scripts/smoke_test.py
   reconnect; keep liveness on `/health` (process-only) so pods are not killed
   during an outage the client recovers from by itself.
 - `max_reconnect_attempts` also bounds subscription-creation retries, where
-  unset keeps a default of 5 attempts (a subscribe call has a caller waiting on
-  it, so it never retries forever).
+  unset means 5 attempts and `0` means one attempt (a subscribe call has a
+  caller waiting on it, so it never retries forever).

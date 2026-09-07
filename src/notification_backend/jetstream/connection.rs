@@ -24,19 +24,10 @@ struct ConnectionPolicy {
 fn build_connection_policy(config: &JetStreamConfig) -> ConnectionPolicy {
     let initial_connect_attempts = config.retry_attempts.max(1);
 
-    let max_reconnects = if config.enable_auto_reconnect {
-        match config.max_reconnect_attempts {
-            // Unset and explicit 0 both mean "never give up". A client
-            // that abandons the connection permanently leaves the backend
-            // dead until a process restart while the HTTP surface keeps
-            // serving, which is the zombie mode described in issue #106;
-            // any NATS outage longer than attempts x delay (a routine pod
-            // reschedule) used to trigger it.
-            None | Some(0) => None,
-            Some(bounded) => Some(bounded as usize),
-        }
-    } else {
-        Some(0)
+    let max_reconnects = match config.max_reconnect_attempts {
+        // Giving up leaves the backend disconnected until a process restart.
+        None | Some(0) => None,
+        Some(bounded) => Some(bounded as usize),
     };
 
     ConnectionPolicy {
@@ -141,7 +132,6 @@ mod tests {
             replicas: None,
             retention_policy: JetStreamRetentionPolicy::Limits,
             discard_policy: JetStreamDiscardPolicy::Old,
-            enable_auto_reconnect: true,
             max_reconnect_attempts: Some(5),
             reconnect_delay_ms: 2000,
             publish_retry_attempts: 5,
@@ -159,16 +149,7 @@ mod tests {
     }
 
     #[test]
-    fn policy_disables_reconnect_when_auto_reconnect_is_false() {
-        let mut cfg = base_config();
-        cfg.enable_auto_reconnect = false;
-        let policy = build_connection_policy(&cfg);
-
-        assert_eq!(policy.max_reconnects, Some(0));
-    }
-
-    #[test]
-    fn policy_uses_unlimited_reconnects_when_enabled_and_max_is_zero() {
+    fn policy_uses_unlimited_reconnects_when_max_is_zero() {
         let mut cfg = base_config();
         cfg.max_reconnect_attempts = Some(0);
         let policy = build_connection_policy(&cfg);
