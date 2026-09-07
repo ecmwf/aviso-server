@@ -817,24 +817,160 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 
 ### `notification_backend.jetstream`
 
-| Field | Type | Default | Runtime usage summary |
-|---|---|---|---|
-| `nats_url` | `string` | `nats://localhost:4222` | NATS connection URL. |
-| `token` | `string?` | `None` | Token auth; `NATS_TOKEN` env fallback. |
-| `timeout_seconds` | `u64?` | `30` | NATS connection timeout for each startup connect attempt (`> 0`). |
-| `retry_attempts` | `u32?` | `3` | Startup connect attempts before backend init fails (`> 0`). |
-| `max_messages` | `i64?` | `None` | Stream message cap. |
-| `max_bytes` | `i64?` | `None` | Stream size cap in bytes. |
-| `retention_time` | `string?` | `None` | Default stream max age (`s`, `m`, `h`, `d`, `w`; for example `30d`). |
-| `storage_type` | `string?` | `file` | `file` or `memory` (parsed as typed enum at config load). |
-| `replicas` | `usize?` | `None` | Stream replicas. |
-| `retention_policy` | `string?` | `limits` | `limits`/`interest`. `workqueue` fails startup because independent watch/replay consumers are not supported. |
-| `discard_policy` | `string?` | `old` | `old`/`new` (parsed as typed enum at config load). |
-| `enable_auto_reconnect` | `bool?` | `true` | Enables/disables NATS client reconnect behavior. |
-| `max_reconnect_attempts` | `u32?` | unlimited | Mapped to NATS `max_reconnects`; unset and `0` both mean unlimited. A positive value makes the client give up permanently once exhausted. |
-| `reconnect_delay_ms` | `u64?` | `2000` | Reconnect delay and startup connect retry backoff (`> 0`). |
-| `publish_retry_attempts` | `u32?` | `5` | Retry attempts for transient publish `channel closed` failures (`> 0`). |
-| `publish_retry_base_delay_ms` | `u64?` | `150` | Base backoff in milliseconds for publish retries (`> 0`). |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`nats_url`](#notification-backend-jetstream-nats-url) | `nats://localhost:4222` |
+| [`token`](#notification-backend-jetstream-token) | `None` |
+| [`timeout_seconds`](#notification-backend-jetstream-timeout-seconds) | `30` |
+| [`retry_attempts`](#notification-backend-jetstream-retry-attempts) | `3` |
+| [`max_messages`](#notification-backend-jetstream-max-messages) | `None` |
+| [`max_bytes`](#notification-backend-jetstream-max-bytes) | `None` |
+| [`retention_time`](#notification-backend-jetstream-retention-time) | `None` |
+| [`storage_type`](#notification-backend-jetstream-storage-type) | `file` |
+| [`replicas`](#notification-backend-jetstream-replicas) | `None` |
+| [`retention_policy`](#notification-backend-jetstream-retention-policy) | `limits` |
+| [`discard_policy`](#notification-backend-jetstream-discard-policy) | `old` |
+| [`enable_auto_reconnect`](#notification-backend-jetstream-enable-auto-reconnect) | `true` |
+| [`max_reconnect_attempts`](#notification-backend-jetstream-max-reconnect-attempts) | unlimited |
+| [`reconnect_delay_ms`](#notification-backend-jetstream-reconnect-delay-ms) | `2000` |
+| [`publish_retry_attempts`](#notification-backend-jetstream-publish-retry-attempts) | `5` |
+| [`publish_retry_base_delay_ms`](#notification-backend-jetstream-publish-retry-base-delay-ms) | `150` |
+
+</div>
+<details class="setting-panel" id="notification-backend-jetstream-nats-url">
+<summary><code>nats_url</code>
+<span class="setting-meta"><strong>Default:</strong> <code>nats://localhost:4222</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+NATS connection URL.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-token">
+<summary><code>token</code>
+<span class="setting-meta"><strong>Default:</strong> <code>None</code> · <strong>Type:</strong> <code>string?</code></span>
+</summary>
+
+Token auth; `NATS_TOKEN` env fallback.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-timeout-seconds">
+<summary><code>timeout_seconds</code>
+<span class="setting-meta"><strong>Default:</strong> <code>30</code> · <strong>Type:</strong> <code>u64?</code></span>
+</summary>
+
+NATS connection timeout for each startup connect attempt (`> 0`).
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-retry-attempts">
+<summary><code>retry_attempts</code>
+<span class="setting-meta"><strong>Default:</strong> <code>3</code> · <strong>Type:</strong> <code>u32?</code></span>
+</summary>
+
+Startup connect attempts before backend init fails (`> 0`).
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-max-messages">
+<summary><code>max_messages</code>
+<span class="setting-meta"><strong>Default:</strong> <code>None</code> · <strong>Type:</strong> <code>i64?</code></span>
+</summary>
+
+Stream message cap.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-max-bytes">
+<summary><code>max_bytes</code>
+<span class="setting-meta"><strong>Default:</strong> <code>None</code> · <strong>Type:</strong> <code>i64?</code></span>
+</summary>
+
+Stream size cap in bytes.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-retention-time">
+<summary><code>retention_time</code>
+<span class="setting-meta"><strong>Default:</strong> <code>None</code> · <strong>Type:</strong> <code>string?</code></span>
+</summary>
+
+Default stream max age (`s`, `m`, `h`, `d`, `w`; for example `30d`).
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-storage-type">
+<summary><code>storage_type</code>
+<span class="setting-meta"><strong>Default:</strong> <code>file</code> · <strong>Type:</strong> <code>string?</code></span>
+</summary>
+
+`file` or `memory` (parsed as typed enum at config load).
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-replicas">
+<summary><code>replicas</code>
+<span class="setting-meta"><strong>Default:</strong> <code>None</code> · <strong>Type:</strong> <code>usize?</code></span>
+</summary>
+
+Stream replicas.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-retention-policy">
+<summary><code>retention_policy</code>
+<span class="setting-meta"><strong>Default:</strong> <code>limits</code> · <strong>Type:</strong> <code>string?</code></span>
+</summary>
+
+`limits`/`interest`. `workqueue` fails startup because independent watch/replay
+consumers are not supported.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-discard-policy">
+<summary><code>discard_policy</code>
+<span class="setting-meta"><strong>Default:</strong> <code>old</code> · <strong>Type:</strong> <code>string?</code></span>
+</summary>
+
+`old`/`new` (parsed as typed enum at config load).
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-enable-auto-reconnect">
+<summary><code>enable_auto_reconnect</code>
+<span class="setting-meta"><strong>Default:</strong> <code>true</code> · <strong>Type:</strong> <code>bool?</code></span>
+</summary>
+
+Enables/disables NATS client reconnect behavior.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-max-reconnect-attempts">
+<summary><code>max_reconnect_attempts</code>
+<span class="setting-meta"><strong>Default:</strong> unlimited · <strong>Type:</strong> <code>u32?</code></span>
+</summary>
+
+Mapped to NATS `max_reconnects`; unset and `0` both mean unlimited. A positive
+value makes the client give up permanently once exhausted.
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-reconnect-delay-ms">
+<summary><code>reconnect_delay_ms</code>
+<span class="setting-meta"><strong>Default:</strong> <code>2000</code> · <strong>Type:</strong> <code>u64?</code></span>
+</summary>
+
+Reconnect delay and startup connect retry backoff (`> 0`).
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-publish-retry-attempts">
+<summary><code>publish_retry_attempts</code>
+<span class="setting-meta"><strong>Default:</strong> <code>5</code> · <strong>Type:</strong> <code>u32?</code></span>
+</summary>
+
+Retry attempts for transient publish `channel closed` failures (`> 0`).
+
+</details>
+<details class="setting-panel" id="notification-backend-jetstream-publish-retry-base-delay-ms">
+<summary><code>publish_retry_base_delay_ms</code>
+<span class="setting-meta"><strong>Default:</strong> <code>150</code> · <strong>Type:</strong> <code>u64?</code></span>
+</summary>
+
+Base backoff in milliseconds for publish retries (`> 0`).
+
+</details>
+</div>
 
 See [JetStream Backend](./backend-jetstream.md#configuration-reference) for
 detailed behavior.
@@ -844,9 +980,27 @@ detailed behavior.
 Controls how the server treats `event_type` values that are not declared in
 `notification_schema`.
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `notification_schema_strict` | `bool?` | **derived** | When unset, the effective value is `true` if `notification_schema` is non-empty, `false` otherwise. Set to `true` to force strict rejection even with no schema (deny-all "drain" mode). Set to `false` to preserve the legacy permissive generic fallback even with a declared schema; a startup warning is emitted in that case. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`notification_schema_strict`](#setting-notification-schema-strict) | **derived** |
+
+</div>
+<details class="setting-panel" id="setting-notification-schema-strict">
+<summary><code>notification_schema_strict</code>
+<span class="setting-meta"><strong>Default:</strong> <strong>derived</strong> · <strong>Type:</strong> <code>bool?</code></span>
+</summary>
+
+When unset, the effective value is `true` if `notification_schema` is
+non-empty, `false` otherwise. Set to `true` to force strict rejection even
+with no schema (deny-all "drain" mode). Set to `false` to preserve the legacy
+permissive generic fallback even with a declared schema; a startup warning is
+emitted in that case.
+
+</details>
+</div>
 
 In strict mode, `POST /api/v1/notification`, `POST /api/v1/watch`, and
 `POST /api/v1/replay` reject any `event_type` not present in
@@ -889,13 +1043,59 @@ Behavior details and edge cases are documented in
 Optional per-schema storage settings validated at startup against selected
 backend capabilities.
 
-| Field | Type | Example | Notes |
-|---|---|---|---|
-| `retention_time` | `string` | `7d`, `12h`, `30m` | Duration literal (`s`, `m`, `h`, `d`, `w`). |
-| `max_messages` | `integer` | `100000` | Must be `> 0`. |
-| `max_size` | `string` | `512Mi`, `2G` | Size literal (`K`, `Ki`, `M`, `Mi`, `G`, `Gi`, `T`, `Ti`). |
-| `allow_duplicates` | `bool` | `true` | Backend support is capability-gated. |
-| `compression` | `bool` | `true` | Backend support is capability-gated. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Example |
+|---|---|
+| [`retention_time`](#notification-schema-event-type-storage-policy-retention-time) | `7d`, `12h`, `30m` |
+| [`max_messages`](#notification-schema-event-type-storage-policy-max-messages) | `100000` |
+| [`max_size`](#notification-schema-event-type-storage-policy-max-size) | `512Mi`, `2G` |
+| [`allow_duplicates`](#notification-schema-event-type-storage-policy-allow-duplicates) | `true` |
+| [`compression`](#notification-schema-event-type-storage-policy-compression) | `true` |
+
+</div>
+<details class="setting-panel" id="notification-schema-event-type-storage-policy-retention-time">
+<summary><code>retention_time</code>
+<span class="setting-meta"><strong>Example:</strong> <code>7d</code>, <code>12h</code>, <code>30m</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Duration literal (`s`, `m`, `h`, `d`, `w`).
+
+</details>
+<details class="setting-panel" id="notification-schema-event-type-storage-policy-max-messages">
+<summary><code>max_messages</code>
+<span class="setting-meta"><strong>Example:</strong> <code>100000</code> · <strong>Type:</strong> <code>integer</code></span>
+</summary>
+
+Must be `> 0`.
+
+</details>
+<details class="setting-panel" id="notification-schema-event-type-storage-policy-max-size">
+<summary><code>max_size</code>
+<span class="setting-meta"><strong>Example:</strong> <code>512Mi</code>, <code>2G</code> · <strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Size literal (`K`, `Ki`, `M`, `Mi`, `G`, `Gi`, `T`, `Ti`).
+
+</details>
+<details class="setting-panel" id="notification-schema-event-type-storage-policy-allow-duplicates">
+<summary><code>allow_duplicates</code>
+<span class="setting-meta"><strong>Example:</strong> <code>true</code> · <strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Backend support is capability-gated.
+
+</details>
+<details class="setting-panel" id="notification-schema-event-type-storage-policy-compression">
+<summary><code>compression</code>
+<span class="setting-meta"><strong>Example:</strong> <code>true</code> · <strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Backend support is capability-gated.
+
+</details>
+</div>
 
 Field behavior:
 
@@ -954,14 +1154,68 @@ notification_schema:
 
 ## `watch_endpoint`
 
-| Field | Type | Default | Notes |
-|---|---|---|---|
-| `sse_heartbeat_interval_sec` | `u64` | `30` | SSE heartbeat period. |
-| `connection_max_duration_sec` | `u64` | `3600` | Maximum live watch duration. |
-| `replay_batch_size` | `usize` | `100` | Historical fetch batch size. |
-| `max_historical_notifications` | `usize` | `10000` | Replay cap for historical delivery. |
-| `replay_batch_delay_ms` | `u64` | `100` | Delay between historical replay batches. |
-| `concurrent_notification_processing` | `usize` | `15` | Live stream CloudEvent conversion concurrency. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+|---|---|
+| [`sse_heartbeat_interval_sec`](#watch-endpoint-sse-heartbeat-interval-sec) | `30` |
+| [`connection_max_duration_sec`](#watch-endpoint-connection-max-duration-sec) | `3600` |
+| [`replay_batch_size`](#watch-endpoint-replay-batch-size) | `100` |
+| [`max_historical_notifications`](#watch-endpoint-max-historical-notifications) | `10000` |
+| [`replay_batch_delay_ms`](#watch-endpoint-replay-batch-delay-ms) | `100` |
+| [`concurrent_notification_processing`](#watch-endpoint-concurrent-notification-processing) | `15` |
+
+</div>
+<details class="setting-panel" id="watch-endpoint-sse-heartbeat-interval-sec">
+<summary><code>sse_heartbeat_interval_sec</code>
+<span class="setting-meta"><strong>Default:</strong> <code>30</code> · <strong>Type:</strong> <code>u64</code></span>
+</summary>
+
+SSE heartbeat period.
+
+</details>
+<details class="setting-panel" id="watch-endpoint-connection-max-duration-sec">
+<summary><code>connection_max_duration_sec</code>
+<span class="setting-meta"><strong>Default:</strong> <code>3600</code> · <strong>Type:</strong> <code>u64</code></span>
+</summary>
+
+Maximum live watch duration.
+
+</details>
+<details class="setting-panel" id="watch-endpoint-replay-batch-size">
+<summary><code>replay_batch_size</code>
+<span class="setting-meta"><strong>Default:</strong> <code>100</code> · <strong>Type:</strong> <code>usize</code></span>
+</summary>
+
+Historical fetch batch size.
+
+</details>
+<details class="setting-panel" id="watch-endpoint-max-historical-notifications">
+<summary><code>max_historical_notifications</code>
+<span class="setting-meta"><strong>Default:</strong> <code>10000</code> · <strong>Type:</strong> <code>usize</code></span>
+</summary>
+
+Replay cap for historical delivery.
+
+</details>
+<details class="setting-panel" id="watch-endpoint-replay-batch-delay-ms">
+<summary><code>replay_batch_delay_ms</code>
+<span class="setting-meta"><strong>Default:</strong> <code>100</code> · <strong>Type:</strong> <code>u64</code></span>
+</summary>
+
+Delay between historical replay batches.
+
+</details>
+<details class="setting-panel" id="watch-endpoint-concurrent-notification-processing">
+<summary><code>concurrent_notification_processing</code>
+<span class="setting-meta"><strong>Default:</strong> <code>15</code> · <strong>Type:</strong> <code>usize</code></span>
+</summary>
+
+Live stream CloudEvent conversion concurrency.
+
+</details>
+</div>
 
 ## Custom config file path
 
