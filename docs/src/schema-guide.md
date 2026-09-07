@@ -222,6 +222,11 @@ must be in `[-90, 90]`; longitude must be in `[-180, 180]`.
 
 #### PointCloudHandler
 
+Spatial identifiers use fixed names: `PolygonHandler` must be named `polygon`,
+and `PointCloudHandler` must be named `point_cloud`. A schema cannot mix the two
+handlers or declare multiple geometries. Polygon metadata and existing routed
+polygon subjects are supported.
+
 Accepts a non-empty JSON array of `[lat,lon]` pairs from providers. Point clouds
 do not have a string syntax and do not need a closing point. Duplicates are
 valid. Their order is preserved.

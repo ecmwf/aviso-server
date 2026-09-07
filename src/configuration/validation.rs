@@ -53,6 +53,20 @@ pub fn validate_spatial_schema_settings(settings: &Settings) -> Result<()> {
     };
 
     for (event_type, schema) in schema_map {
+        for (name, field) in &schema.identifier {
+            if matches!(field.rule, ValidationRules::PolygonHandler { .. }) && name != "polygon" {
+                bail!(
+                    "Schema '{event_type}' PolygonHandler must use the reserved identifier key 'polygon'; multiple or renamed geometries are not supported"
+                );
+            }
+        }
+        if schema
+            .identifier
+            .get("polygon")
+            .is_some_and(|field| !matches!(field.rule, ValidationRules::PolygonHandler { .. }))
+        {
+            bail!("Schema '{event_type}' reserves identifier key 'polygon' for PolygonHandler");
+        }
         let point_cloud_handlers: Vec<_> = schema
             .identifier
             .iter()
@@ -715,6 +729,77 @@ mod tests {
     fn accepts_valid_point_cloud_schema() {
         let settings = settings_with_point_cloud("point_cloud", 10_000);
         validate_spatial_schema_settings(&settings).expect("valid point-cloud schema");
+    }
+
+    #[test]
+    fn accepts_only_supported_polygon_metadata_and_routing() {
+        for routed in [false, true] {
+            let mut settings = settings_with_point_cloud("point_cloud", 100);
+            let schema = settings
+                .notification_schema
+                .as_mut()
+                .unwrap()
+                .get_mut("cloud")
+                .unwrap();
+            schema.identifier.clear();
+            schema.identifier.insert(
+                "polygon".into(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler {
+                    required: true,
+                }),
+            );
+            if routed {
+                schema
+                    .topic
+                    .as_mut()
+                    .unwrap()
+                    .key_order
+                    .push("polygon".into());
+            }
+            validate_spatial_schema_settings(&settings).unwrap();
+            let schema = settings
+                .notification_schema
+                .as_mut()
+                .unwrap()
+                .get_mut("cloud")
+                .unwrap();
+            schema.identifier.insert(
+                "area".into(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler {
+                    required: true,
+                }),
+            );
+            assert!(
+                validate_spatial_schema_settings(&settings)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("reserved identifier key 'polygon'")
+            );
+            settings
+                .notification_schema
+                .as_mut()
+                .unwrap()
+                .get_mut("cloud")
+                .unwrap()
+                .identifier
+                .remove("polygon");
+            assert!(validate_spatial_schema_settings(&settings).is_err());
+        }
+        let mut settings = settings_with_point_cloud("point_cloud", 100);
+        settings
+            .notification_schema
+            .as_mut()
+            .unwrap()
+            .get_mut("cloud")
+            .unwrap()
+            .identifier
+            .insert(
+                "area".into(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler {
+                    required: true,
+                }),
+            );
+        assert!(validate_spatial_schema_settings(&settings).is_err());
     }
 
     #[test]
