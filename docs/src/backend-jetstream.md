@@ -93,12 +93,21 @@ These apply to every stream created by Aviso unless overridden by a per-schema
 | `retention_time`   | `None`   | Default max age: duration literal (`s`, `m`, `h`, `d`, `w`; e.g. `30d`). |
 | `storage_type`     | `file`   | `file` or `memory`, parsed as typed enum at config load.                 |
 | `replicas`         | `None`   | Stream replica count.                                                    |
-| `retention_policy` | `limits` | `limits`, `interest`, or `workqueue`, parsed as typed enum.              |
+| `retention_policy` | `limits` | `limits` or `interest`. `workqueue` is rejected at startup.              |
 | `discard_policy`   | `old`    | `old` or `new`, parsed as typed enum.                                    |
 
 > **Fail-fast validation:** `storage_type`, `retention_policy`, and
 > `discard_policy` are parsed as typed enums during configuration loading.
 > Invalid values fail startup immediately, before any streams are created.
+
+`workqueue` retention is not supported because it cannot support Aviso's
+independent watch/replay consumers. Startup rejects it for backend defaults,
+including streams with schema storage policies. Schema storage policies inherit
+the backend retention policy; they cannot override it. Use `limits` for history
+bounded by configured limits. `interest` remains accepted with its existing NATS
+interest-based retention semantics; it does not guarantee retained history when
+there are no interested consumers. This validation does not migrate or delete
+existing streams.
 
 ### Full example
 

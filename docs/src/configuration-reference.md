@@ -229,7 +229,7 @@ See [InMemory Backend](./backend-in-memory.md) for operational caveats.
 | `retention_time` | `string?` | `None` | Default stream max age (`s`, `m`, `h`, `d`, `w`; for example `30d`). |
 | `storage_type` | `string?` | `file` | `file` or `memory` (parsed as typed enum at config load). |
 | `replicas` | `usize?` | `None` | Stream replicas. |
-| `retention_policy` | `string?` | `limits` | `limits`/`interest`/`workqueue` (parsed as typed enum at config load). |
+| `retention_policy` | `string?` | `limits` | `limits`/`interest`. `workqueue` fails startup because independent watch/replay consumers are not supported. |
 | `discard_policy` | `string?` | `old` | `old`/`new` (parsed as typed enum at config load). |
 | `enable_auto_reconnect` | `bool?` | `true` | Enables/disables NATS client reconnect behavior. |
 | `max_reconnect_attempts` | `u32?` | unlimited | Mapped to NATS `max_reconnects`; unset and `0` both mean unlimited. A positive value makes the client give up permanently once exhausted. |
@@ -304,6 +304,10 @@ Field behavior:
 
 Startup behavior:
 
+- Schema storage policies inherit the backend `retention_policy`; there is no
+  per-schema override. `workqueue` fails startup because it does not support
+  independent watch/replay consumers. Existing streams are not migrated or
+  deleted by this validation.
 - Invalid `retention_time`/`max_size` format fails startup.
 - Unsupported fields for selected backend fail startup.
 - Validation happens before backend initialization.

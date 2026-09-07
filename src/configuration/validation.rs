@@ -350,6 +350,21 @@ pub fn validate_schema_storage_policy_support(settings: &Settings) -> Result<()>
     let capabilities = capabilities_for_backend_kind(kind)
         .ok_or_else(|| anyhow::anyhow!("Unknown notification_backend kind: {kind}"))?;
 
+    if kind == "jetstream"
+        && matches!(
+            settings
+                .notification_backend
+                .jetstream
+                .as_ref()
+                .and_then(|js| js.retention_policy.as_ref()),
+            Some(super::JetStreamRetentionPolicy::Workqueue)
+        )
+    {
+        bail!(
+            "notification_backend.jetstream.retention_policy 'workqueue' is not supported for backend defaults or schema storage policies: workqueue retention does not support Aviso's independent watch/replay consumers; use 'limits' or 'interest'"
+        );
+    }
+
     let Some(schema_map) = settings.notification_schema.as_ref() else {
         return Ok(());
     };
@@ -869,6 +884,51 @@ mod tests {
         );
         validate_schema_storage_policy_support(&settings)
             .expect("jetstream should accept all storage policy fields");
+    }
+
+    #[test]
+    fn schema_storage_validation_rejects_workqueue_with_or_without_overrides() {
+        for with_schema in [true, false] {
+            let mut settings = settings_with_policy(
+                "jetstream",
+                EventStoragePolicy {
+                    retention_time: Some("7d".to_string()),
+                    ..EventStoragePolicy::default()
+                },
+                "mars",
+            );
+            settings.notification_backend.jetstream = Some(
+                serde_json::from_value(serde_json::json!({"retention_policy": "workqueue"}))
+                    .unwrap(),
+            );
+            if !with_schema {
+                settings.notification_schema = None;
+            }
+            let error = validate_schema_storage_policy_support(&settings)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("notification_backend.jetstream.retention_policy 'workqueue'"));
+            assert!(error.contains("backend defaults or schema storage policies"));
+            assert!(error.contains("independent watch/replay consumers"));
+        }
+    }
+
+    #[test]
+    fn schema_storage_validation_accepts_limits_and_interest() {
+        for policy in ["limits", "interest"] {
+            let mut settings = settings_with_policy(
+                "jetstream",
+                EventStoragePolicy {
+                    retention_time: Some("7d".to_string()),
+                    ..EventStoragePolicy::default()
+                },
+                "mars",
+            );
+            settings.notification_backend.jetstream = Some(
+                serde_json::from_value(serde_json::json!({"retention_policy": policy})).unwrap(),
+            );
+            validate_schema_storage_policy_support(&settings).unwrap();
+        }
     }
 
     #[test]

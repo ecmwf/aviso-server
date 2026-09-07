@@ -103,6 +103,11 @@ impl JetStreamConfig {
 
     /// Validate JetStream settings that should fail fast at startup.
     pub fn validate(&self) -> Result<()> {
+        if matches!(self.retention_policy, JetStreamRetentionPolicy::Workqueue) {
+            bail!(
+                "notification_backend.jetstream.retention_policy 'workqueue' is not supported: workqueue retention does not support Aviso's independent watch/replay consumers; use 'limits' or 'interest'"
+            );
+        }
         if self.nats_url.trim().is_empty() {
             bail!("notification_backend.jetstream.nats_url must not be empty");
         }
@@ -194,6 +199,40 @@ mod tests {
     fn validate_accepts_valid_configuration() {
         let cfg = base_config();
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_workqueue_retention() {
+        let mut cfg = base_config();
+        cfg.retention_policy = JetStreamRetentionPolicy::Workqueue;
+        let error = cfg.validate().unwrap_err().to_string();
+        assert!(error.contains("notification_backend.jetstream.retention_policy 'workqueue'"));
+        assert!(error.contains("independent watch/replay consumers"));
+    }
+
+    #[test]
+    fn validate_accepts_limits_and_interest_retention() {
+        for policy in [
+            JetStreamRetentionPolicy::Limits,
+            JetStreamRetentionPolicy::Interest,
+        ] {
+            let mut cfg = base_config();
+            cfg.retention_policy = policy;
+            cfg.validate().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn backend_constructor_rejects_workqueue_before_connecting() {
+        let mut cfg = base_config();
+        cfg.retention_policy = JetStreamRetentionPolicy::Workqueue;
+        cfg.nats_url = "not a NATS URL".to_string();
+        let error = super::super::backend::JetStreamBackend::new(cfg)
+            .await
+            .err()
+            .expect("workqueue must fail before connecting")
+            .to_string();
+        assert!(error.contains("independent watch/replay consumers"));
     }
 
     #[test]

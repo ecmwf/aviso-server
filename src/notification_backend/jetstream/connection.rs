@@ -63,6 +63,7 @@ fn build_connect_options(
 }
 
 pub async fn connect(config: JetStreamConfig) -> Result<JetStreamBackend> {
+    config.validate()?;
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
