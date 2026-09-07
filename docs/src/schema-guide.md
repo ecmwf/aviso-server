@@ -47,8 +47,26 @@ Values containing reserved characters (`.`, `*`, `>`, `%`) are automatically
 percent-encoded so they do not interfere with NATS subject routing. See
 [Topic Encoding](./topic-encoding.md) for details.
 
-Only fields listed in `key_order` contribute to the subject. Other identifier
-fields are validated but not part of the topic.
+When a `topic` block is configured, startup requires a nonempty `key_order`.
+Each entry must name a declared identifier and may appear only once. Every
+ordinary identifier must be included, even when `required: false`. Optional
+fields still need a subject position for watch/replay wildcards and filters.
+For example, `key_order: [region, date]` is valid when both fields are declared;
+`key_order: [region, region]` is not.
+
+Spatial geometry is the exception. `PolygonHandler` fields may be omitted
+because their geometry is stored as metadata. Existing polygon subject
+positions remain supported. The reserved `point_cloud` field must never appear
+in `key_order`; it uses spatial metadata instead.
+
+There is no request-only authorization exception for ECPDS. Its `match_key`
+must appear in a configured topic's `key_order`. Checking permission for a
+request value does not restrict delivered events unless routing also retains
+that value. Ordinary fields outside `key_order` are not validation-only fields:
+their values would be lost from routing and topic-based reconstruction.
+
+These checks apply to configured `topic` blocks. They do not change the generic
+fallback used without a topic or schema, including its bare-topic behavior.
 
 ---
 
@@ -349,7 +367,7 @@ notification_schema:
 
     topic:
       base: "alert"
-      key_order: ["region", "severity_level", "date"]
+      key_order: ["region", "severity_level", "date", "issued_by"]
 
     identifier:
       region:
@@ -388,9 +406,10 @@ notification_schema:
 With this schema:
 
 - Publishing a notification with `region=europe`, `severity_level=3`,
-  `date=2025-07-06` produces the subject `alert.europe.3.20250706`.
-- The `issued_by` field is validated if present but does not appear in the
-  subject (not in `key_order`).
+  `date=2025-07-06`, `issued_by=forecast` produces the subject
+  `alert.europe.3.20250706.forecast`.
+- Publishers must provide `issued_by`. Watch/replay clients may omit it to
+  match any issuer because it is declared `required: false`.
 - Any authenticated user in the `operations` realm can watch/replay.
 - Only users with the `forecaster` or `admin` role can publish.
 - JetStream retains up to 100,000 messages or 30 days, whichever limit is hit
@@ -405,8 +424,8 @@ With this schema:
 - **Use `key_order` deliberately.** Fields in `key_order` become part of the
   NATS subject and affect routing granularity. More fields = more specific
   topics = more efficient filtering, but also more distinct subjects.
-- **Mark routing fields required.** If a field is in `key_order`, consider
-  making it `required: true` so every notification produces a complete subject.
+- **Choose subscriber requirements.** Set `required: true` when watch/replay
+  clients must supply a field. Publishers always supply every declared field.
 - **Keep `base` short and unique.** It is the root of every subject in this
   stream. Avoid collisions with other schemas.
 - **Test with `GET /api/v1/schema/{event_type}`.** This endpoint returns the

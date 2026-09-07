@@ -588,17 +588,9 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
         bail!("ecpds.connect_timeout_seconds must be greater than zero");
     }
 
-    // The plugin reads `match_key` from the request's canonicalized
-    // identifier params at runtime (`EcpdsChecker::check_access`
-    // does `identifier.get(&self.match_key)`), not from the topic
-    // routing key. Streams without an explicit `topic` block, or
-    // streams whose `topic.key_order` filters on a different field,
-    // still surface the request param to the plugin via the
-    // canonicalized params, so the plugin authorises correctly. We
-    // therefore validate that `match_key` exists in the schema's
-    // `identifier` and is `required: true` (so the value is
-    // guaranteed before the plugin runs), but we deliberately do
-    // NOT require it to appear in `topic.key_order`.
+    // The plugin authorizes the request's canonicalized match_key once.
+    // Configured topics must also carry it so event routing restricts delivery
+    // to that authorized value. Required request validation alone is not enough.
     if let Some(schema) = &settings.notification_schema {
         for stream_name in &ecpds_streams {
             let Some(event_schema) = schema.get(*stream_name) else {
@@ -626,6 +618,16 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
                     )
                 }
                 Some(_) => {}
+            }
+            if event_schema
+                .topic
+                .as_ref()
+                .is_some_and(|topic| !topic.key_order.contains(&ecpds_config.match_key))
+            {
+                bail!(
+                    "Schema '{stream_name}' topic.key_order must include ecpds.match_key '{}' to restrict delivery to the authorized value",
+                    ecpds_config.match_key
+                );
             }
         }
     }
@@ -2448,25 +2450,26 @@ mod tests {
         }
 
         #[test]
-        fn accepts_match_key_outside_topic_key_order() {
-            // Explicit regression: streams whose `topic.key_order`
-            // filters on a different field (or whose schema has no
-            // `topic` block at all) must still validate when the
-            // request body's identifier carries `match_key`. The
-            // plugin reads from canonicalized identifier params at
-            // runtime, not from topic routing.
+        fn rejects_match_key_outside_topic_key_order() {
             let cfg = good_ecpds_config();
             let mut schema = ecpds_protected_schema("destination", true);
             if let Some(event) = schema.get_mut("diss")
                 && let Some(topic) = event.topic.as_mut()
             {
                 topic.key_order = vec!["unrelated_field".to_string()];
+                event.identifier.insert(
+                    "unrelated_field".to_string(),
+                    IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
+                        max_length: None,
+                        required: true,
+                    }),
+                );
             }
             let mut settings = basic_settings_with_schema(schema);
             settings.ecpds = Some(cfg);
-            validate_ecpds_settings(&settings).expect(
-                "match_key absent from topic.key_order must NOT block startup; \
-                 the plugin reads it from the request body, not the topic",
+            assert_eq!(
+                validate_ecpds_settings(&settings).unwrap_err().to_string(),
+                "Schema 'diss' topic.key_order must include ecpds.match_key 'destination' to restrict delivery to the authorized value"
             );
         }
 
