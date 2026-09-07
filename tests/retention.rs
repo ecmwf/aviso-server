@@ -63,6 +63,20 @@ async fn schema_retention_expires_messages_from_replay() {
     let name = backend.ensure_stream_for_topic(&topic).await.unwrap();
     let mut stream = backend.jetstream.get_stream(&name).await.unwrap();
     assert_eq!(stream.cached_info().config.max_age, Duration::from_secs(2));
+    // Observe the actual API: an unchanged ensure must not publish UPDATE.
+    let mut updates = backend
+        .client
+        .subscribe(format!("$JS.API.STREAM.UPDATE.{name}"))
+        .await
+        .unwrap();
+    backend.client.flush().await.unwrap();
+    backend.ensure_stream_for_topic(&topic).await.unwrap();
+    assert!(
+        tokio::time::timeout(Duration::from_millis(200), updates.next())
+            .await
+            .is_err()
+    );
+    updates.unsubscribe().await.unwrap();
     backend
         .jetstream
         .publish(topic.clone(), "{}".into())

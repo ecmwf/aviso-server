@@ -351,11 +351,13 @@ fn merged_reconciled_config(
         merged.subjects = desired.subjects.clone();
         changed_fields.push("subjects");
     }
-    if merged.max_messages != desired.max_messages {
+    // NATS expands omitted limits to -1 and omitted replicas to one.
+    let unlimited = |value| if value == 0 { -1 } else { value };
+    if unlimited(merged.max_messages) != unlimited(desired.max_messages) {
         merged.max_messages = desired.max_messages;
         changed_fields.push("max_messages");
     }
-    if merged.max_bytes != desired.max_bytes {
+    if unlimited(merged.max_bytes) != unlimited(desired.max_bytes) {
         merged.max_bytes = desired.max_bytes;
         changed_fields.push("max_bytes");
     }
@@ -368,15 +370,17 @@ fn merged_reconciled_config(
         merged.duplicate_window = merged.max_age;
         changed_fields.push("duplicate_window");
     }
-    if merged.max_messages_per_subject != desired.max_messages_per_subject {
+    if unlimited(merged.max_messages_per_subject) != unlimited(desired.max_messages_per_subject) {
         merged.max_messages_per_subject = desired.max_messages_per_subject;
         changed_fields.push("max_messages_per_subject");
     }
-    if merged.num_replicas != desired.num_replicas {
+    if merged.num_replicas.max(1) != desired.num_replicas.max(1) {
         merged.num_replicas = desired.num_replicas;
         changed_fields.push("num_replicas");
     }
-    if merged.compression != desired.compression {
+    if merged.compression.as_ref().unwrap_or(&Compression::None)
+        != desired.compression.as_ref().unwrap_or(&Compression::None)
+    {
         merged.compression = desired.compression.clone();
         changed_fields.push("compression");
     }
@@ -746,6 +750,21 @@ mod tests {
         assert_eq!(merged.max_messages, current.max_messages);
         assert_eq!(merged.max_bytes, current.max_bytes);
         assert_eq!(merged.max_age, current.max_age);
+    }
+
+    #[test]
+    fn server_defaults_are_equivalent_in_both_directions() {
+        let omitted = StreamConfig::default();
+        let explicit = StreamConfig {
+            max_messages: -1,
+            max_bytes: -1,
+            max_messages_per_subject: -1,
+            num_replicas: 1,
+            compression: Some(Compression::None),
+            ..Default::default()
+        };
+        assert!(merged_reconciled_config(&explicit, &omitted).1.is_empty());
+        assert!(merged_reconciled_config(&omitted, &explicit).1.is_empty());
     }
 
     #[test]
