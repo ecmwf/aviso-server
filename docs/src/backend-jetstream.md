@@ -155,6 +155,10 @@ are updated if drift is detected:
 - replicas
 - subject binding
 
+Aviso leaves settings alone when they already have the intended effect, even
+if NATS reports a default differently. Equivalent defaults do not trigger an
+update.
+
 If JetStream rejects an update (e.g. the field is not editable in the current
 server/stream state), the operation fails. Aviso does not report success while
 using stale retention settings. If another replica creates the stream during

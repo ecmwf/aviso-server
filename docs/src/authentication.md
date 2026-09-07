@@ -231,12 +231,12 @@ notification_schema:
 The plugin requires (and startup validation enforces):
 
 - `match_key` (default `"destination"`) is present in the schema's `identifier`
-  and marked `required: true` there. It must not use `PointCloudHandler`, because
-  watch/replay subscribers provide a polygon and Aviso replaces `point_cloud`
-  with wildcard routing before plugin authorization. When a topic is configured,
-  `match_key` must also appear in `topic.key_order` so delivery is filtered by
-  the authorized value. Request authorization alone does not filter stored
-  notifications. Schemas without a topic retain generic routing behavior.
+  and marked `required: true` there. Use an ordinary destination identifier,
+  not a geometry: `PolygonHandler`, `PointCloudHandler`, and the field name
+  `polygon` are not allowed as match keys. Spatial filters find matching areas;
+  they do not enforce access to an exact destination value. When the schema
+  defines a topic, include the match key in `topic.key_order` so notifications
+  are filtered by the authorized destination.
 - `auth.required` is `true`. The plugin runs after standard stream auth, so plugins on a stream where `auth.required` is `false` would never execute.
 
 ### How it works at runtime
