@@ -14,6 +14,47 @@ use std::collections::HashMap;
 use crate::configuration::{EventSchema, Settings};
 use crate::notification::topic_codec::{decode_subject, decode_subject_base};
 
+/// A logical routing base cannot require escaping or introduce NATS wildcards.
+#[derive(Debug, thiserror::Error)]
+#[error("topic base must match [A-Za-z0-9][A-Za-z0-9_-]*")]
+pub struct InvalidTopicBase;
+
+/// Validate a logical base, not an encoded subject or identifier value.
+/// For example, `weather_v2` is valid, but `weather.v2` and `_weather` are not.
+pub fn validate_topic_base(base: &str) -> std::result::Result<(), InvalidTopicBase> {
+    if base
+        .as_bytes()
+        .first()
+        .is_some_and(u8::is_ascii_alphanumeric)
+        && base
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+    {
+        Ok(())
+    } else {
+        Err(InvalidTopicBase)
+    }
+}
+
+/// JetStream names and subject bindings derived from a validated logical base.
+pub struct TopicBinding {
+    /// Existing ASCII stream names remain uppercase.
+    pub stream_name: String,
+    /// Subject case remains the configured case.
+    pub subject_pattern: String,
+}
+
+impl TopicBinding {
+    /// Bind a logical base without changing its subject spelling.
+    pub fn new(base: &str) -> std::result::Result<Self, InvalidTopicBase> {
+        validate_topic_base(base)?;
+        Ok(Self {
+            stream_name: base.to_ascii_uppercase(),
+            subject_pattern: format!("{base}.>"),
+        })
+    }
+}
+
 /// Parse a topic subject back into request parameters using schema key order.
 pub fn topic_to_request(topic: &str, event_type: &str) -> Result<HashMap<String, String>> {
     let schema = Settings::get_global_notification_schema();
@@ -74,7 +115,7 @@ pub fn derive_event_type_from_topic(topic: &str) -> Result<String> {
 pub fn derive_stream_name_from_topic(topic: &str) -> Result<String> {
     let event_type = derive_event_type_from_topic(topic)
         .context("Failed to derive event type for stream name")?;
-    Ok(event_type.to_uppercase())
+    Ok(TopicBinding::new(&event_type)?.stream_name)
 }
 
 #[cfg(test)]
@@ -108,5 +149,21 @@ mod tests {
         );
         assert_eq!(derive_stream_name_from_topic("test").unwrap(), "TEST");
         assert!(derive_stream_name_from_topic("").is_err());
+        assert!(derive_stream_name_from_topic("diss%2Ev2.FOO").is_err());
+        assert!(derive_stream_name_from_topic("diss%252Ev2.FOO").is_err());
+    }
+
+    #[test]
+    fn logical_base_contract() {
+        for base in ["weather", "Weather_v2", "weather-v2", "9", "UPPER"] {
+            let binding = TopicBinding::new(base).unwrap();
+            assert_eq!(binding.stream_name, base.to_ascii_uppercase());
+            assert_eq!(binding.subject_pattern, format!("{base}.>"));
+        }
+        for base in [
+            "", ".", "%", "*", ">", "a b", "a\t", "a\n", "\u{e9}", "_a", "-a", "a.b", "a%2Eb",
+        ] {
+            assert!(TopicBinding::new(base).is_err(), "{base:?}");
+        }
     }
 }

@@ -10,7 +10,7 @@ use crate::configuration::{
     EventSchema, EventStoragePolicy, JetStreamDiscardPolicy, JetStreamRetentionPolicy,
     JetStreamStorageType, Settings, parse_retention_time_spec, parse_size_spec,
 };
-use crate::notification::topic_parser::derive_event_type_from_topic;
+use crate::notification::topic_parser::{TopicBinding, derive_event_type_from_topic};
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
 use crate::notification_backend::jetstream::config::JetStreamConfig;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
@@ -70,10 +70,10 @@ async fn ensure_stream_for_topic_with_schema(
     let base =
         derive_event_type_from_topic(topic).context("Failed to extract event type from topic")?;
 
-    // Create stream name by uppercasing the base
-    let stream_name = base.to_uppercase();
-    // Create subject pattern to match all topics with this base
-    let subject_pattern = format!("{}.>", base);
+    let TopicBinding {
+        stream_name,
+        subject_pattern,
+    } = TopicBinding::new(&base)?;
 
     debug!(
         topic = %topic,

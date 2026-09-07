@@ -36,6 +36,10 @@ topic:
 | `base`      | Root prefix for the subject. Must be unique across all schemas (case-insensitive). |
 | `key_order` | Ordered list of identifier field names appended to the base, separated by `.`.     |
 
+Bases must match `[A-Za-z0-9][A-Za-z0-9_-]*`. Startup rejects invalid bases,
+including event names used as bases without a topic block. See the
+[base contract](./topic-encoding.md#topic-bases) for details.
+
 Given `base: "weather"` and `key_order: ["region", "date"]`, a request with
 `region=north` and `date=20250706` produces the subject:
 

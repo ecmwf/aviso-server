@@ -24,6 +24,29 @@ wire subject.
 
 ## Encoding Rules
 
+### Topic Bases
+
+Configured `topic.base` values must match `[A-Za-z0-9][A-Za-z0-9_-]*`.
+The first character is an ASCII letter or digit. Remaining characters may also
+be underscores or hyphens. Empty bases, dots, percent signs, wildcards, spaces
+and Unicode are rejected at startup. Bases must be unique across schemas,
+ignoring ASCII case. Without a topic block, the event name is the base and must
+meet the same rules. Invalid generic request event names receive a validation
+4xx response before storage or streaming starts.
+
+JetStream uses the ASCII-uppercase base as its stream name and `<base>.>` as
+its subject binding, preserving the base's case in subjects. For example,
+`Weather_v2` binds `Weather_v2.>` to `WEATHER_V2`. Publish, replay, watch and
+admin operations target the same uppercase name. Admin cleanup also accepts
+legacy backend stream names, such as `_WEATHER` or `WEATHER%2EV1`, without
+applying the logical-base restriction. Existing streams are not renamed. This
+contract does not add support for bare subjects without an identifier token.
+
+### Identifier Values
+
+The base restriction does not apply to identifier values. Decimal values such
+as `1.45` and strings such as `a.b` or `a%2Eb` retain the encoding below.
+
 Only four characters are reserved and must be encoded:
 
 | Character | Encoded form | Reason                                               |

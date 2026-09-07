@@ -73,6 +73,10 @@ impl<'a> NotificationProcessor<'a> {
     ) -> Result<ProcessingResult> {
         let schema = self.registry.get_schema(event_type);
         let has_schema = schema.is_some();
+        let base = schema
+            .and_then(|schema| schema.topic.as_ref())
+            .map_or(event_type, |topic| topic.base.as_str());
+        crate::notification::topic_parser::validate_topic_base(base)?;
 
         // Schema-driven when available. Strict mode rejects everything else.
         // Non-strict mode preserves the legacy generic fallback for backward compat.

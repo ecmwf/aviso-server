@@ -385,14 +385,19 @@ pub fn validate_schema_storage_policy_support(settings: &Settings) -> Result<()>
 
     let mut topic_owner_by_base: HashMap<String, String> = HashMap::new();
     for (event_type, schema) in schema_map {
-        let Some(topic) = schema.topic.as_ref() else {
-            continue;
-        };
-        let base_key = topic.base.to_ascii_lowercase();
+        let base = schema
+            .topic
+            .as_ref()
+            .map_or(event_type.as_str(), |topic| topic.base.as_str());
+        let binding =
+            crate::notification::topic_parser::TopicBinding::new(base).map_err(|error| {
+                anyhow::anyhow!("Schema '{event_type}' has invalid topic base: {error}")
+            })?;
+        let base_key = binding.stream_name;
         if let Some(previous_owner) = topic_owner_by_base.get(&base_key) {
             bail!(
                 "Schemas '{previous_owner}' and '{event_type}' both define topic base '{}'",
-                topic.base
+                base
             );
         }
         topic_owner_by_base.insert(base_key, event_type.clone());
