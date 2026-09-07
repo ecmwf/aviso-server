@@ -58,20 +58,48 @@ live-only watches, or a `replay-control` event with
 If a stream drops (network blip, client restart, `connection-closing` with
 reason `max_duration_reached`, etc.), the recommended reconnect protocol is:
 
-1. Remember the `sequence` field of the last `live-notification` or `replay`
-   event you successfully processed. The sequence is in the CloudEvent payload
-   of every notification.
-2. Issue a fresh `POST /api/v1/watch` (or `/api/v1/replay`) with `from_id` set
-   to that sequence value plus 1.
+1. Read the top-level CloudEvent `id` from each notification's SSE `data:`
+   body. It has the form `<event_type>@<sequence>`, such as
+   `extreme_event@123`. The numeric suffix is the sequence; normal
+   notifications do not have a separate `sequence` field. Control events,
+   including `connection_established`, are not notification checkpoints.
+2. Save progress only after successfully processing the notification. If
+   processing concurrently, do not advance the checkpoint past unfinished
+   notifications.
+3. Issue a fresh `POST /api/v1/watch` (or `/api/v1/replay`) with the same
+   event type and filters. Set `from_id` to the saved sequence plus 1,
+   encoded as a decimal JSON string, and omit `from_date`. The client
+   computes this increment; the server treats `from_id` as inclusive.
 
-That gives you exact at-least-once continuation without losing or duplicating
-notifications.
+For example, after processing and saving a checkpoint for
+`extreme_event@123`, send a new `POST /api/v1/watch` request like this,
+keeping the same identifier filters as the original request:
 
-Aviso does **not** use the SSE `id:` field or the `Last-Event-ID` request
-header. Both are part of the browser EventSource auto-reconnect mechanism; aviso
-supports a richer `from_id` + `from_date` reconnect contract via the POST
-request body, and we deliberately keep one explicit reconnect mechanism rather
-than expose two overlapping ones.
+```json
+{
+  "event_type": "extreme_event",
+  "identifier": {},
+  "from_id": "124"
+}
+```
+
+Here, `identifier: {}` represents a request without identifier filters.
+Replace it with your original filters; schemas with required filters do not
+accept an empty identifier object.
+
+This avoids requesting the checkpoint notification again, but does not
+guarantee duplicate-free processing. A crash after applying an effect but
+before saving progress can cause that notification to be processed again.
+On a watch, notifications published during replay can also appear in both
+the replay and live portions of the stream. Use idempotent handlers or
+deduplicate notifications within the same backend history.
+
+Recovery depends on the requested history still being available. Retention
+or deletion can remove notifications, and in-memory history is node-local
+and disappears on restart. A saved cursor is not portable across unrelated
+or reset backend histories. Live delivery alone does not guarantee that
+every notification is processed; reconnecting cannot recover history that
+is no longer stored.
 
 If you need time-based catch-up rather than sequence-based, use `from_date`
 instead of `from_id` (see
@@ -140,8 +168,13 @@ flowchart TD
 
 ## Start Point for Historical Events
 
-`from_id` starts delivery from that sequence number (inclusive). `from_date`
-accepts any of these formats:
+`from_id` is an unsigned 64-bit sequence number encoded as a JSON string.
+Delivery starts at that number (inclusive), subject to the request filters
+and available history. Send `"from_id": "124"`, not `"from_id": 124` or
+`"from_id": "extreme_event@124"`. The value `"0"` starts from the beginning
+of available matching history.
+
+`from_date` accepts any of these formats:
 
 | Format                              | Example                     |
 | ----------------------------------- | --------------------------- |
