@@ -125,6 +125,13 @@ impl JetStreamConfig {
         {
             bail!("notification_backend.jetstream.retention_time must be > 0");
         }
+        if let Some(retention_time) = self.retention_time
+            && i64::try_from(retention_time.as_nanos()).is_err()
+        {
+            bail!(
+                "notification_backend.jetstream.retention_time exceeds signed 64-bit nanoseconds"
+            );
+        }
         if self.publish_retry_attempts == 0 {
             bail!("notification_backend.jetstream.publish_retry_attempts must be > 0");
         }
@@ -187,6 +194,15 @@ mod tests {
     fn validate_accepts_valid_configuration() {
         let cfg = base_config();
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_retention_nanosecond_boundary() {
+        let mut cfg = base_config();
+        cfg.retention_time = Some(std::time::Duration::from_nanos(i64::MAX.unsigned_abs()));
+        assert!(cfg.validate().is_ok());
+        cfg.retention_time = Some(std::time::Duration::from_nanos(i64::MAX.unsigned_abs() + 1));
+        assert!(cfg.validate().is_err());
     }
 
     #[test]
