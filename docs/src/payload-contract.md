@@ -23,14 +23,17 @@ There is no `payload.type` list.
 
 1. Payload values are JSON values:
 `object`, `array`, `string`, `number`, `boolean`, `null`.
-2. If `payload.required = true` and request omits `payload`, request is rejected (`400`).
-3. If `payload.required = false` and request omits `payload`, Aviso stores canonical JSON `null`.
-4. Aviso does not wrap or reshape payload values (for example no auto-wrapping into `{"data": ...}`).
+2. If `payload.required = true` and request omits `payload`, request is
+   rejected (`400`).
+3. If `payload.required = false` and request omits `payload`, Aviso stores
+   canonical JSON `null`.
+4. Aviso does not wrap or reshape payload values (for example no auto-wrapping
+   into `{"data": ...}`).
 
 ## Input to Storage to Replay Mapping
 
 | Notify request payload | Stored payload | Replay/Watch CloudEvent `data.payload` |
-|---|---|---|
+| --- | --- | --- |
 | omitted (optional schema) | `null` | `null` |
 | `"forecast complete"` | `"forecast complete"` | `"forecast complete"` |
 | `42` | `42` | `42` |
@@ -51,4 +54,5 @@ There is no `payload.type` list.
 
 - Treat `data.payload` as dynamic JSON.
 - If your client requires object-only payloads, normalize on the client side.
-  - Example strategy: for non-object payloads, convert to `{"data": <payload>}` in your consumer.
+  - Example strategy: for non-object payloads, convert to `{"data": <payload>}`
+    in your consumer.

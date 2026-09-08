@@ -80,9 +80,32 @@ The full documentation is hosted at <https://sites.ecmwf.int/docs/aviso-server/m
 To build locally:
 
 ```bash
-cargo install mdbook
+cargo install mdbook mdbook-mermaid
 mdbook serve docs --open
 ```
+
+Install the documentation linter with Node.js and npm:
+
+```bash
+npm install --global markdownlint-cli
+```
+
+Before submitting documentation changes, run these checks from the repository
+root:
+
+```bash
+(cd docs && markdownlint 'src/**/*.md')
+mdbook build docs
+mdbook test docs
+git diff --check
+```
+
+The linter uses `docs/.markdownlint.jsonc` and `docs/.markdownlintignore`.
+Only mdBook's `SUMMARY.md` is excluded; draft chapters are checked too.
+Hard-wrap prose, list items, and blockquotes at 80 columns. Keep code blocks,
+table rows, headings, block HTML, and indivisible long tokens intact. Review
+wrapping manually as well: Markdownlint permits some long lines containing links.
+Fix Markdown rather than adding inline or per-file rule suppressions.
 
 Start with [Getting Started](./docs/src/getting-started.md), [Configuration Reference](./docs/src/configuration-reference.md), and the [Practical Examples](./docs/src/practical-examples/overview.md).
 

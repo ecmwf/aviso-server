@@ -2,7 +2,10 @@
 
 Uses the shared generic schema from [Practical Examples](./overview.md).
 
-Constraint filtering lets subscribers express conditions over identifier fields instead of exact values: ranges (`severity >= 5`), numeric bands, or enum subsets. This page covers seed data, valid constraint requests, and common failure cases.
+Constraint filtering lets subscribers express conditions over identifier fields
+instead of exact values: ranges (`severity >= 5`), numeric bands, or enum
+subsets. This page covers seed data, valid constraint requests, and common
+failure cases.
 
 ## Seed Notifications
 
@@ -92,7 +95,8 @@ Expected:
 
 ## Float `eq` Is Exact (No Tolerance)
 
-Float `eq` and `in` are exact comparisons. This keeps behavior deterministic across replay/live
+Float `eq` and `in` are exact comparisons. This keeps behavior deterministic
+across replay/live
 and avoids hidden tolerance windows.
 
 ```bash
@@ -161,7 +165,8 @@ Expected:
 
 ## Invalid: Constraint Object on `/notification`
 
-All five identifier keys are present so the request fails specifically on the constraint object, not on a missing key.
+All five identifier keys are present so the request fails specifically on the
+constraint object, not on a missing key.
 
 ```bash
 curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \

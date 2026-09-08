@@ -21,7 +21,8 @@ Historical delivery uses the same request-wide
 `watch_endpoint.max_historical_notifications` cap as JetStream, after request
 filtering and successful rendering. A schema's `max_historical_notifications`
 can override the global cap. This is separate from retention and batch size.
-See [Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
+See
+[Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
 for truncation controls and watch behavior.
 
 Watch creates its broadcast receiver and captures the last allocated sequence

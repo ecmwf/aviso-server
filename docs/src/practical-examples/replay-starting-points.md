@@ -3,8 +3,10 @@
 Uses the shared generic schema from [Practical Examples](./overview.md).
 
 Replay start parameters control where historical delivery begins.
-Choose `from_id` when you track sequence progress; choose `from_date` when you track wall-clock time.
-These examples cover valid forms and the common invalid combinations that return `400`.
+Choose `from_id` when you track sequence progress; choose `from_date` when you
+track wall-clock time.
+These examples cover valid forms and the common invalid combinations that return
+`400`.
 Use this page to validate client retry and resume logic.
 
 ## Replay from Sequence (`from_id`)

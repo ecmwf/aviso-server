@@ -64,7 +64,8 @@ uses the final successful consumer's bound. Replay-only reads the stream's last
 sequence during setup without creating a live consumer. Neither operation
 freezes retention or deletion.
 
-See [Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
+See
+[Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
 for truncation controls and watch behavior.
 
 ---
@@ -79,7 +80,7 @@ All fields live under `notification_backend.jetstream`.
 <div class="setting-index">
 
 | Setting | Default |
-|---|---|
+| --- | --- |
 | [`nats_url`](#notification-backend-jetstream-nats-url) | `nats://localhost:4222` |
 | [`token`](#notification-backend-jetstream-token) | `None` |
 | [`timeout_seconds`](#notification-backend-jetstream-timeout-seconds) | `30` |
@@ -88,7 +89,8 @@ All fields live under `notification_backend.jetstream`.
 </div>
 <details class="setting-panel" id="notification-backend-jetstream-nats-url">
 <summary><code>nats_url</code>
-<span class="setting-meta"><strong>Default:</strong> <code>nats://localhost:4222</code></span>
+<span class="setting-meta"><strong>Default:</strong>
+<code>nats://localhost:4222</code></span>
 </summary>
 
 NATS server URL.
@@ -102,7 +104,8 @@ NATS server URL.
 Token auth; falls back to `NATS_TOKEN` environment variable.
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-timeout-seconds">
+<details class="setting-panel"
+id="notification-backend-jetstream-timeout-seconds">
 <summary><code>timeout_seconds</code>
 <span class="setting-meta"><strong>Default:</strong> <code>30</code></span>
 </summary>
@@ -110,7 +113,8 @@ Token auth; falls back to `NATS_TOKEN` environment variable.
 Per-attempt connection timeout (`> 0`).
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-retry-attempts">
+<details class="setting-panel"
+id="notification-backend-jetstream-retry-attempts">
 <summary><code>retry_attempts</code>
 <span class="setting-meta"><strong>Default:</strong> <code>3</code></span>
 </summary>
@@ -126,12 +130,13 @@ Startup connection attempts before backend init fails (`> 0`).
 <div class="setting-index">
 
 | Setting | Default |
-|---|---|
+| --- | --- |
 | [`max_reconnect_attempts`](#notification-backend-jetstream-max-reconnect-attempts) | unlimited |
 | [`reconnect_delay_ms`](#notification-backend-jetstream-reconnect-delay-ms) | `2000` |
 
 </div>
-<details class="setting-panel" id="notification-backend-jetstream-max-reconnect-attempts">
+<details class="setting-panel"
+id="notification-backend-jetstream-max-reconnect-attempts">
 <summary><code>max_reconnect_attempts</code>
 <span class="setting-meta"><strong>Default:</strong> unlimited</span>
 </summary>
@@ -144,7 +149,8 @@ Subscription creation uses a bounded retry loop: unset means five attempts,
 `0` means one attempt, and a positive value sets the attempt limit.
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-reconnect-delay-ms">
+<details class="setting-panel"
+id="notification-backend-jetstream-reconnect-delay-ms">
 <summary><code>reconnect_delay_ms</code>
 <span class="setting-meta"><strong>Default:</strong> <code>2000</code></span>
 </summary>
@@ -160,12 +166,13 @@ Delay between reconnect attempts and startup connect retries (`> 0`).
 <div class="setting-index">
 
 | Setting | Default |
-|---|---|
+| --- | --- |
 | [`publish_retry_attempts`](#notification-backend-jetstream-publish-retry-attempts) | `5` |
 | [`publish_retry_base_delay_ms`](#notification-backend-jetstream-publish-retry-base-delay-ms) | `150` |
 
 </div>
-<details class="setting-panel" id="notification-backend-jetstream-publish-retry-attempts">
+<details class="setting-panel"
+id="notification-backend-jetstream-publish-retry-attempts">
 <summary><code>publish_retry_attempts</code>
 <span class="setting-meta"><strong>Default:</strong> <code>5</code></span>
 </summary>
@@ -173,7 +180,8 @@ Delay between reconnect attempts and startup connect retries (`> 0`).
 Retries for transient `channel closed` publish failures (`> 0`).
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-publish-retry-base-delay-ms">
+<details class="setting-panel"
+id="notification-backend-jetstream-publish-retry-base-delay-ms">
 <summary><code>publish_retry_base_delay_ms</code>
 <span class="setting-meta"><strong>Default:</strong> <code>150</code></span>
 </summary>
@@ -192,7 +200,7 @@ These apply to every stream created by Aviso unless overridden by a per-schema
 <div class="setting-index">
 
 | Setting | Default |
-|---|---|
+| --- | --- |
 | [`max_messages`](#notification-backend-jetstream-max-messages) | `None` |
 | [`max_bytes`](#notification-backend-jetstream-max-bytes) | `None` |
 | [`retention_time`](#notification-backend-jetstream-retention-time) | `None` |
@@ -218,7 +226,8 @@ Stream message cap (maps to `max_messages`).
 Stream size cap in bytes (maps to `max_bytes`).
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-retention-time">
+<details class="setting-panel"
+id="notification-backend-jetstream-retention-time">
 <summary><code>retention_time</code>
 <span class="setting-meta"><strong>Default:</strong> <code>None</code></span>
 </summary>
@@ -248,7 +257,8 @@ Use the stream's current type or arrange a separate migration.
 Stream replica count.
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-retention-policy">
+<details class="setting-panel"
+id="notification-backend-jetstream-retention-policy">
 <summary><code>retention_policy</code>
 <span class="setting-meta"><strong>Default:</strong> <code>limits</code></span>
 </summary>
@@ -256,7 +266,8 @@ Stream replica count.
 `limits` or `interest`. `workqueue` is rejected at startup.
 
 </details>
-<details class="setting-panel" id="notification-backend-jetstream-discard-policy">
+<details class="setting-panel"
+id="notification-backend-jetstream-discard-policy">
 <summary><code>discard_policy</code>
 <span class="setting-meta"><strong>Default:</strong> <code>old</code></span>
 </summary>

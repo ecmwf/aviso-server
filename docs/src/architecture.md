@@ -1,6 +1,8 @@
 # Architecture
 
-Aviso Server is built around three operations (**Notify**, **Watch**, and **Replay**) that share a common validation and schema layer but diverge at the backend interaction.
+Aviso Server is built around three operations (**Notify**, **Watch**, and
+**Replay**) that share a common validation and schema layer but diverge at the
+backend interaction.
 
 ---
 
@@ -84,17 +86,23 @@ sequenceDiagram
 
 Key steps:
 
-1. **Parse**: raw JSON bytes are deserialized; unknown fields are rejected (`UNKNOWN_FIELD`).
-2. **Validate**: each identifier field is checked against its `ValidationRules` (type, range, enum values).
-3. **Canonicalize**: values are normalized (for example dates to `YYYYMMDD`, enums to lowercase).
-4. **Build topic**: fields are ordered per `key_order`, reserved chars are percent-encoded.
-5. **Store**: the message is written to the backend with the encoded topic as the subject.
+1. **Parse**: raw JSON bytes are deserialized; unknown fields are rejected
+   (`UNKNOWN_FIELD`).
+2. **Validate**: each identifier field is checked against its `ValidationRules`
+   (type, range, enum values).
+3. **Canonicalize**: values are normalized (for example dates to `YYYYMMDD`,
+   enums to lowercase).
+4. **Build topic**: fields are ordered per `key_order`, reserved chars are
+   percent-encoded.
+5. **Store**: the message is written to the backend with the encoded topic as
+   the subject.
 
 ---
 
 ## Watch Request Flow
 
-`POST /api/v1/watch` opens a persistent SSE stream. It optionally starts with a historical
+`POST /api/v1/watch` opens a persistent SSE stream. It optionally starts with a
+historical
 replay phase before transitioning to live delivery.
 
 ```mermaid
@@ -138,7 +146,8 @@ sequenceDiagram
 
 ## Replay Request Flow
 
-`POST /api/v1/replay` is like watch but historical-only; the stream closes when history ends.
+`POST /api/v1/replay` is like watch but historical-only; the stream closes when
+history ends.
 
 ```mermaid
 sequenceDiagram
@@ -168,7 +177,8 @@ sequenceDiagram
 
 ## SSE Streaming Pipeline
 
-The streaming layer (`src/sse/`) is built around typed values rather than raw strings,
+The streaming layer (`src/sse/`) is built around typed values rather than raw
+strings,
 which keeps the lifecycle explicit and the endpoint logic thin.
 
 **Cursor types** describe how a start point is represented internally:
@@ -177,15 +187,19 @@ which keeps the lifecycle explicit and the endpoint logic thin.
 - `StartAt::Sequence(u64)`: start from a specific backend sequence number.
 - `StartAt::Date(DateTime<Utc>)`: start from a UTC timestamp.
 
-**Frame types** are what the stream produces before rendering to SSE wire format:
+**Frame types** are what the stream produces before rendering to SSE wire
+format:
 
-- Control frames: `connection_established`, `replay_started`, `replay_completed`, `notification_replay_limit_reached`.
+- Control frames: `connection_established`, `replay_started`,
+  `replay_completed`, `notification_replay_limit_reached`.
 - Notification frames: a decoded CloudEvent ready for delivery.
 - Heartbeat frames: periodic keep-alive.
 - Error frames: non-fatal stream errors.
-- Close frame: carries one of `end_of_stream`, `max_duration_reached`, `server_shutdown`.
+- Close frame: carries one of `end_of_stream`, `max_duration_reached`,
+  `server_shutdown`.
 
-Lifecycle (shutdown token, max duration, natural end) is applied once in a shared wrapper,
+Lifecycle (shutdown token, max duration, natural end) is applied once in a
+shared wrapper,
 so individual endpoint handlers don't need to reimplement it.
 
 ---
@@ -193,7 +207,7 @@ so individual endpoint handlers don't need to reimplement it.
 ## Component Map
 
 | Component | Path | Role |
-|---|---|---|
+| --- | --- | --- |
 | Routes | `src/routes/` | Thin HTTP handlers: parse request, delegate, return response |
 | Auth | `src/auth/` | Middleware, JWT validation, role matching, auth-o-tron client |
 | Handlers | `src/handlers/` | Shared parsing, validation, and processing logic |
@@ -208,7 +222,8 @@ so individual endpoint handlers don't need to reimplement it.
 
 ## Hybrid Filtering
 
-Watch subscriptions use a two-tier strategy to balance backend load with filter precision:
+Watch subscriptions use a two-tier strategy to balance backend load with filter
+precision:
 
 ```mermaid
 graph LR
@@ -222,19 +237,22 @@ graph LR
     F -->|rejected| H[dropped]
 ```
 
-- The **coarse pattern** is sent to the backend as the subscription subject filter.
+- The **coarse pattern** is sent to the backend as the subscription subject
+  filter.
   It uses NATS wildcards and covers a superset of the desired messages.
-- The **precise pattern** is applied in-process on decoded topics + constraint objects + spatial checks.
+- The **precise pattern** is applied in-process on decoded topics + constraint
+  objects + spatial checks.
   Only messages that pass both layers reach the client.
 
-This avoids creating one backend subscription per unique topic while still delivering exact results.
+This avoids creating one backend subscription per unique topic while still
+delivering exact results.
 
 ---
 
 ## JetStream Backend Internals
 
 | Module | Path | Responsibility |
-|---|---|---|
+| --- | --- | --- |
 | Config | `notification_backend/jetstream/config.rs` | Decode and validate JetStream settings |
 | Connection | `notification_backend/jetstream/connection.rs` | NATS connect with retry |
 | Streams | `notification_backend/jetstream/streams.rs` | Create and reconcile streams |

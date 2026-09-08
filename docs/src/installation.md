@@ -154,7 +154,8 @@ spin up a NATS server with JetStream enabled:
 
 This script:
 
-- Generates a private config under `${XDG_STATE_HOME:-$HOME/.local/state}/aviso/`
+- Generates a private config under
+  `${XDG_STATE_HOME:-$HOME/.local/state}/aviso/`
 - Uses a persistent Docker volume named `${CONTAINER_NAME}-data`
 - Starts a `nats:2.14.6-alpine` container on loopback port `4222`
 - Waits for the server to be ready and prints a connection summary
@@ -177,11 +178,13 @@ ENABLE_AUTH=true ./scripts/init_nats.sh
 ```
 
 The script stores the generated token in the private configuration file and
-never prints it. Supply `TOKEN` securely to choose your own token; it may contain
+never prints it. Supply `TOKEN` securely to choose your own token; it may
+contain
 letters, digits, underscores and hyphens.
 
 Use `NATS_IMAGE` to override the image. `CONFIG_DIR` accepts an absolute or
-relative path; `SKIP_DOCKER=1` generates configuration without starting a server.
+relative path; `SKIP_DOCKER=1` generates configuration without starting a
+server.
 Existing containers are never removed automatically. Choose a new
 `CONTAINER_NAME`, or stop and remove the old container explicitly to reuse its
 data volume. `NATS_VOLUME` selects an existing volume when needed.

@@ -25,7 +25,7 @@ flowchart TD
 ```
 
 | Requirement | Recommended backend |
-|---|---|
+| --- | --- |
 | Persistent history across restarts | `jetstream` |
 | Replay endpoint support | `jetstream` (or `in_memory` for local/node-local use) |
 | Live watch streaming support | `jetstream` (or `in_memory` for local/node-local use) |
@@ -37,7 +37,7 @@ flowchart TD
 ## Capability Comparison
 
 | Capability | JetStream | In-Memory |
-|---|---|---|
+| --- | --- | --- |
 | Durable storage | Yes | No (data lost on restart) |
 | Replay support | Yes | Yes (node-local only) |
 | Live watch support | Yes | Yes (node-local fan-out) |
@@ -49,6 +49,9 @@ flowchart TD
 
 ## Backend Details
 
-- [In-Memory Backend](./backend-in-memory.md): behavior, config, production caveats.
-- [JetStream Backend](./backend-jetstream.md): setup, stream management, operational notes.
-- [Backend Development](./backend-development.md): how to implement a new backend.
+- [In-Memory Backend](./backend-in-memory.md): behavior, config, production
+  caveats.
+- [JetStream Backend](./backend-jetstream.md): setup, stream management,
+  operational notes.
+- [Backend Development](./backend-development.md): how to implement a new
+  backend.

@@ -18,7 +18,8 @@ below.
 }
 ```
 
-Wire field order is alphabetical because `serde_json::Map` uses a `BTreeMap`. The examples below match what `curl` actually emits.
+Wire field order is alphabetical because `serde_json::Map` uses a `BTreeMap`.
+The examples below match what `curl` actually emits.
 
 Fields:
 
@@ -33,7 +34,8 @@ Fields:
 
 Notes:
 
-- `error_chain` is logged server-side for diagnostics, but is not returned in API responses.
+- `error_chain` is logged server-side for diagnostics, but is not returned in
+  API responses.
 - `message` is always present.
 - `details` is present on `4xx` and `5xx` errors emitted from the
   notification/watch/replay request path (parse, validation, processing, and
@@ -87,25 +89,35 @@ the full event-by-event payload table, including the SSE `event:` versus
 These `event_name` values are emitted in structured logs:
 
 | Event Name | Level | Trigger |
-|---|---|---|
+| --- | --- | --- |
 | `api.request.parse.failed` | `warn` | JSON parse/shape/unknown-field failure before domain validation. |
 | `api.request.validation.failed` | `warn` | Domain/request validation failure (`400`). |
 | `api.request.processing.failed` | `error` | Server-side processing/storage failure (`500`). |
 | `stream.sse.initialization.failed` | `error` | Replay/watch SSE initialization failure (`500`). |
 
-Every event carries `request_id`. The formatter additionally propagates `event_type` and `topic` from the surrounding request span when the handler has recorded them on the span before emitting the error log. Whether they appear depends on which step failed:
+Every event carries `request_id`. The formatter additionally propagates
+`event_type` and `topic` from the surrounding request span when the handler has
+recorded them on the span before emitting the error log. Whether they appear
+depends on which step failed:
 
-- `api.request.parse.failed` never carries `event_type` or `topic`. The request body is rejected before either is known.
-- `api.request.validation.failed` sometimes carries `event_type`. Validation steps that run after the handler has parsed the schema (notify-side `process_notification_request` failures) include it. Steps that run before, namely the watch/replay request validator and the notify-side endpoint-mismatch check, do not.
-- `api.request.processing.failed` carries `event_type`. Storage-write failures additionally carry `topic`.
+- `api.request.parse.failed` never carries `event_type` or `topic`. The request
+  body is rejected before either is known.
+- `api.request.validation.failed` sometimes carries `event_type`. Validation
+  steps that run after the handler has parsed the schema (notify-side
+  `process_notification_request` failures) include it. Steps that run before,
+  namely the watch/replay request validator and the notify-side
+  endpoint-mismatch check, do not.
+- `api.request.processing.failed` carries `event_type`. Storage-write failures
+  additionally carry `topic`.
 - `stream.sse.initialization.failed` carries both `event_type` and `topic`.
 
-In all cases, filter on `request_id` first; treat `event_type` and `topic` as auxiliary filters where present.
+In all cases, filter on `request_id` first; treat `event_type` and `topic` as
+auxiliary filters where present.
 
 ## Error Code Reference
 
 | Code | HTTP Status | Meaning |
-|---|---|---|
+| --- | --- | --- |
 | `INVALID_JSON` | `400` | Request body is not valid JSON. |
 | `UNKNOWN_FIELD` | `400` | Request contains fields outside API contract. |
 | `INVALID_REQUEST_SHAPE` | `400` | JSON structure cannot be deserialized into request model. |
@@ -135,7 +147,8 @@ Invalid replay request:
 ```
 
 Auth error (missing credentials on a protected stream).
-Auth errors use four fields (`code`, `error`, `message`, `request_id`); `details` is not included:
+Auth errors use four fields (`code`, `error`, `message`, `request_id`);
+`details` is not included:
 
 ```json
 {
@@ -167,7 +180,7 @@ framework defaults to (typically `text/plain` or empty) and not the JSON
 object documented above:
 
 | Status | Trigger |
-|---|---|
+| --- | --- |
 | `404 Not Found` | Request path does not match any registered aviso route. |
 | `405 Method Not Allowed` | Path matches an aviso route but the HTTP method does not. |
 | `400 Bad Request` (rare) | Request fails framework-level checks (malformed Content-Length, etc.) before reaching aviso's body parsers. |
