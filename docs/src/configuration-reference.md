@@ -902,6 +902,12 @@ Default stream max age (`s`, `m`, `h`, `d`, `w`; for example `30d`).
 
 `file` or `memory` (parsed as typed enum at config load).
 
+Omitting this setting requests `file`. Existing streams must use the requested
+type: a mismatch fails stream setup before any mutable settings change. The error
+names the stream and its current and requested types. Aviso does not delete or
+recreate streams, so messages remain intact. Use the current type or arrange a
+separate migration.
+
 </details>
 <details class="setting-panel" id="notification-backend-jetstream-replicas">
 <summary><code>replicas</code>

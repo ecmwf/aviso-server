@@ -282,6 +282,15 @@ async fn reconcile_existing_stream_config(
 ) -> Result<String> {
     let current_config = &stream.cached_info().config;
 
+    // Storage is immutable; reject before applying even unrelated mutable drift.
+    if current_config.storage != desired_config.storage {
+        bail!(
+            "Stream '{stream_name}' storage mismatch: current {:?}, requested {:?}; JetStream storage cannot be changed in place",
+            current_config.storage,
+            desired_config.storage
+        );
+    }
+
     let (update_config, changes) = merged_reconciled_config(current_config, desired_config);
     if changes.is_empty() {
         debug!(

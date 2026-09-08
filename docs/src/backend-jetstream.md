@@ -233,6 +233,12 @@ Default max age: duration literal (`s`, `m`, `h`, `d`, `w`; e.g. `30d`).
 
 `file` or `memory`, parsed as typed enum at config load.
 
+Omitting this setting requests `file`. Storage cannot change on an existing
+stream. If its storage differs, operations that ensure the stream fail with the
+stream name and current and requested types, before any mutable settings change.
+Aviso does not delete or recreate the stream; stored messages are left intact.
+Use the stream's current type or arrange a separate migration.
+
 </details>
 <details class="setting-panel" id="notification-backend-jetstream-replicas">
 <summary><code>replicas</code>
