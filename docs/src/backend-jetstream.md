@@ -356,29 +356,20 @@ preserved.
 
 ### Applying config changes to existing streams
 
-Changes to stream-affecting settings (e.g. `compression`, retention, limits) in
-`config.yaml` are applied to existing streams automatically during
-reconciliation when the stream is next accessed.
+Aviso uses the configuration loaded at startup. After editing `config.yaml`,
+restart Aviso or roll out the updated configuration to all replicas. Existing
+streams are then reconciled when accessed, for example by a publish or a new
+watch/replay request. Aviso does not sweep all streams at startup or in the
+background.
 
-To force historical data to be physically rewritten with new settings (e.g.
-re-pack with compression):
+Compression applies to future file-storage writes at the block level. Changing
+the setting does not automatically recompress existing history. Aviso provides
+no automatic history migration.
 
-1. Stop all Aviso writers for the target stream.
-2. Delete the stream in NATS.
-3. Restart Aviso (or publish again). The stream is recreated with current
-   config.
-
-```bash
-# List streams
-nats stream ls
-
-# Delete a stream (example: DISS)
-nats stream rm DISS
-```
-
-> `wipe_stream` (admin endpoint) removes messages but preserves stream
-> configuration. Use stream deletion only when you need historical data
-> physically rewritten.
+Deleting a stream loses its stored messages. Recreating it starts an empty
+stream; it does not rewrite or restore history. The `wipe_stream` admin endpoint
+also removes messages, but preserves the stream configuration. Neither is a
+compression migration.
 
 ---
 

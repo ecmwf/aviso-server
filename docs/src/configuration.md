@@ -8,7 +8,11 @@ These rules affect how everything behaves at runtime:
 - **Replay and watch behavior is controlled by request parameters**, not static config switches.
 - **Invalid policy values fail startup immediately.** `storage_type`, `retention_policy`, and `discard_policy` are parsed as typed enums; bad values are caught before any streams are created.
 - **Per-schema `storage_policy` is validated at startup** against the selected backend's capabilities. Unsupported fields (for example `retention_time` on `in_memory`) cause a startup failure with a clear error.
-- **JetStream stream changes are reconciled on access.** Updating `compression`, retention, or limits in config takes effect when that stream is next accessed. Recreate the stream only if you need historical data physically rewritten.
+- **JetStream stream changes require a restart or rollout.** Aviso uses the
+  configuration loaded at startup. After loading the updated config, it
+  reconciles existing streams when accessed, not through an all-stream sweep.
+  Compression affects future file-storage writes, not an automatic rewrite of
+  history. Deleting and recreating a stream loses its stored messages.
 - **`/api/v1/schema` responses are client-focused.** Internal `storage_policy` settings are not exposed.
 
 ---

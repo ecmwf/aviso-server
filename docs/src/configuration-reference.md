@@ -1130,14 +1130,19 @@ Startup behavior:
 
 Runtime application behavior:
 
+- Aviso uses the configuration loaded at startup. Config edits require a restart
+  or rollout to all replicas; editing the file alone does not change policy.
 - `storage_policy` is applied on stream create and reconciled for existing
-  JetStream streams when those streams are accessed by Aviso.
+  JetStream streams when those streams are accessed by Aviso. There is no
+  all-stream sweep at startup or in the background.
 - Aviso-managed stream subject binding is also reconciled to the expected
   `<base>.>` pattern.
 - Mutable fields (retention/limits/compression/duplicates/replicas) are updated
   when drift is detected.
-- Recreate stream(s) only when you need historical data physically rewritten
-  with new settings.
+- Compression applies to future file-storage writes at the block level. Changing
+  it does not automatically recompress existing history.
+- Deleting and recreating a stream loses its stored messages; it does not rewrite
+  history. Aviso provides no automatic history migration.
 
 Example:
 
