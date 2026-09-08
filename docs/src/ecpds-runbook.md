@@ -1,14 +1,31 @@
 # ECPDS Plugin Runbook
 
-This page is for the on-call engineer dealing with an ECPDS authorization issue at 3 AM. Read the [ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization) page first if you haven't already.
+Use this page to investigate ECPDS authorization problems on watch or replay
+requests. For setup, see
+[ECPDS Destination Authorization](./authentication.md#ecpds-destination-authorization).
 
 ## At a glance
 
-- The plugin is **read-only** (`watch`, `replay`). The `notify` endpoint is never gated by ECPDS.
-- The plugin **fails closed**: it will never accidentally allow a request. The status code distinguishes where the problem is. **`503 Service Unavailable`** means the ECPDS check could not reach a verdict (an upstream / partial-outage problem); investigate ECPDS and the network. **`500 Internal Server Error`** means the plugin itself hit a server-side bug or a misconfiguration on Aviso's side (missing `AuthSettings`, no checker registered, an unexpected plugin error); investigate Aviso. The full mapping is in the response codes table below.
-- The plugin **does not retry**. A `503` is the signal to investigate ECPDS; a `500` is the signal to investigate Aviso.
-- The cache lives in process memory. Restarting Aviso clears it. Replicas have independent caches.
-- The default `partial_outage_policy` is `strict`: every configured ECPDS server must respond successfully or the call fails with 503. A single ECPDS server going away takes the whole plugin down. This is intentional. The destination list itself is the **union** of every server's response under both policies; the choice is purely about how tolerant we are of per-server failures.
+- The plugin is **read-only** (`watch`, `replay`). The `notify` endpoint is
+  never gated by ECPDS.
+- The plugin **fails closed**: it will never accidentally allow a request. The
+  status code distinguishes where the problem is. **`503 Service Unavailable`**
+  means the ECPDS check could not reach a verdict (an upstream / partial-outage
+  problem); investigate ECPDS and the network. **`500 Internal Server Error`**
+  means the plugin itself hit a server-side bug or a misconfiguration on Aviso's
+  side (missing `AuthSettings`, no checker registered, an unexpected plugin
+  error); investigate Aviso. The full mapping is in the response codes table
+  below.
+- The plugin **does not retry**. A `503` is the signal to investigate ECPDS; a
+  `500` is the signal to investigate Aviso.
+- The cache lives in process memory. Restarting Aviso clears it. Replicas have
+  independent caches.
+- The default `partial_outage_policy` is `strict`: every configured ECPDS
+  server must respond successfully or the call fails with 503. A single ECPDS
+  server going away takes the whole plugin down. This is intentional. The
+  destination list itself is the **union** of every server's response under both
+  policies; the choice is purely about how tolerant we are of per-server
+  failures.
 
 ### Response codes the plugin emits
 
@@ -16,7 +33,7 @@ This page is for the on-call engineer dealing with an ECPDS authorization issue 
 <div class="setting-index">
 
 | HTTP | Where to look |
-|---|---|
+| --- | --- |
 | [`200`](#ecpds-response-200) | Allowed |
 | [`403`](#ecpds-response-403) | Authorization |
 | [`503`](#ecpds-response-503) | ECPDS or the network |
@@ -36,7 +53,8 @@ The destination is in the user's ECPDS allow-list.
 
 <details class="setting-panel" id="ecpds-response-403">
 <summary><code>403</code> Authorization denied
-<span class="setting-meta">Check the requested destination and match key.</span></summary>
+<span class="setting-meta">Check the requested destination and match
+key.</span></summary>
 
 The destination is not in the user's allow-list
 (`reason=DestinationNotInList`), or the request omitted the configured
@@ -48,7 +66,8 @@ The destination is not in the user's allow-list
 
 <details class="setting-panel" id="ecpds-response-503">
 <summary><code>503</code> ECPDS or network failure
-<span class="setting-meta">The destination lookup could not reach a verdict.</span></summary>
+<span class="setting-meta">The destination lookup could not reach a
+verdict.</span></summary>
 
 The combined ECPDS responses could not satisfy the active
 `partial_outage_policy`. Check ECPDS availability, network connectivity and
@@ -74,73 +93,151 @@ unexpected plugin error.
 
 ## Symptom and first checks
 
-> **What "a storm of X" means here.** Throughout this section, "503 storm" or "403 storm" means: the **rate** of that response is far above the normal baseline. The rule of thumb is, if your dashboard shows the rate climbing fast or staying high for more than a minute or two, treat it as a storm. The first metric and first log lines below are how you confirm it.
->
-> **Metrics count requests, not users.** Every counter in this section increments per request. A single client retrying in a tight loop can inflate any of them, so the metric alone cannot tell you whether you are looking at one bad client or hundreds of unhappy users. To answer that, grep the relevant warn or error event in your logs and count distinct values of the `username` field. Every `auth.ecpds.check.*` and `auth.ecpds.fetch.*` warn/error event carries `username` as a structured field for exactly this purpose.
->
-> **One useful tell.** Successful and `deny_destination` results are cached for the user; errors are not. So for `deny_destination`, retries by the same user keep adding to `aviso_ecpds_access_decisions_total{outcome="deny_destination"}` but stop adding to `aviso_ecpds_fetch_total` until the TTL expires. If `access_decisions_total` is climbing fast and `fetch_total` is flat, you are almost certainly seeing one or a few users retrying against a cached deny rather than a real population spike. For `unavailable` (503), errors are not cached, so retries do reach ECPDS and both counters move together.
->
-> **Field-name reading guide.** When this section says `reason=DestinationNotInList`, the actual log line will look like `... reason=DestinationNotInList "ECPDS access denied"`. Use the exact strings shown when grepping. Metric `outcome=...` labels use snake_case (`deny_destination`, `http_401`, etc.).
+Start with one affected request and find its plugin event in the logs. An HTTP
+403 or 503 alone does not show that ECPDS caused it. Use the same time window
+and Aviso replica when comparing logs with metrics. The `username` values show
+who was affected, not what caused the problem.
 
-### 503 storm on watch/replay
+### Watch or replay returns 503
 
-- **What you see:** sustained HTTP 503 responses on `/api/v1/watch` and `/api/v1/replay`. From a user's perspective: "I cannot start a watch; Aviso says ECPDS is inaccessible."
-- **Why it happens:** the ECPDS plugin tried to fetch destination lists from your ECPDS servers and could not reach a verdict, so it failed safely with 503 rather than guess.
-- **First metric:** `aviso_ecpds_fetch_total` rate, broken down by `outcome`.
-- **First log:** `event_name=auth.ecpds.fetch.failed` and `event_name=auth.ecpds.check.unavailable`.
-- **Confirm scope:** count distinct `username` values in `event_name=auth.ecpds.check.unavailable` log lines. Many distinct usernames means an ECPDS-side or network problem. One or two usernames means a single misbehaving client is moving the metric.
-- **Likely causes** (read off the dominant `outcome` label):
-  - `unreachable`: ECPDS server down, network partition, DNS, or wrong `servers` URLs in config.
-  - `http_401` or `http_403`: service-account credentials wrong or revoked.
-  - `http_4xx`: an unexpected client-side response, most often 404 (a misconfigured base URL pointing somewhere that isn't ECPDS) or 429 (the service-account is being rate-limited).
-  - `http_5xx`: ECPDS itself is broken.
-  - `invalid_response`: ECPDS response shape no longer matches what the parser expects (the contract has changed).
+`event_name=auth.ecpds.check.unavailable` confirms that the plugin could not
+get a usable destination list under the configured `partial_outage_policy`.
 
+1. Find `event_name=auth.ecpds.fetch.failed` for that user and time. Read
+   `server` and `error` to identify the failing ECPDS server and its error.
+2. Check that server from the Aviso host, using the configured service account
+   and the affected username as the lookup ID. For connection or timeout
+   errors, check the URL, DNS and connectivity. For HTTP 401 or 403, verify the
+   service account's credentials and access. For other HTTP errors, inspect
+   the status: check the URL for 404, throttling for 429, and upstream logs for
+   5xx. For an invalid response, inspect the returned body and its `success`
+   value rather than assuming the API changed.
+3. Check `partial_outage_policy`: `strict` needs every server to succeed;
+   `any_success` needs at least one. Use the per-server failure logs to see
+   which servers need attention.
 
-### 403 storm on watch/replay
+**Metrics:**
+`aviso_ecpds_access_decisions_total{outcome="unavailable"}` counts requests
+that the plugin rejected with 503. `aviso_ecpds_fetch_total`, grouped by
+`outcome`, counts fetch attempts across the configured servers, not individual
+server calls. Labels include `unreachable`, `http_401`, `http_403`, `http_4xx`,
+`http_5xx` and `invalid_response`. The request log uses `fetch_outcome` with
+values such as `Unreachable` or `Unauthorized`; the fetch failure log uses
+`error`, not `outcome` or `fetch_outcome`.
 
-- **What you see:** sustained HTTP 403 responses on `/api/v1/watch` and `/api/v1/replay`. From a user's perspective: "I used to be able to read this destination, now Aviso says I'm not allowed."
-- **Why it happens:** authentication is fine (otherwise it would be a 401), and Aviso did reach ECPDS (otherwise it would be a 503), but ECPDS replied that the user does not have the requested destination on their list.
-- **First metric:** `aviso_ecpds_access_decisions_total{outcome="deny_destination"}` rate.
-- **First log:** `event_name=auth.ecpds.check.denied` with `reason=DestinationNotInList`.
-- **Confirm scope:** count distinct `username` values in those log lines. If you see many distinct users, the cause is upstream of Aviso (ECPDS revoked destinations for several users, or a client batch suddenly started passing the wrong `destination`). If you see one or two, focus on those clients. Cross-check by hitting the ECPDS web UI directly with the same user.
+Failed lookups are not cached, but concurrent requests for the same user can
+share one fetch. The request and fetch counters need not rise together. Under
+`any_success`, a failure label on the fetch metric can also accompany a usable
+list, so it does not by itself mean a request returned 503.
 
-### 403 with `reason=MatchKeyMissing`
+### Watch or replay returns 403
 
-- **What you see:** any 403 on `/api/v1/watch` or `/api/v1/replay` whose log carries `reason=MatchKeyMissing`. Even one of these is suspicious; a stream of them means a misconfigured deployment is in production.
-- **Why it happens:** the request body did not include the configured match-key field (e.g. no `destination` value at all). The plugin can't check what isn't there, so it denies. Startup validation enforces that this field is `required: true` in the schema, so the only way to see this in practice is if the running config has drifted from what was validated.
-- **First metric:** `aviso_ecpds_access_decisions_total{outcome="deny_match_key_missing"}` rate.
-- **First log:** `event_name=auth.ecpds.check.denied` with `reason=MatchKeyMissing`.
-- **Likely cause:** the schema's `match_key` field is required, but a client is omitting it. Startup validation should have prevented this configuration in the first place. Investigate config drift.
+`event_name=auth.ecpds.check.denied` with `reason=DestinationNotInList` means
+the requested destination was absent from the list Aviso used for that user.
+That list may have come from cache, not a new ECPDS call. If the reason is
+`MatchKeyMissing`, use the next section instead.
 
-### Quiet, no allows
+1. Check the event's `username` and `event_type` against the intended user and
+   schema. Compare the request's destination with the configured `match_key`
+   and any schema rules that change its value before the check.
+2. Query the configured ECPDS servers using Aviso's service account and that
+   username as the lookup ID. Check that the destination record has
+   `active: true` and a string value in `target_field`. Debug events
+   `auth.ecpds.fetch.skipped_inactive` and `auth.ecpds.fetch.skipped_record`
+   identify servers whose records were excluded. With `any_success`, also
+   check `auth.ecpds.fetch.failed`: a failed server's destinations are absent.
+3. Read `cache_outcome` on the denial. `hit` means Aviso reused the user's
+   cached list. If ECPDS access was recently changed, retry after
+   `cache_ttl_seconds` expires. Check the same replica, since each has its own
+   cache.
 
-- **What you see:** ECPDS-protected reads are happening (you see `watch`/`replay` traffic in your access logs and they return 200), but the `aviso_ecpds_access_decisions_total{outcome="allow"}` counter stays flat at zero, and you never see `event_name=auth.ecpds.check.allowed` in logs.
-- **Why it happens:** the plugin is not running for those reads. Either the build doesn't include it, or the schema isn't wired up to use it.
-- **First metric:** `aviso_ecpds_access_decisions_total{outcome="allow"}` rate is zero.
-- **First log:** there isn't one. The plugin is not running.
-- **Likely causes:**
-  - The binary was built without `--features ecpds`. Startup would have errored if any schema referenced `["ecpds"]`, so this is unlikely on a real deployment.
-  - The schema does not actually have `plugins: ["ecpds"]`.
-  - `auth.required` is `false` on the schema, so the plugin is unreachable.
+**Metric:**
+`aviso_ecpds_access_decisions_total{outcome="deny_destination"}` counts denied
+requests, including repeated checks against a cached list. Those cache hits
+do not increase `aviso_ecpds_fetch_total`. This does not tell you how many
+users are affected; use the denial logs for that.
 
-### Cache thrashing or latency spike
+### Logs show MatchKeyMissing
 
-- **What you see:** average and p99 latency on `/api/v1/watch` and `/api/v1/replay` are climbing, and the cache miss counter is rising significantly faster than the cache hit counter. From a user's perspective: "My watches and replays feel slower than usual."
-- **Why it happens:** "cache thrashing" means the cache is barely helping. Most requests are missing the cache and Aviso ends up making a fresh ECPDS call on every request. That call adds latency to every request and load to ECPDS. Possible reasons: cache TTL is too short and entries expire before they're reused; cache is too small and entries get evicted before reuse; or there are genuinely so many distinct usernames that no cache size would fit them all.
-- **First metric:** ratio of `aviso_ecpds_cache_misses_total` to `aviso_ecpds_cache_hits_total`, plus `aviso_ecpds_cache_size`.
-- **First log:** rate of `event_name=auth.ecpds.cache.miss`.
-- **Likely cause:** high miss rate with a high number of distinct usernames means `cache_ttl_seconds` is too short, `max_entries` is too small, or there are genuinely many unique users.
+`event_name=auth.ecpds.check.denied` with `reason=MatchKeyMissing` means the
+configured `match_key` was absent from the processed request identifiers.
+The plugin returns 403 before consulting the cache or ECPDS.
+
+1. Use `event_type` to identify the schema. Compare `ecpds.match_key` with its
+   identifier field name and the actual request body.
+2. Check the deployed version and the configuration loaded at startup.
+   Startup validation requires the match key to exist in the schema with
+   `required: true`; normal request validation rejects an omitted required
+   field before the plugin runs. This event alone does not explain how the
+   key went missing.
+3. If those settings match, keep the request ID and a redacted request example
+   for an Aviso bug report. Investigate how request processing passed
+   identifiers without the key to the checker, rather than changing ECPDS
+   permissions.
+
+**Metric:**
+`aviso_ecpds_access_decisions_total{outcome="deny_match_key_missing"}` counts
+these denials. The denial event has `cache_outcome="none"`; this path does not
+increase the cache or fetch counters.
+
+### Requests succeed, but no ECPDS checks appear
+
+An absent `auth.ecpds.check.allowed` event does not prove the plugin is off.
+Admin requests bypass the destination check, and log filters can hide events.
+
+1. Confirm that you are looking at new watch or replay requests for the
+   intended `event_type`, not an already-open stream or `notify` traffic.
+   Check the logs and metrics for the replica handling those requests.
+2. Check `aviso_ecpds_access_decisions_total{outcome="admin_bypass"}`. An
+   increase explains why there are no allow events for admin requests. The
+   matching `auth.ecpds.admin.bypass` event is debug-level; the normal
+   `auth.ecpds.check.allowed` event is info-level. Check the logging filters.
+3. For a non-admin request, verify that the deployed schema's `auth` block
+   contains `plugins: ["ecpds"]` and `required: true`. Startup rejects an
+   ECPDS plugin reference if the binary lacks the `ecpds` feature or the
+   schema has `auth.required: false`; those are not silent bypass settings.
+
+**Metrics:** compare changes in `aviso_ecpds_access_decisions_total` by
+`outcome`, not just `allow`. If all `aviso_ecpds_*` series are missing, verify
+that metrics are enabled and the scrape reaches the right replica before
+checking whether the binary was built with `--features ecpds`.
+
+### Starting a watch or replay is slow
+
+`event_name=auth.ecpds.cache.miss` means a request could not use a cached list.
+It may have fetched from ECPDS or waited for another request's fetch. A miss
+alone does not prove ECPDS caused the delay.
+
+1. Check `aviso_http_request_duration_seconds` for `route="/api/v1/watch"` or
+   `route="/api/v1/replay"`. This measures time until response headers are
+   ready, not how long the stream stays open.
+2. For a slow request, inspect `cache_outcome` on its `auth.ecpds.check.*`
+   result event. `hit` means no upstream fetch was needed; `miss_fetched`
+   means this request fetched; `miss_coalesced` means it shared another
+   request's fetch. Check `auth.ecpds.fetch.failed` for timeout or connection
+   errors. Cache hit/miss and fetch success events require debug logging.
+3. Compare the rates of `aviso_ecpds_cache_misses_total` and
+   `aviso_ecpds_cache_hits_total` on that replica. Check recent restarts or
+   traffic moving between replicas before tuning the cache. Compare
+   `cache_ttl_seconds` with how often users reconnect, and
+   `aviso_ecpds_cache_size` with `max_entries`. The size gauge is an approximate
+   count of cached usernames, not proof of eviction.
+
+Use `aviso_ecpds_fetch_total` to check whether more misses also mean more
+fetches; shared fetches count once. If slow requests are cache hits, continue
+with the request's other logs rather than assuming the cache needs resizing.
 
 ## Tracing event reference
 
-Every event uses the codebase's standard structured shape (`service_name`, `service_version`, `event_name`, plus event-specific fields). The list below covers each event with a one-line meaning. Field-value details follow.
+Every event uses the codebase's standard structured shape (`service_name`,
+`service_version`, `event_name`, plus event-specific fields). The list below
+covers each event with a one-line meaning. Field-value details follow.
 
 <div class="settings-reference">
 <div class="setting-index">
 
 | Event | Level |
-|---|---|
+| --- | --- |
 | [`auth.ecpds.check.started`](#ecpds-tracing-check-started) | debug |
 | [`auth.ecpds.check.allowed`](#ecpds-tracing-check-allowed) | info |
 | [`auth.ecpds.check.denied`](#ecpds-tracing-check-denied) | warn |
@@ -267,54 +364,88 @@ grounds as `skipped_inactive`.
 
 ### Common fields
 
-Most events carry `event_type` (the schema name) and `username` (the JWT subject). Per-server events (`auth.ecpds.fetch.succeeded`, `.failed`, and `.skipped_record`) also carry `server_index` (zero-based) and `server` (the parsed URL).
+Most events carry `event_type` (the schema name) and `username` (the JWT
+subject). Per-server events (`auth.ecpds.fetch.succeeded`, `.failed`, and
+`.skipped_record`) also carry `server_index` (zero-based) and `server` (the
+parsed URL).
 
 ### Field value reference
 
-Some events carry a typed enum field. The values you will see in logs are listed below. They are spelled exactly as shown.
+Some events carry a typed enum field. The values you will see in logs are listed
+below. They are spelled exactly as shown.
 
 - `reason` (on `auth.ecpds.check.denied`):
-  - `DestinationNotInList`: the user is not entitled to the requested destination.
-  - `MatchKeyMissing`: the request body did not include the configured match-key field.
+  - `DestinationNotInList`: the user is not entitled to the requested
+    destination.
+  - `MatchKeyMissing`: the request body did not include the configured
+    match-key field.
 - `fetch_outcome` (on `auth.ecpds.check.unavailable`):
   - `Unauthorized`, `Forbidden`: an ECPDS server returned 401 or 403.
-  - `ClientError`: an ECPDS server returned a 4xx other than 401 or 403 (commonly 404 for a misconfigured base URL or 429 for throttling).
+  - `ClientError`: an ECPDS server returned a 4xx other than 401 or 403
+    (commonly 404 for a misconfigured base URL or 429 for throttling).
   - `ServerError`: an ECPDS server returned 5xx.
-  - `InvalidResponse`: an ECPDS server returned a body the parser could not read.
+  - `InvalidResponse`: an ECPDS server returned a body the parser could not
+    read.
   - `Unreachable`: network or timeout failure.
-- `cache_outcome` (on every `auth.ecpds.check.*` event: `.allowed`, `.denied`, `.unavailable`, `.error`):
+- `cache_outcome` (on every `auth.ecpds.check.*` event: `.allowed`, `.denied`,
+  `.unavailable`, `.error`):
   - `hit`: served from cache.
-  - `miss_coalesced`: the cache was empty for this key but a concurrent caller's fetch was in flight; this request waited on it.
-  - `miss_fetched`: this request ran the upstream fetch itself. The merged per-server result of that fetch is recorded as the `outcome` label on the `aviso_ecpds_fetch_total` metric, and on the `auth.ecpds.check.unavailable` event also as `fetch_outcome` (see above). It is intentionally NOT inlined into `cache_outcome` so log filters keyed on `cache_outcome:miss_fetched` stay stable as new `FetchOutcome` variants are added.
-  - `none`: cache lookup was deliberately skipped because the request fell at the `MatchKeyMissing` deny path before any cache call ran. Only appears on `auth.ecpds.check.denied` events alongside `reason=MatchKeyMissing`.
+  - `miss_coalesced`: the cache was empty for this key but a concurrent
+    caller's fetch was in flight; this request waited on it.
+  - `miss_fetched`: this request ran the upstream fetch itself. The merged
+    per-server result of that fetch is recorded as the `outcome` label on the
+    `aviso_ecpds_fetch_total` metric, and on the `auth.ecpds.check.unavailable`
+    event also as `fetch_outcome` (see above). It is intentionally NOT inlined
+    into `cache_outcome` so log filters keyed on `cache_outcome:miss_fetched`
+    stay stable as new `FetchOutcome` variants are added.
+  - `none`: cache lookup was deliberately skipped because the request fell at
+    the `MatchKeyMissing` deny path before any cache call ran. Only appears on
+    `auth.ecpds.check.denied` events alongside `reason=MatchKeyMissing`.
 
 ## How to confirm "config error vs. upstream outage"
 
-1. **Is the ECPDS plugin even compiled in?** Check `/metrics` for `aviso_ecpds_*` series. The unlabelled counters and gauge plus the pre-initialised label values on `aviso_ecpds_access_decisions_total` and `aviso_ecpds_fetch_total` register at process startup whenever the binary is built with `--features ecpds`, regardless of whether an `ecpds:` config block exists. If the series are absent, the binary does not have the feature, OR the metrics endpoint itself is disabled (`metrics.enabled: false` in your config). If the series exist but `aviso_ecpds_access_decisions_total{outcome="allow"}` plus `outcome="deny_*"` are all flat at zero under load, the plugin is compiled in but no stream actually opts in via `plugins: ["ecpds"]`.
-2. **Are the configured server URLs reachable from this Aviso host?** Run this from the same host as Aviso:
+1. **Is the ECPDS plugin even compiled in?** Check `/metrics` for
+   `aviso_ecpds_*` series. The unlabelled counters and gauge plus the
+   pre-initialised label values on `aviso_ecpds_access_decisions_total` and
+   `aviso_ecpds_fetch_total` register at process startup whenever the binary is
+   built with `--features ecpds`, regardless of whether an `ecpds:` config
+   block exists. If the series are absent, the binary does not have the feature,
+   OR the metrics endpoint itself is disabled (`metrics.enabled: false` in your
+   config). If the series exist but
+   `aviso_ecpds_access_decisions_total{outcome="allow"}` plus `outcome="deny_*"`
+   are all flat at zero under load, the plugin is compiled in but no stream
+   actually opts in via `plugins: ["ecpds"]`.
+2. **Are the configured server URLs reachable from this Aviso host?** Run this
+   from the same host as Aviso:
+
    ```bash
    curl -i -u "<service-username>:<service-password>" \
         "https://<your-ecpds-host>/ecpds/v1/destination/list?id=<some-test-username>"
    ```
-   - `200` with a JSON `destinationList`: ECPDS is up and credentials are valid. Problem is on the Aviso side.
-   - `401` or `403`: service-account credentials are wrong (rotated, revoked, typoed).
+
+   - `200` with a JSON `destinationList`: ECPDS is up and credentials are
+     valid. Problem is on the Aviso side.
+   - `401` or `403`: service-account credentials are wrong (rotated, revoked,
+     typoed).
    - `5xx` or hang: ECPDS itself is broken.
    - DNS error or connection refused: network-level issue.
-3. **Is one specific user being denied while others succeed?** Run the curl above with that user's id and compare with the destination they tried to read.
+3. **Is one specific user being denied while others succeed?** Run the curl
+   above with that user's id and compare with the destination they tried to
+   read.
 
-## Blast radius of `partial_outage_policy=strict`
+## When an ECPDS server is unavailable
 
-With `strict`, **one** ECPDS server going away takes the whole plugin to 503. Any reader on a stream with `plugins: ["ecpds"]` will see 503 until the missing server returns. The destination list itself would still be a union once both servers respond again; the policy only governs how strictly we treat per-server failures.
+With the default `partial_outage_policy: strict`, every configured ECPDS
+server must respond successfully when Aviso fetches a user's destination
+list. If one fails, requests needing a fresh list receive HTTP 503. Requests
+that can use a cached list can still be checked against that list.
 
-If you would rather keep serving requests during a partial outage at the cost of possibly missing entitlements that lived only on the unreachable server, switch to `partial_outage_policy: any_success`. Read the trade-off in the [Partial-outage policy](./authentication.md#partial-outage-policy) section before flipping.
+With `partial_outage_policy: any_success`, Aviso can use the lists from the
+servers that respond successfully. A destination known only to a failed
+server may be missing, so a user could be denied access they would normally
+have. If no server succeeds, the lookup still fails with HTTP 503.
 
-## What "the cache is process-local" implies
-
-- Restarting Aviso flushes everyone's destination cache. Expect a brief upstream-call spike right after a restart.
-- Multiple Aviso replicas keep independent caches. A user routed to a different replica will see a fresh fetch.
-- There is no admin endpoint to flush a single user's cache. The next request after `cache_ttl_seconds` will re-fetch automatically. For an immediate flush, restart the replica.
-
-## What this runbook deliberately does not tell you
-
-- ECPDS API specifics. There is no public ECPDS REST documentation as of this writing. What Aviso assumes about the response shape (e.g. `destinationList[].name`, `success: "yes"`) is captured as automated contract tests under `aviso-ecpds/tests/fixtures/` and `aviso-ecpds/tests/contract.rs`. If those tests start failing on a real ECPDS environment, the contract has changed and Aviso needs an update.
-- Kerberos, mTLS, or SSO to ECPDS. Aviso uses HTTP Basic Auth only. Switching to a different auth mechanism would need code changes.
+Both policies combine the destination lists returned by ECPDS. The choice
+is whether a lookup requires all servers or at least one. See
+[Partial outage policy](./authentication.md#partial-outage-policy) for more
+details.
