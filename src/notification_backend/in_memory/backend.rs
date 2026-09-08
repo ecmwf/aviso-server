@@ -13,14 +13,13 @@ use crate::notification_backend::in_memory::InMemoryStats;
 use crate::notification_backend::replay::{BatchParams, StartAt};
 use crate::notification_backend::{
     BackendCapabilities, DeleteMessageResult, IN_MEMORY_CAPABILITIES, NotificationBackend,
-    NotificationMessage, WipeStreamResult,
+    NotificationMessage, Subscription, WipeStreamResult,
 };
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::BatchResult;
 use anyhow::Result;
 use async_trait::async_trait;
 use chrono::Utc;
-use futures_util::Stream;
 use futures_util::stream::unfold;
 use std::{
     collections::{HashMap, VecDeque},
@@ -410,6 +409,7 @@ impl NotificationBackend for InMemoryBackend {
                 .topics
                 .values()
                 .flat_map(|topic_state| topic_state.messages.iter())
+                .filter(|message| message.sequence <= params.end_sequence)
                 .filter(|message| matches_watch_pattern(&message.topic, &app_filter_pattern))
                 .cloned()
                 .collect::<Vec<_>>()
@@ -441,12 +441,15 @@ impl NotificationBackend for InMemoryBackend {
         Ok(result)
     }
 
-    async fn subscribe_to_topic(
-        &self,
-        topic: &str,
-    ) -> anyhow::Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
-        let receiver = self.live_notifications_tx.subscribe();
+    async fn subscribe_to_topic(&self, topic: &str) -> Result<Subscription> {
         let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic)?;
+        let (receiver, history_end) = {
+            let state = self.state.lock().await;
+            (
+                self.live_notifications_tx.subscribe(),
+                state.next_sequence - 1,
+            )
+        };
 
         let stream = unfold(
             (receiver, app_filter_pattern),
@@ -473,7 +476,15 @@ impl NotificationBackend for InMemoryBackend {
             },
         );
 
-        Ok(Box::new(Box::pin(stream)))
+        Ok(Subscription {
+            stream: Box::new(Box::pin(stream)),
+            history_end,
+        })
+    }
+
+    async fn history_end(&self, topic: &str) -> Result<u64> {
+        analyze_watch_pattern(topic)?;
+        Ok(self.state.lock().await.next_sequence - 1)
     }
 }
 
@@ -508,6 +519,7 @@ mod tests {
             .get_messages_batch(BatchParams {
                 topic: "mars.a".to_string(),
                 start_at: StartAt::Sequence(2),
+                end_sequence: u64::MAX,
                 limit: 10,
             })
             .await
@@ -533,6 +545,7 @@ mod tests {
             .get_messages_batch(BatchParams {
                 topic: "mars.*.1".to_string(),
                 start_at: StartAt::LiveOnly,
+                end_sequence: u64::MAX,
                 limit: 10,
             })
             .await
@@ -560,6 +573,7 @@ mod tests {
             .get_messages_batch(BatchParams {
                 topic: "mars.time".to_string(),
                 start_at: StartAt::Date(boundary),
+                end_sequence: u64::MAX,
                 limit: 10,
             })
             .await
@@ -588,6 +602,7 @@ mod tests {
             .get_messages_batch(BatchParams {
                 topic: "polygon.20250706.1200".to_string(),
                 start_at: StartAt::Sequence(1),
+                end_sequence: u64::MAX,
                 limit: 10,
             })
             .await
@@ -604,7 +619,11 @@ mod tests {
             .await
             .unwrap();
 
-        let mut stream = backend.subscribe_to_topic("mars.live").await.unwrap();
+        let mut stream = backend
+            .subscribe_to_topic("mars.live")
+            .await
+            .unwrap()
+            .stream;
 
         let mut headers = HashMap::new();
         headers.insert("spatial_bbox".to_string(), "1,1,2,2".to_string());

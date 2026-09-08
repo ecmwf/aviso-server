@@ -61,7 +61,7 @@ pub(crate) async fn create_watch_sse_stream(
     let watch_config = Settings::get_global_watch_settings();
 
     // Subscribe to the topic for real-time notifications
-    let notification_stream = backend.subscribe_to_topic(&topic).await?;
+    let notification_stream = backend.subscribe_to_topic(&topic).await?.stream;
 
     let request_params_clone = request_params.clone();
     let request_constraints_clone = request_constraints.clone();

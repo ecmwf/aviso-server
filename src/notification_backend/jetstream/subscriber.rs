@@ -8,7 +8,7 @@
 
 use crate::notification::topic_parser::derive_stream_name_from_topic;
 use crate::notification::wildcard_matcher::analyze_watch_pattern;
-use crate::notification_backend::NotificationMessage;
+use crate::notification_backend::Subscription;
 use crate::notification_backend::jetstream::backend::JetStreamBackend;
 use crate::notification_backend::jetstream::subscriber_utils::{
     ConsumerConfig, apply_message_filter, create_jetstream_consumer, transform_jetstream_message,
@@ -16,7 +16,6 @@ use crate::notification_backend::jetstream::subscriber_utils::{
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use anyhow::{Context, Result};
 use futures::StreamExt;
-use futures_util::Stream;
 use std::time::Duration;
 use tracing::{debug, error, info, warn};
 
@@ -25,10 +24,7 @@ use tracing::{debug, error, info, warn};
 /// This implementation uses a two-tier filtering approach:
 /// JetStream backend filtering: Coarse filtering using JetStream's native subject patterns
 /// Application-level filtering: Fine-grained wildcard matching on received messages
-pub async fn subscribe_to_topic(
-    backend: &JetStreamBackend,
-    topic: &str,
-) -> Result<Box<dyn Stream<Item = NotificationMessage> + Send + Unpin>> {
+pub async fn subscribe_to_topic(backend: &JetStreamBackend, topic: &str) -> Result<Subscription> {
     info!(
         service_name = SERVICE_NAME,
         service_version = SERVICE_VERSION,
@@ -111,7 +107,7 @@ pub async fn subscribe_to_topic(
 async fn create_subscription_internal(
     backend: &JetStreamBackend,
     topic: &str,
-) -> Result<Box<dyn Stream<Item = NotificationMessage> + Send + Unpin>> {
+) -> Result<Subscription> {
     let (backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic)?;
 
     debug!(
@@ -135,6 +131,9 @@ async fn create_subscription_internal(
         create_jetstream_consumer(backend, &consumer_config, &stream_name, &backend_pattern)
             .await?;
 
+    // Read the initial create response, before polling or refreshing consumer info.
+    // DeliverNew initializes this cursor to the stream tail, even with a filter.
+    let history_end = consumer.cached_info().delivered.stream_sequence;
     let topic_for_closure = topic.to_string();
     let message_stream = consumer
         .messages()
@@ -185,5 +184,8 @@ async fn create_subscription_internal(
         "Successfully created subscription with hybrid filtering"
     );
 
-    Ok(Box::new(Box::pin(message_stream)))
+    Ok(Subscription {
+        stream: Box::new(Box::pin(message_stream)),
+        history_end,
+    })
 }

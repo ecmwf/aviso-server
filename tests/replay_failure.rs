@@ -60,12 +60,19 @@ impl NotificationBackend for FailedReplay {
     async fn subscribe_to_topic(
         &self,
         _: &str,
-    ) -> Result<Box<dyn futures_util::Stream<Item = NotificationMessage> + Unpin + Send>> {
+    ) -> Result<aviso_server::notification_backend::Subscription> {
         let polls = self.live_polls.clone();
-        Ok(Box::new(futures_util::stream::poll_fn(move |_| {
-            polls.fetch_add(1, Ordering::SeqCst);
-            panic!("failed catch-up must not poll live delivery");
-        })))
+        Ok(aviso_server::notification_backend::Subscription {
+            history_end: 1000,
+            stream: Box::new(futures_util::stream::poll_fn(move |_| {
+                polls.fetch_add(1, Ordering::SeqCst);
+                panic!("failed catch-up must not poll live delivery");
+            })),
+        })
+    }
+
+    async fn history_end(&self, _: &str) -> Result<u64> {
+        Ok(1000)
     }
 
     async fn put_messages(&self, _: &str, _: String) -> Result<()> {

@@ -274,7 +274,7 @@ async fn jetstream_base_targets_and_identifier_codec() {
             .unwrap();
         assert_eq!(replay.messages.len(), 1);
         assert_eq!(replay.messages[0].topic, topic);
-        let mut watch = backend.subscribe_to_topic(&topic).await.unwrap();
+        let mut watch = backend.subscribe_to_topic(&topic).await.unwrap().stream;
         backend.put_messages(&topic, "{}".into()).await.unwrap();
         let live = tokio::time::timeout(Duration::from_secs(10), watch.next())
             .await

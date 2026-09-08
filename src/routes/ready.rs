@@ -53,11 +53,8 @@ pub async fn ready(backend: web::Data<Arc<dyn NotificationBackend>>) -> HttpResp
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::notification_backend::{
-        BackendCapabilities, DeleteMessageResult, NotificationMessage, WipeStreamResult,
-    };
+    use crate::notification_backend::{BackendCapabilities, DeleteMessageResult, WipeStreamResult};
     use async_trait::async_trait;
-    use futures::Stream;
     use std::collections::HashMap;
 
     /// Backend stub with a scripted connection state. Only
@@ -123,7 +120,10 @@ mod tests {
         async fn subscribe_to_topic(
             &self,
             _topic: &str,
-        ) -> anyhow::Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
+        ) -> anyhow::Result<crate::notification_backend::Subscription> {
+            unreachable!("readiness must not touch the data path")
+        }
+        async fn history_end(&self, _: &str) -> anyhow::Result<u64> {
             unreachable!("readiness must not touch the data path")
         }
     }

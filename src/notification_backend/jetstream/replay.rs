@@ -67,7 +67,11 @@ pub async fn get_messages_batch(
     );
 
     // Check if stream has any messages
-    if stream_info.state.messages == 0 {
+    let end_sequence = params.end_sequence.min(stream_info.state.last_sequence);
+    if stream_info.state.messages == 0
+        || end_sequence == 0
+        || matches!(params.start_at, StartAt::Sequence(start) if start > end_sequence)
+    {
         debug!("No messages available in stream");
         return Ok(BatchResult::empty());
     }
@@ -84,13 +88,8 @@ pub async fn get_messages_batch(
         .await
         .context("Failed to fetch messages")?;
 
-    let batch_result = read_replay_batch(
-        messages,
-        &app_filter_pattern,
-        params.limit,
-        stream_info.state.last_sequence,
-    )
-    .await?;
+    let batch_result =
+        read_replay_batch(messages, &app_filter_pattern, params.limit, end_sequence).await?;
 
     info!(
         service_name = SERVICE_NAME,
@@ -113,21 +112,28 @@ async fn read_replay_batch(
     > + Unpin,
     app_filter_pattern: &[String],
     limit: usize,
-    stream_last_sequence: u64,
+    end_sequence: u64,
 ) -> Result<BatchResult> {
     // Process the fetched messages
     let mut filtered_messages = Vec::new();
     let mut last_processed_sequence = None;
+    let mut reached_end = false;
 
     // Process messages from the fetch result
     while let Some(msg_result) = messages.next().await {
         let msg = msg_result
             .map_err(anyhow::Error::from_boxed)
             .context("Failed to read JetStream replay batch")?;
-        // Track the sequence number
-        if let Ok(info) = msg.info() {
-            last_processed_sequence = Some(info.stream_sequence);
+        let sequence = msg
+            .info()
+            .map_err(anyhow::Error::from_boxed)
+            .context("Failed to read replay sequence")?
+            .stream_sequence;
+        if sequence > end_sequence {
+            reached_end = true;
+            break;
         }
+        last_processed_sequence = Some(sequence);
 
         match transform_jetstream_message(&msg) {
             Ok(notification) => {
@@ -147,32 +153,24 @@ async fn read_replay_batch(
             }
         }
 
-        // Break if we have enough messages
+        // The bound is inclusive, even when this message was filtered out.
+        if sequence == end_sequence {
+            reached_end = true;
+            break;
+        }
         if filtered_messages.len() >= limit {
             break;
         }
     }
 
     // Determine if more messages are available using deterministic logic
-    let has_more = if let Some(last_seq) = last_processed_sequence {
-        // If we processed fewer messages than requested AND we haven't reached the stream's last sequence,
-        // there might be more messages (could be filtered out by pattern matching)
-        if filtered_messages.len() < limit {
-            last_seq < stream_last_sequence
-        } else {
-            // We got a full batch, assume more might be available
-            true
-        }
-    } else {
-        // No messages were processed, no more available
-        false
-    };
+    let has_more = !reached_end && last_processed_sequence.is_some_and(|seq| seq < end_sequence);
 
     debug!(
         retrieved_count = filtered_messages.len(),
         requested_limit = limit,
         last_processed_sequence = ?last_processed_sequence,
-        stream_last_sequence,
+        end_sequence,
         has_more = has_more,
         "Batch processing completed"
     );

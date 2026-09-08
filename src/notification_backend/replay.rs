@@ -30,6 +30,8 @@ pub struct BatchParams {
     pub start_at: StartAt,
     /// Maximum number of messages to retrieve in this batch
     pub limit: usize,
+    /// Inclusive sequence bound, applied before filtering and pagination.
+    pub end_sequence: u64,
 }
 
 impl BatchParams {
@@ -38,11 +40,17 @@ impl BatchParams {
             topic,
             start_at: StartAt::LiveOnly,
             limit,
+            end_sequence: u64::MAX,
         }
     }
 
     pub fn with_sequence(mut self, sequence: u64) -> Self {
         self.start_at = StartAt::Sequence(sequence);
+        self
+    }
+
+    pub fn with_end_sequence(mut self, sequence: u64) -> Self {
+        self.end_sequence = sequence;
         self
     }
 

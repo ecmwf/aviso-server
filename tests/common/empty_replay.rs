@@ -9,7 +9,7 @@
 use anyhow::Result;
 use aviso_server::notification_backend::{
     BackendCapabilities, DeleteMessageResult, IN_MEMORY_CAPABILITIES, NotificationBackend,
-    NotificationMessage, WipeStreamResult, replay::BatchParams,
+    Subscription, WipeStreamResult, replay::BatchParams,
 };
 use aviso_server::types::BatchResult;
 use std::collections::HashMap;
@@ -60,10 +60,10 @@ impl NotificationBackend for EmptyReplay {
     async fn delete_message(&self, _: &str, _: u64) -> Result<DeleteMessageResult> {
         panic!("replay must not delete")
     }
-    async fn subscribe_to_topic(
-        &self,
-        _: &str,
-    ) -> Result<Box<dyn futures_util::Stream<Item = NotificationMessage> + Unpin + Send>> {
+    async fn subscribe_to_topic(&self, _: &str) -> Result<Subscription> {
         panic!("replay-only must not subscribe")
+    }
+    async fn history_end(&self, _: &str) -> Result<u64> {
+        Ok(1000)
     }
 }

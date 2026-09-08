@@ -46,6 +46,7 @@ pub(crate) fn create_historical_replay_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     start_at: StartAt,
+    history_end: u64,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     prepared_spatial_filter: Arc<Option<PreparedSpatialFilter>>,
@@ -56,8 +57,9 @@ pub(crate) fn create_historical_replay_stream(
     let watch_config = Settings::get_global_watch_settings();
 
     // Build the initial pagination params based on either sequence or date
-    let initial_params =
-        BatchParams::new(topic.clone(), watch_config.replay_batch_size).with_start_at(start_at);
+    let initial_params = BatchParams::new(topic.clone(), watch_config.replay_batch_size)
+        .with_start_at(start_at)
+        .with_end_sequence(history_end);
     let base_url = &Settings::get_global_application_settings().base_url;
     unfold(
         (
@@ -237,12 +239,14 @@ pub(crate) async fn create_historical_then_live_stream(
     let watch_config = Settings::get_global_watch_settings();
     let app_settings = Settings::get_global_application_settings();
     let prepared_spatial_filter = Arc::new(prepare_spatial_filter(&request_params));
+    let subscription = backend.subscribe_to_topic(&topic).await?;
 
     // Create historical replay stream
     let historical_stream = create_historical_replay_stream(
         topic.clone(),
         backend.clone(),
         start_at,
+        subscription.history_end,
         request_params.clone(),
         request_constraints.clone(),
         prepared_spatial_filter.clone(),
@@ -267,7 +271,7 @@ pub(crate) async fn create_historical_then_live_stream(
     });
 
     // Create live subscription stream with request filtering.
-    let notification_stream = backend.subscribe_to_topic(&topic).await?;
+    let notification_stream = subscription.stream;
     let request_params_clone = request_params.clone();
     let request_constraints_clone = request_constraints.clone();
     let filtered_stream = futures_util::StreamExt::filter_map(
@@ -359,12 +363,14 @@ pub(crate) async fn create_replay_only_stream(
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let prepared_spatial_filter = Arc::new(prepare_spatial_filter(&request_params));
+    let history_end = backend.history_end(&topic).await?;
 
     // Create historical replay stream
     let historical_stream = create_historical_replay_stream(
         topic.clone(),
         backend.clone(),
         start_at,
+        history_end,
         request_params.clone(),
         request_constraints.clone(),
         prepared_spatial_filter,
