@@ -84,8 +84,30 @@ emits `event: error` and closes without `replay_completed`, a limit control or
 live delivery. This is failed catch-up, not exhausted history. Individual
 CloudEvent rendering failures remain nonfatal and do not consume the quota.
 
-Live-only watches are not limited. Replay scans available history as pagination
-proceeds; it is not a snapshot taken when the request starts.
+Live-only watches are not limited.
+
+## Replay/Live Boundary
+
+A watch captures an inclusive history sequence bound `H` atomically with live
+subscription creation. Replay reads only sequences `<= H`, then emits
+`replay_completed` before delivering live sequences `> H`. Publications during
+catch-up belong to live delivery, not to later historical batches. No
+last-delivered watermark is used to discard queued live notifications.
+
+A replay-only request captures `H` during setup without creating a live
+subscription. Its sequence range stays fixed across every page, including quota
+lookahead. Messages above `H` cannot consume the replay quota or prove
+truncation. A deleted or filtered message at `H` does not prevent completion.
+
+This snapshots a sequence range, not immutable storage. Deletion, overwrite and
+retention can remove history before it is read. In-memory live queues can lag;
+JetStream retention can remove queued live messages before delivery. The
+boundary prevents replay/live overlap, but does not guarantee lossless delivery.
+
+Sequence and date start cursors constrain history only. A start beyond `H` (or
+a future date) can produce empty replay, after which a watch still delivers new
+notifications from its subscription creation point. Setup failures return an
+HTTP error, not a successful replay completion.
 
 ## Reconnecting after disconnect
 
@@ -98,8 +120,10 @@ reason `max_duration_reached`, etc.), the recommended reconnect protocol is:
 2. Issue a fresh `POST /api/v1/watch` (or `/api/v1/replay`) with `from_id` set
    to that sequence value plus 1.
 
-That gives you exact at-least-once continuation without losing or duplicating
-notifications.
+This requests continuation after the last processed sequence. It cannot recover
+notifications that storage no longer retains. Persist the cursor consistently
+with application processing, and make processing idempotent if a reconnect can
+repeat work whose completion was not recorded.
 
 Aviso does **not** use the SSE `id:` field or the `Last-Event-ID` request
 header. Both are part of the browser EventSource auto-reconnect mechanism; aviso
@@ -132,7 +156,7 @@ Close reasons emitted in the final `connection-closing` SSE event:
 
 | Reason                 | Trigger                                                                             |
 | ---------------------- | ----------------------------------------------------------------------------------- |
-| `end_of_stream`        | Replay finished (`/replay` endpoint, or watch replay phase if live subscribe fails) |
+| `end_of_stream`        | Replay finished, was truncated, or failed during batch retrieval                    |
 | `max_duration_reached` | `connection_max_duration_sec` elapsed on a watch stream                             |
 | `server_shutdown`      | Server is shutting down gracefully                                                  |
 

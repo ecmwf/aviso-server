@@ -56,6 +56,14 @@ request-wide `max_historical_notifications` delivery cap. The shared SSE layer
 applies that cap after request filtering and successful rendering, not inside
 each backend batch. A schema's `max_historical_notifications` can override the
 global cap independently of its storage policy.
+Watch captures its history bound from the initial `DeliverNew` consumer create
+response's `delivered.stream_sequence`, before any pulls or consumer-info
+refresh. The consumer and bound therefore share one creation point, including
+when the tail was deleted or the stream is empty at a nonzero sequence. A retry
+uses the final successful consumer's bound. Replay-only reads the stream's last
+sequence during setup without creating a live consumer. Neither operation
+freezes retention or deletion.
+
 See [Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
 for truncation controls and watch behavior.
 

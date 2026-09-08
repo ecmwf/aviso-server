@@ -24,6 +24,13 @@ can override the global cap. This is separate from retention and batch size.
 See [Historical Replay Limits](./streaming-semantics.md#historical-replay-limits)
 for truncation controls and watch behavior.
 
+Watch creates its broadcast receiver and captures the last allocated sequence
+under the same lock used to store and publish notifications. Replay reads only
+up to that inclusive bound; live delivery starts above it. Replay-only captures
+the bound under that lock without creating a receiver. Eviction or deletion can
+still remove history during replay, and a lagging live receiver can lose queued
+notifications. The bound fixes the sequence range, not the stored contents.
+
 ## Configuration
 
 `notification_backend.kind: in_memory`
@@ -34,7 +41,8 @@ Available knobs:
 - `max_topics` (default `10000`)
 - `enable_metrics` (default `false`)
 
-Per-schema `storage_policy` fields are currently not supported on `in_memory` and are rejected at startup.
+Per-schema `storage_policy` fields are currently not supported on `in_memory`
+and are rejected at startup.
 
 ## Production suitability
 
