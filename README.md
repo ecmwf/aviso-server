@@ -45,7 +45,7 @@ For regional use cases, Aviso also supports spatial filtering so clients can sub
 - Use spatial filters for polygon, point, and point-cloud use cases
 - Run with either in-memory storage (local/dev) or JetStream (durable environments)
 - Optional ECPDS destination authorization plugin (Cargo feature `ecpds`)
-- Operational endpoints: `/health` for liveness/readiness, `/metrics` for Prometheus scrapes
+- Operational endpoints: `/health` for liveness, `/ready` for backend-connection readiness, `/metrics` for Prometheus scrapes
 - Per-response `X-Request-ID` header (and the same UUID in error bodies and SSE first events) for log/trace correlation
 
 ## Quick Start
@@ -116,7 +116,7 @@ A few operator-facing details the deeper docs cover in detail:
 - **Runtime log filter override.** Set `RUST_LOG` (full [`EnvFilter` directive syntax](https://docs.rs/tracing-subscriber/latest/tracing_subscriber/filter/struct.EnvFilter.html#directives)) to bump a single module to debug without redeploy, for example `RUST_LOG=info,aviso_server::auth=debug`. When unset, `logging.level` from config plus a small set of muted framework targets is used. See [Configuration Reference](./docs/src/configuration-reference.md#logging).
 - **Config file override.** `AVISOSERVER_CONFIG_FILE=/path/to/file.yaml` loads only that file, skipping the standard search path. Environment variables prefixed with `AVISOSERVER_` (nested via `__`) still override individual values. See [Configuration](./docs/src/configuration.md#loading-precedence).
 - **Request correlation.** Every response carries `X-Request-ID`; every aviso error body and every SSE stream's first event repeats the same UUID. Quote it when reporting issues. See [API Errors > How to report a problem](./docs/src/api-errors.md#how-to-report-a-problem).
-- **Health and metrics.** `GET /health` returns `200 OK` for probes. `/metrics` runs on a separate port (configured under `metrics:`) and exposes Prometheus text-format metrics: per-route HTTP request counts and latency histograms, notifications, SSE connections/delivered events/connection durations, auth outcomes, build info, and (when built with `--features ecpds`) ECPDS cache and access decisions. See the [metrics table](./docs/src/configuration-reference.md#metrics) for the full inventory.
+- **Health and metrics.** `GET /health` returns `200 OK` for process liveness. `GET /ready` returns `200 OK` when the notification backend connection is healthy, or `503 Service Unavailable` otherwise. `/metrics` runs on a separate port (configured under `metrics:`) and exposes Prometheus text-format metrics: per-route HTTP request counts and latency histograms, notifications, SSE connections/delivered events/connection durations, auth outcomes, build info, and (when built with `--features ecpds`) ECPDS cache and access decisions. See the [metrics table](./docs/src/configuration-reference.md#metrics) for the full inventory.
 
 ## Authentication (Optional)
 
