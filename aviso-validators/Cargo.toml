@@ -1,6 +1,6 @@
 [package]
 name = "aviso-validators"
-version = "0.10.0"
+version = "0.11.0"
 edition = "2024"
 rust-version = "1.88"
 description = "Validation primitives used by aviso-server for identifier and payload checks."
