@@ -3,13 +3,20 @@
 Uses the shared generic schema from [Practical Examples](./overview.md).
 
 This page is the quickest way to understand the normal API flow.
-You first publish (`notify`), then observe live updates (`watch`), then read history (`replay`).
-If you are onboarding a new environment, start here before trying filters or admin operations.
+You first publish (`notify`), then observe live updates (`watch`), then read
+history (`replay`).
+If you are onboarding a new environment, start here before trying filters or
+admin operations.
 Read the examples in order.
 
 ## 1) Notify
 
-Notify requires every identifier key declared in the schema. The `required` flag has no effect on notify (every key must be present and every value must pass handler validation); it only affects watch and replay, where keys marked `required: false` may be omitted and are treated as wildcards. The shared schema declares five keys (`region`, `run_time`, `severity`, `anomaly`, `polygon`), so all five appear below.
+Notify requires every identifier key declared in the schema. The `required` flag
+has no effect on notify (every key must be present and every value must pass
+handler validation); it only affects watch and replay, where keys marked
+`required: false` may be omitted and are treated as wildcards. The shared schema
+declares five keys (`region`, `run_time`, `severity`, `anomaly`, `polygon`),
+so all five appear below.
 
 ```bash
 curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
@@ -27,7 +34,8 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
   }'
 ```
 
-Expected: HTTP `200`. Omitting any of the five identifier keys returns `400` with `code: INVALID_NOTIFICATION_REQUEST`.
+Expected: HTTP `200`. Omitting any of the five identifier keys returns `400`
+with `code: INVALID_NOTIFICATION_REQUEST`.
 
 ## 2) Watch (Live Only)
 

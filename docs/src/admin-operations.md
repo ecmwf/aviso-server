@@ -2,7 +2,10 @@
 
 Admin endpoints are destructive. Restrict access in production.
 
-When [authentication](./authentication.md) is enabled, all admin endpoints require a valid credential and one of the configured `admin_roles`. Add `-H "Authorization: Bearer <token>"` or `-u user:pass` (direct mode) to the curl examples below.
+When [authentication](./authentication.md) is enabled, all admin endpoints
+require a valid credential and one of the configured `admin_roles`. Add
+`-H "Authorization: Bearer <token>"` or `-u user:pass` (direct mode) to the curl
+examples below.
 
 ## Delete One Notification
 
@@ -11,7 +14,8 @@ When [authentication](./authentication.md) is enabled, all admin endpoints requi
 `notification_id` format:
 
 - `<stream>@<sequence>` (canonical)
-- `<event_type>@<sequence>` (alias; resolved through configured schema `topic.base`)
+- `<event_type>@<sequence>` (alias; resolved through configured schema
+  `topic.base`)
 
 ### How `notification_id` maps to your schema
 
@@ -85,7 +89,8 @@ The response body has the shape:
 }
 ```
 
-Failure responses (`404`, `400`) keep the same fields with `success: false` and a descriptive `message`.
+Failure responses (`404`, `400`) keep the same fields with `success: false` and
+a descriptive `message`.
 
 Invalid examples:
 
@@ -98,7 +103,8 @@ Invalid examples:
 - `DELETE /api/v1/admin/wipe/stream`
 - `DELETE /api/v1/admin/wipe/all`
 
-These endpoints remove many messages at once and should be used with extreme caution.
+These endpoints remove many messages at once and should be used with extreme
+caution.
 
 ## Wipe One Stream
 
@@ -136,7 +142,8 @@ failure (`500`).
 
 When to use:
 
-- You want to reset one event family (`mars`, `diss`, `polygon`) without affecting others.
+- You want to reset one event family (`mars`, `diss`, `polygon`) without
+  affecting others.
 
 ## Wipe All Streams
 
@@ -169,7 +176,8 @@ When to use:
 
 ## Wipe Response Shape
 
-Both wipe endpoints return the same field set: `success`, `message`, `request_id`. The `message` value differs:
+Both wipe endpoints return the same field set: `success`, `message`,
+`request_id`. The `message` value differs:
 
 `DELETE /api/v1/admin/wipe/stream`:
 
@@ -191,4 +199,5 @@ Both wipe endpoints return the same field set: `success`, `message`, `request_id
 }
 ```
 
-Failure responses keep the same fields with `success: false` and a descriptive `message`.
+Failure responses keep the same fields with `success: false` and a descriptive
+`message`.

@@ -97,7 +97,7 @@ Every field supports these common properties:
 <div class="setting-index">
 
 | Property | Type |
-|---|---|
+| --- | --- |
 | [`type`](#schema-identifier-type) | string |
 | [`required`](#schema-identifier-required) | bool |
 | [`description`](#schema-identifier-description) | string |
@@ -374,7 +374,8 @@ role-matching rules.
 <div class="settings-reference">
 <details class="setting-panel" id="schema-max-historical-notifications">
 <summary><code>max_historical_notifications</code>
-<span class="setting-meta"><strong>Default:</strong> inherited from watch_endpoint · <strong>Type:</strong> positive integer</span>
+<span class="setting-meta"><strong>Default:</strong> inherited from
+watch_endpoint · <strong>Type:</strong> positive integer</span>
 </summary>
 
 Optional cap on historical notifications delivered by one replay or replaying
@@ -419,7 +420,7 @@ storage_policy:
 <div class="setting-index">
 
 | Field | Type |
-|---|---|
+| --- | --- |
 | [`retention_time`](#schema-storage-policy-retention-time) | duration |
 | [`max_messages`](#schema-storage-policy-max-messages) | integer |
 | [`max_size`](#schema-storage-policy-max-size) | size |

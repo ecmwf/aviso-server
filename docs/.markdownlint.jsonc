@@ -1,0 +1,21 @@
+{
+  "default": true,
+
+  // Prose wraps at 80 columns; examples, table rows, and headings stay intact.
+  "MD013": {
+    "line_length": 80,
+    "code_blocks": false,
+    "tables": false,
+    "headings": false
+  },
+
+  // The book uses logo HTML and expandable settings panels with styled metadata.
+  "MD033": {
+    "allowed_elements": [
+      "div", "img", "br", "details", "summary", "code", "span", "strong"
+    ]
+  },
+
+  // The introduction opens with the themed logo before its top-level heading.
+  "MD041": false
+}

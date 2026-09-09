@@ -4,10 +4,13 @@ Uses the shared generic schema from [Practical Examples](./overview.md).
 
 Spatial filtering has two modes:
 
-- `identifier.polygon`: keep notifications whose polygon intersects the request polygon.
-- `identifier.point`: keep notifications whose polygon contains the request point.
+- `identifier.polygon`: keep notifications whose polygon intersects the request
+  polygon.
+- `identifier.point`: keep notifications whose polygon contains the request
+  point.
 
-This matters when many notifications share similar non-spatial identifiers and you need geographic precision.
+This matters when many notifications share similar non-spatial identifiers and
+you need geographic precision.
 
 ## Seed Notifications
 
@@ -118,7 +121,8 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
 Expected:
 
 - HTTP `200`
-- replay may include both `poly-a` and `poly-b` because only non-spatial fields are applied
+- replay may include both `poly-a` and `poly-b` because only non-spatial fields
+  are applied
 
 ## Invalid: `polygon` and `point` Together
 
