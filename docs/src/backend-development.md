@@ -13,6 +13,18 @@ Core requirements:
 - Implement `capabilities()` and return a stable `BackendCapabilities` map.
 - Keep startup/shutdown behavior explicit and logged.
 
+`subscribe_to_topic` returns `Subscription { stream, history_end }`. Capture the
+receiver and inclusive history bound at the same logical creation point as
+publishing. The returned live stream must start strictly above that bound.
+Never combine a subscription with a later, independently sampled stream tail.
+`history_end(topic)` captures the replay-only bound without a live subscription.
+
+`get_messages_batch` must enforce `BatchParams.end_sequence` before filtering,
+rendering or pagination. Preserve that bound when advancing the start cursor.
+Completion must not depend on finding a message exactly at the bound: it may be
+deleted, overwritten or excluded. The sequence range is finite, but storage
+contents can still change during replay.
+
 ## Storage Policy Compatibility
 
 Per-schema storage policy is validated at startup before backend initialization.
@@ -64,3 +76,8 @@ Meaning:
 - Validation tests should verify fail-fast messages for unsupported fields.
 - Integration tests should use test-local config/schema fixtures, not
   developer-local YAML files.
+
+Run `bash scripts/test_replay_boundary.sh` for the full test suite with live
+JetStream coverage on an isolated NATS 2.14.6 container. Add `--features ecpds`
+for that build. The script allocates a loopback port and removes its own server
+and disposable storage on exit; it does not use an existing NATS instance.

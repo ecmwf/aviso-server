@@ -456,6 +456,7 @@ mod enforce_known_event_type_tests {
             map.insert(
                 (*name).to_string(),
                 EventSchema {
+                    max_historical_notifications: None,
                     payload: None,
                     topic: None,
                     endpoint: None,

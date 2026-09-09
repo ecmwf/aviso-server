@@ -73,6 +73,10 @@ impl<'a> NotificationProcessor<'a> {
     ) -> Result<ProcessingResult> {
         let schema = self.registry.get_schema(event_type);
         let has_schema = schema.is_some();
+        let base = schema
+            .and_then(|schema| schema.topic.as_ref())
+            .map_or(event_type, |topic| topic.base.as_str());
+        crate::notification::topic_parser::validate_topic_base(base)?;
 
         // Schema-driven when available. Strict mode rejects everything else.
         // Non-strict mode preserves the legacy generic fallback for backward compat.
@@ -472,6 +476,7 @@ mod tests {
         );
 
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: true }),
             topic: Some(TopicConfig {
                 base: "test".to_string(),
@@ -503,6 +508,7 @@ mod tests {
         );
 
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: true }),
             topic: Some(TopicConfig {
                 base: "polygon".to_string(),
@@ -533,6 +539,7 @@ mod tests {
             ),
         ]);
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: false }),
             topic: Some(TopicConfig {
                 base: "cloud".to_string(),
@@ -556,6 +563,7 @@ mod tests {
         );
 
         EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig { required: false }),
             topic: Some(TopicConfig {
                 base: "extreme".to_string(),
@@ -1027,6 +1035,7 @@ mod tests {
         );
 
         let schema = EventSchema {
+            max_historical_notifications: None,
             payload: Some(PayloadConfig {
                 required: false, // Payload is optional
             }),

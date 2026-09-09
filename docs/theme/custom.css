@@ -18,3 +18,65 @@ pre.mermaid svg {
     display: inline-block;
     max-width: 100%;
 }
+
+/* Expandable reference entries; ordinary tables keep the book's styling. */
+.settings-reference .setting-panel {
+    margin-block: 1.5em;
+    padding: 1em clamp(0.75em, 3vw, 1.5em);
+    color: var(--fg);
+    background: var(--table-alternate-bg);
+    border: 1px solid var(--table-border-color);
+    border-left: 3px solid var(--links);
+    border-radius: 4px;
+    overflow-wrap: anywhere;
+}
+
+.settings-reference .setting-panel > summary {
+    cursor: pointer;
+}
+
+.settings-reference .setting-panel > summary:focus-visible {
+    outline: 2px solid var(--links);
+    outline-offset: 4px;
+}
+
+.settings-reference .setting-panel > summary > code {
+    font-weight: bold;
+}
+
+.settings-reference .setting-meta {
+    display: block;
+    margin-top: 0.5em;
+    line-height: 1.6;
+}
+
+.settings-reference .setting-panel[open] > summary {
+    padding-bottom: 0.75em;
+    border-bottom: 1px solid var(--table-border-color);
+}
+
+.settings-reference .setting-panel > :last-child {
+    margin-bottom: 0;
+}
+
+.settings-reference .setting-panel code,
+.settings-reference .setting-index code {
+    white-space: normal;
+    overflow-wrap: anywhere;
+}
+
+.settings-reference .setting-panel a:not(.header) {
+    color: var(--fg);
+    text-decoration: underline;
+}
+
+@media print {
+    .settings-reference .setting-panel::details-content {
+        content-visibility: visible;
+        display: block;
+    }
+
+    .settings-reference .setting-panel > :not(summary) {
+        display: block;
+    }
+}

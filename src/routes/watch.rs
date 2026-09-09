@@ -163,6 +163,7 @@ pub async fn watch(
                 filtering_constraints.clone(),
                 sse_guard,
                 request_id_str.clone(),
+                crate::configuration::Settings::replay_limit_for_event_type(&context.event_type),
             )
             .await,
         )

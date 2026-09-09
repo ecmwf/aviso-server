@@ -92,6 +92,15 @@ pub fn capabilities_for_backend_kind(kind: &str) -> Option<BackendCapabilities> 
     }
 }
 
+/// A live subscription and the inclusive history boundary captured atomically
+/// with its creation. The live stream contains only sequences above the boundary.
+pub struct Subscription {
+    /// Live messages allocated after subscription creation.
+    pub stream: Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>,
+    /// Last allocated sequence at creation, even if its message is not retained.
+    pub history_end: u64,
+}
+
 /// Trait defining the interface for notification backends
 ///
 /// This abstraction allows different storage backends (in-memory, JetStream etc.)
@@ -124,10 +133,11 @@ pub trait NotificationBackend: Send + Sync {
         &self,
         params: replay::BatchParams,
     ) -> Result<crate::types::BatchResult>;
-    async fn subscribe_to_topic(
-        &self,
-        topic: &str,
-    ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>>;
+    async fn subscribe_to_topic(&self, topic: &str) -> Result<Subscription>;
+
+    /// Capture a finite replay sequence range without creating a live consumer.
+    /// This does not freeze storage: retention and deletion still apply.
+    async fn history_end(&self, topic: &str) -> Result<u64>;
 
     async fn shutdown(&self) -> Result<()> {
         Ok(())

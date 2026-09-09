@@ -29,7 +29,22 @@ Schema endpoints (`GET /api/v1/schema`, `GET /api/v1/schema/{event_type}`) are a
 ./scripts/auth-o-tron-docker.sh start --detach
 ```
 
-By default this uses `scripts/example_auth_config.yaml`.
+By default this runs auth-o-tron `0.3.7` with
+`scripts/example_auth_config.yaml`, bound to `127.0.0.1:8080`.
+Use `AUTH_O_TRON_PORT` and `AUTH_O_TRON_CONTAINER_NAME` for an isolated instance.
+Set `AUTH_O_TRON_BIND_ADDRESS` explicitly to expose another interface.
+The launcher requires Python 3 to validate the bind IP and port before replacing
+an existing container. IPv6 addresses can be bare (`::1`) or bracketed (`[::1]`).
+Scoped IPv6 addresses such as `fe80::1%eth0` are not supported by Docker and are
+rejected before container replacement.
+To check the bundled users against a running local instance without printing
+tokens:
+
+```bash
+AVISO_TEST_AUTH_O_TRON_URL=http://127.0.0.1:8080 \
+cargo test --locked --test auth_o_tron_live
+```
+
 To use your own config:
 
 ```bash
@@ -216,11 +231,12 @@ notification_schema:
 The plugin requires (and startup validation enforces):
 
 - `match_key` (default `"destination"`) is present in the schema's `identifier`
-  and marked `required: true` there. It must not use `PointCloudHandler`, because
-  watch/replay subscribers provide a polygon and Aviso replaces `point_cloud`
-  with wildcard routing before plugin authorization. For other handlers, the
-  plugin reads the canonicalized identifier at runtime, so the field does not
-  have to appear in `topic.key_order`.
+  and marked `required: true` there. Use an ordinary destination identifier,
+  not a geometry: `PolygonHandler`, `PointCloudHandler`, and the field name
+  `polygon` are not allowed as match keys. Spatial filters find matching areas;
+  they do not enforce access to an exact destination value. When the schema
+  defines a topic, include the match key in `topic.key_order` so notifications
+  are filtered by the authorized destination.
 - `auth.required` is `true`. The plugin runs after standard stream auth, so plugins on a stream where `auth.required` is `false` would never execute.
 
 ### How it works at runtime
@@ -242,11 +258,50 @@ When more than one ECPDS server is configured, the user's effective destination 
 
 ### Error responses
 
-| Code | HTTP Status | When |
-|------|-------------|------|
-| `FORBIDDEN` | `403` | User does not have access to the requested destination, or the required identifier field is missing. Tracing event: `auth.ecpds.check.denied` (with `reason` ∈ {`DestinationNotInList`, `MatchKeyMissing`}). |
-| `SERVICE_UNAVAILABLE` | `503` | Upstream / network problem: the lookup failed under the active `partial_outage_policy`. Tracing event: `auth.ecpds.check.unavailable`. The cause is on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`, `http_401`, `http_4xx`, `http_5xx`, `invalid_response`). Investigate ECPDS, the network, and the service-account credentials. |
-| `INTERNAL_ERROR` | `500` | Aviso-side server error: missing `AuthSettings` in `app_data`, no checker registered, or an unexpected plugin error. Tracing event: `auth.ecpds.check.error` (with `error_kind` for the misconfiguration cases). Investigate Aviso, not ECPDS. |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Code | HTTP Status |
+|---|---|
+| [`FORBIDDEN`](#auth-ecpds-error-forbidden) | `403` |
+| [`SERVICE_UNAVAILABLE`](#auth-ecpds-error-service-unavailable) | `503` |
+| [`INTERNAL_ERROR`](#auth-ecpds-error-internal-error) | `500` |
+
+</div>
+<details class="setting-panel" id="auth-ecpds-error-forbidden">
+<summary><code>FORBIDDEN</code>
+<span class="setting-meta"><strong>HTTP Status:</strong> <code>403</code></span>
+</summary>
+
+User does not have access to the requested destination, or the required
+identifier field is missing. Tracing event: `auth.ecpds.check.denied` (with
+`reason` ∈ {`DestinationNotInList`, `MatchKeyMissing`}).
+
+</details>
+<details class="setting-panel" id="auth-ecpds-error-service-unavailable">
+<summary><code>SERVICE_UNAVAILABLE</code>
+<span class="setting-meta"><strong>HTTP Status:</strong> <code>503</code></span>
+</summary>
+
+Upstream / network problem: the lookup failed under the active
+`partial_outage_policy`. Tracing event: `auth.ecpds.check.unavailable`. The cause
+is on the `aviso_ecpds_fetch_total{outcome=…}` metric (e.g. `unreachable`,
+`http_401`, `http_4xx`, `http_5xx`, `invalid_response`). Investigate ECPDS, the
+network, and the service-account credentials.
+
+</details>
+<details class="setting-panel" id="auth-ecpds-error-internal-error">
+<summary><code>INTERNAL_ERROR</code>
+<span class="setting-meta"><strong>HTTP Status:</strong> <code>500</code></span>
+</summary>
+
+Aviso-side server error: missing `AuthSettings` in `app_data`, no checker
+registered, or an unexpected plugin error. Tracing event:
+`auth.ecpds.check.error` (with `error_kind` for the misconfiguration cases).
+Investigate Aviso, not ECPDS.
+
+</details>
+</div>
 
 ### Caching
 

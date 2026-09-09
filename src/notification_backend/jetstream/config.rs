@@ -39,8 +39,6 @@ pub struct JetStreamConfig {
     pub retention_policy: JetStreamRetentionPolicy,
     /// Discard policy when limits are reached
     pub discard_policy: JetStreamDiscardPolicy,
-    /// Enable automatic reconnection on failures
-    pub enable_auto_reconnect: bool,
     /// Maximum connection reconnect attempts before the client gives up
     /// permanently. `None` (unset) and `Some(0)` both mean unlimited:
     /// giving up leaves the backend dead until a process restart, which
@@ -85,9 +83,6 @@ impl JetStreamConfig {
             replicas: js_settings.and_then(|js| js.replicas),
             retention_policy: get_retention_policy(js_settings),
             discard_policy: get_discard_policy(js_settings),
-            enable_auto_reconnect: js_settings
-                .and_then(|js| js.enable_auto_reconnect)
-                .unwrap_or(true),
             max_reconnect_attempts: js_settings.and_then(|js| js.max_reconnect_attempts),
             reconnect_delay_ms: js_settings
                 .and_then(|js| js.reconnect_delay_ms)
@@ -103,6 +98,11 @@ impl JetStreamConfig {
 
     /// Validate JetStream settings that should fail fast at startup.
     pub fn validate(&self) -> Result<()> {
+        if matches!(self.retention_policy, JetStreamRetentionPolicy::Workqueue) {
+            bail!(
+                "notification_backend.jetstream.retention_policy 'workqueue' is not supported: workqueue retention does not support Aviso's independent watch/replay consumers; use 'limits' or 'interest'"
+            );
+        }
         if self.nats_url.trim().is_empty() {
             bail!("notification_backend.jetstream.nats_url must not be empty");
         }
@@ -124,6 +124,13 @@ impl JetStreamConfig {
             && retention_time.is_zero()
         {
             bail!("notification_backend.jetstream.retention_time must be > 0");
+        }
+        if let Some(retention_time) = self.retention_time
+            && i64::try_from(retention_time.as_nanos()).is_err()
+        {
+            bail!(
+                "notification_backend.jetstream.retention_time exceeds signed 64-bit nanoseconds"
+            );
         }
         if self.publish_retry_attempts == 0 {
             bail!("notification_backend.jetstream.publish_retry_attempts must be > 0");
@@ -175,7 +182,6 @@ mod tests {
             replicas: None,
             retention_policy: JetStreamRetentionPolicy::Limits,
             discard_policy: JetStreamDiscardPolicy::Old,
-            enable_auto_reconnect: true,
             max_reconnect_attempts: Some(5),
             reconnect_delay_ms: 2000,
             publish_retry_attempts: 5,
@@ -187,6 +193,49 @@ mod tests {
     fn validate_accepts_valid_configuration() {
         let cfg = base_config();
         assert!(cfg.validate().is_ok());
+    }
+
+    #[test]
+    fn validate_rejects_workqueue_retention() {
+        let mut cfg = base_config();
+        cfg.retention_policy = JetStreamRetentionPolicy::Workqueue;
+        let error = cfg.validate().unwrap_err().to_string();
+        assert!(error.contains("notification_backend.jetstream.retention_policy 'workqueue'"));
+        assert!(error.contains("independent watch/replay consumers"));
+    }
+
+    #[test]
+    fn validate_accepts_limits_and_interest_retention() {
+        for policy in [
+            JetStreamRetentionPolicy::Limits,
+            JetStreamRetentionPolicy::Interest,
+        ] {
+            let mut cfg = base_config();
+            cfg.retention_policy = policy;
+            cfg.validate().unwrap();
+        }
+    }
+
+    #[tokio::test]
+    async fn backend_constructor_rejects_workqueue_before_connecting() {
+        let mut cfg = base_config();
+        cfg.retention_policy = JetStreamRetentionPolicy::Workqueue;
+        cfg.nats_url = "not a NATS URL".to_string();
+        let error = super::super::backend::JetStreamBackend::new(cfg)
+            .await
+            .err()
+            .expect("workqueue must fail before connecting")
+            .to_string();
+        assert!(error.contains("independent watch/replay consumers"));
+    }
+
+    #[test]
+    fn validate_retention_nanosecond_boundary() {
+        let mut cfg = base_config();
+        cfg.retention_time = Some(std::time::Duration::from_nanos(i64::MAX.unsigned_abs()));
+        assert!(cfg.validate().is_ok());
+        cfg.retention_time = Some(std::time::Duration::from_nanos(i64::MAX.unsigned_abs() + 1));
+        assert!(cfg.validate().is_err());
     }
 
     #[test]
@@ -248,7 +297,6 @@ mod tests {
                 replicas: None,
                 retention_policy: None,
                 discard_policy: None,
-                enable_auto_reconnect: None,
                 max_reconnect_attempts: None,
                 reconnect_delay_ms: None,
                 publish_retry_attempts: None,
@@ -283,7 +331,6 @@ mod tests {
                 replicas: None,
                 retention_policy: None,
                 discard_policy: None,
-                enable_auto_reconnect: None,
                 max_reconnect_attempts: None,
                 reconnect_delay_ms: None,
                 publish_retry_attempts: None,
@@ -318,7 +365,6 @@ mod tests {
                 replicas: None,
                 retention_policy: None,
                 discard_policy: None,
-                enable_auto_reconnect: None,
                 max_reconnect_attempts: None,
                 reconnect_delay_ms: None,
                 publish_retry_attempts: None,

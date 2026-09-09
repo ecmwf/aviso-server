@@ -56,11 +56,10 @@ pub(crate) fn notification_to_sse_event(
     event_type: SseEventType,
     request_id: &str,
 ) -> Result<(web::Bytes, SseFrameKind), actix_web::Error> {
-    match create_cloud_event_from_notification(notification, base_url) {
-        Ok(cloud_event) => {
-            let event_data = serde_json::to_value(&cloud_event)
-                .unwrap_or_else(|_| json!({"error": "Failed to serialize CloudEvent"}));
-
+    match create_cloud_event_from_notification(notification, base_url)
+        .and_then(|event| serde_json::to_value(event).map_err(anyhow::Error::from))
+    {
+        Ok(event_data) => {
             let sse_event = format_sse_event(event_type.clone(), event_data);
 
             if tracing::enabled!(Level::DEBUG) {
@@ -120,6 +119,7 @@ pub(crate) fn frame_to_sse_bytes(
     request_id: &str,
 ) -> Result<(web::Bytes, SseFrameKind), actix_web::Error> {
     match frame {
+        StreamFrame::Rendered { bytes, kind } => Ok((bytes, kind)),
         StreamFrame::Notification { notification, kind } => {
             let event_type = match kind {
                 DeliveryKind::Live => SseEventType::LiveNotification,
@@ -211,6 +211,11 @@ pub(crate) fn frame_to_sse_bytes(
             SseFrameKind::Infrastructure,
         )),
         StreamFrame::Error {
+            topic,
+            message,
+            request_id,
+        }
+        | StreamFrame::ReplayFailed {
             topic,
             message,
             request_id,
@@ -324,7 +329,24 @@ where
         }
     };
 
-    let graceful = futures_util::StreamExt::take_until(stream, stop_future);
+    // Include the terminal replay frame, then stop before completion or live delivery.
+    // This boundary also stops watch heartbeats after incomplete catch-up.
+    let until_replay_terminal = unfold(
+        (Box::pin(stream), false),
+        |(mut stream, stopped)| async move {
+            if stopped {
+                return None;
+            }
+            let frame = futures_util::StreamExt::next(&mut stream).await?;
+            let stopped = matches!(
+                frame,
+                StreamFrame::Control(ControlEvent::ReplayLimitReached { .. })
+                    | StreamFrame::ReplayFailed { .. }
+            );
+            Some((frame, (stream, stopped)))
+        },
+    );
+    let graceful = futures_util::StreamExt::take_until(until_replay_terminal, stop_future);
 
     // The terminal Close frame must be CONSTRUCTED at yield time, not at
     // stream-build time. tokio_stream::once(value) takes an already-evaluated
@@ -426,6 +448,42 @@ mod tests {
     use chrono::{DateTime, Utc};
 
     const TEST_REQUEST_ID: &str = "abcd1234-0000-4000-8000-aaaaaaaaaaaa";
+
+    #[tokio::test]
+    async fn replay_limit_closes_without_polling_completion_or_live() {
+        use futures_util::StreamExt;
+
+        let limit = StreamFrame::Control(ControlEvent::ReplayLimitReached {
+            topic: "test.topic".into(),
+            max_allowed: 2,
+            timestamp: Utc::now(),
+        });
+        let continuation = futures_util::stream::poll_fn(|_| {
+            panic!("truncated replay must not poll its continuation")
+        });
+        let stream = tokio_stream::once(limit).chain(continuation);
+        let frames: Vec<_> = super::apply_stream_lifecycle(
+            stream,
+            "test.topic".into(),
+            tokio_util::sync::CancellationToken::new(),
+            None,
+            TEST_REQUEST_ID.into(),
+        )
+        .collect()
+        .await;
+        assert_eq!(frames.len(), 2);
+        assert!(matches!(
+            frames[0],
+            StreamFrame::Control(ControlEvent::ReplayLimitReached { max_allowed: 2, .. })
+        ));
+        assert!(matches!(
+            frames[1],
+            StreamFrame::Close {
+                reason: CloseReason::EndOfStream,
+                ..
+            }
+        ));
+    }
 
     #[test]
     fn infrastructure_frames_classify_as_uncounted_and_error_frames_as_stream_errors() {

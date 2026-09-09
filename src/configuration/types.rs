@@ -22,9 +22,16 @@ pub struct WatchEndpointSettings {
     pub sse_heartbeat_interval_sec: u64,
     pub connection_max_duration_sec: u64,
     pub replay_batch_size: usize,
+    #[serde(deserialize_with = "deserialize_positive_usize")]
     pub max_historical_notifications: usize,
     pub replay_batch_delay_ms: u64,
     pub concurrent_notification_processing: usize,
+}
+
+fn deserialize_positive_usize<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<usize, D::Error> {
+    std::num::NonZeroUsize::deserialize(deserializer).map(std::num::NonZeroUsize::get)
 }
 
 impl Default for WatchEndpointSettings {
@@ -151,6 +158,8 @@ impl Serialize for IdentifierFieldConfig {
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct EventSchema {
+    /// Replay notification cap; absent inherits the global watch setting.
+    pub max_historical_notifications: Option<std::num::NonZeroUsize>,
     pub payload: Option<PayloadConfig>,
     pub topic: Option<TopicConfig>,
     pub endpoint: Option<TopicConfig>,
@@ -306,7 +315,6 @@ pub struct JetStreamSettings {
     pub replicas: Option<usize>,
     pub retention_policy: Option<JetStreamRetentionPolicy>,
     pub discard_policy: Option<JetStreamDiscardPolicy>,
-    pub enable_auto_reconnect: Option<bool>,
     pub max_reconnect_attempts: Option<u32>,
     pub reconnect_delay_ms: Option<u64>,
     /// Publish retry attempts for transient channel-closed errors.
@@ -646,8 +654,9 @@ mod tests {
     }
 
     #[test]
-    fn api_event_schema_does_not_expose_auth_config() {
+    fn api_event_schema_does_not_expose_operational_config() {
         let schema = EventSchema {
+            max_historical_notifications: std::num::NonZeroUsize::new(20_000),
             payload: Some(PayloadConfig { required: true }),
             topic: None,
             endpoint: None,
@@ -672,6 +681,7 @@ mod tests {
             serialized.get("auth").is_none(),
             "api schema must not expose internal auth configuration"
         );
+        assert!(serialized.get("max_historical_notifications").is_none());
     }
 
     #[test]

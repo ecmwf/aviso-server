@@ -32,7 +32,7 @@ use crate::{
     configuration::{
         Settings, validate_auth_settings, validate_schema_storage_policy_support,
         validate_spatial_schema_settings, validate_stream_auth_settings,
-        validate_stream_plugin_settings,
+        validate_stream_plugin_settings, validate_topic_schema_settings,
     },
     notification_backend::{MeteredBackend, NotificationBackend, build_backend},
     routes::{health_check::health_check, notify::notify, ready::ready},
@@ -64,6 +64,17 @@ impl Application {
                 event_name = "startup.configuration.validation.failed",
                 error = %e,
                 "Configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
+        if let Err(e) = validate_topic_schema_settings(&configuration) {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.topic_schema.validation.failed",
+                error = %e,
+                "Topic schema configuration validation failed"
             );
             return Err(std::io::Error::other(e));
         }

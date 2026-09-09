@@ -26,6 +26,7 @@ use tracing::{info, warn};
 /// * `Ok(WipeStreamResult::Wiped)` when the stream was purged
 /// * `Ok(WipeStreamResult::NotFound)` when no stream by that name exists
 pub async fn wipe_stream(backend: &JetStreamBackend, stream_key: &str) -> Result<WipeStreamResult> {
+    // Raw backend names may predate the logical-base contract (e.g. _WEATHER).
     let stream_name = stream_key.to_ascii_uppercase();
     let mut stream = match backend.jetstream.get_stream(&stream_name).await {
         Ok(stream) => stream,
@@ -140,6 +141,7 @@ pub async fn delete_message(
     stream_key: &str,
     sequence: u64,
 ) -> Result<DeleteMessageResult> {
+    // Keep legacy streams addressable without accepting them for new routing.
     let stream_name = stream_key.to_ascii_uppercase();
     let stream = match backend.jetstream.get_stream(&stream_name).await {
         Ok(stream) => stream,

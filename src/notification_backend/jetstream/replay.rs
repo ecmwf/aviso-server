@@ -12,7 +12,6 @@ use anyhow::{Context, Result};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
-use crate::configuration::Settings;
 use crate::notification::decode_subject_for_display;
 use crate::notification::topic_parser::derive_stream_name_from_topic;
 use crate::notification::wildcard_matcher::{analyze_watch_pattern, matches_watch_pattern};
@@ -21,7 +20,7 @@ use crate::notification_backend::jetstream::{
 };
 use crate::notification_backend::replay::{BatchParams, StartAt};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
-use crate::types::{BatchResult, ReplayLimitInfo};
+use crate::types::BatchResult;
 
 /// Retrieve a batch of historical messages from JetStream using pull consumer
 ///
@@ -68,7 +67,11 @@ pub async fn get_messages_batch(
     );
 
     // Check if stream has any messages
-    if stream_info.state.messages == 0 {
+    let end_sequence = params.end_sequence.min(stream_info.state.last_sequence);
+    if stream_info.state.messages == 0
+        || end_sequence == 0
+        || matches!(params.start_at, StartAt::Sequence(start) if start > end_sequence)
+    {
         debug!("No messages available in stream");
         return Ok(BatchResult::empty());
     }
@@ -78,110 +81,15 @@ pub async fn get_messages_batch(
         create_pull_consumer(backend, &stream_name, &backend_pattern, params.start_at).await?;
 
     // Fetch messages using batch method
-    let mut messages = consumer
+    let messages = consumer
         .fetch()
         .max_messages(params.limit)
         .messages()
         .await
         .context("Failed to fetch messages")?;
 
-    // Process the fetched messages
-    let mut filtered_messages = Vec::new();
-    let mut last_processed_sequence = None;
-
-    // Process messages from the fetch result
-    while let Some(msg_result) = messages.next().await {
-        match msg_result {
-            Ok(msg) => {
-                // Track the sequence number
-                if let Ok(info) = msg.info() {
-                    last_processed_sequence = Some(info.stream_sequence);
-                }
-
-                match transform_jetstream_message(&msg) {
-                    Ok(notification) => {
-                        if matches_watch_pattern(&notification.topic, &app_filter_pattern) {
-                            filtered_messages.push(notification);
-                        }
-                    }
-                    Err(e) => {
-                        warn!(
-                            service_name = SERVICE_NAME,
-                            service_version = SERVICE_VERSION,
-                            event_name = "backend.jetstream.replay.message_transform.failed",
-                            error = %e,
-                            subject = %msg.subject,
-                            "Failed to transform message"
-                        );
-                    }
-                }
-            }
-            Err(e) => {
-                debug!(error = %e, "Message error during batch retrieval");
-            }
-        }
-
-        // Break if we have enough messages
-        if filtered_messages.len() >= params.limit {
-            break;
-        }
-    }
-
-    // Determine if more messages are available using deterministic logic
-    let has_more = if let Some(last_seq) = last_processed_sequence {
-        // If we processed fewer messages than requested AND we haven't reached the stream's last sequence,
-        // there might be more messages (could be filtered out by pattern matching)
-        if filtered_messages.len() < params.limit {
-            last_seq < stream_info.state.last_sequence
-        } else {
-            // We got a full batch, assume more might be available
-            true
-        }
-    } else {
-        // No messages were processed, no more available
-        false
-    };
-
-    debug!(
-        retrieved_count = filtered_messages.len(),
-        requested_limit = params.limit,
-        last_processed_sequence = ?last_processed_sequence,
-        stream_last_sequence = stream_info.state.last_sequence,
-        has_more = has_more,
-        "Batch processing completed"
-    );
-
-    // Apply replay limiting with user notification
-    let watch_config = Settings::get_global_watch_settings();
-    let effective_limit = params.limit.min(watch_config.max_historical_notifications);
-
-    let was_replay_limited = filtered_messages.len() > effective_limit;
-
-    if was_replay_limited {
-        warn!(
-            service_name = SERVICE_NAME,
-            service_version = SERVICE_VERSION,
-            event_name = "backend.jetstream.replay.limit.reached",
-            retrieved_messages = filtered_messages.len(),
-            max_allowed = effective_limit,
-            topic = %decode_subject_for_display(&params.topic),
-            "Replay message count limit is reached"
-        );
-    }
-
-    filtered_messages.truncate(effective_limit);
-
-    // Create batch result with replay limiting information
-    let mut batch_result = BatchResult::new(filtered_messages, params.limit);
-    batch_result.has_more = has_more && !was_replay_limited; // No more if replay limited
-    batch_result.next_sequence = last_processed_sequence.map(|seq| seq + 1);
-
-    // Add replay limiting metadata if applicable
-    if was_replay_limited {
-        batch_result.replay_limit = Some(ReplayLimitInfo {
-            max_allowed: watch_config.max_historical_notifications,
-        });
-    }
+    let batch_result =
+        read_replay_batch(messages, &app_filter_pattern, params.limit, end_sequence).await?;
 
     info!(
         service_name = SERVICE_NAME,
@@ -194,6 +102,83 @@ pub async fn get_messages_batch(
         last_sequence = ?batch_result.last_sequence,
         "JetStream batch retrieval completed using deterministic approach"
     );
+
+    Ok(batch_result)
+}
+
+async fn read_replay_batch(
+    mut messages: impl tokio_stream::Stream<
+        Item = std::result::Result<async_nats::jetstream::Message, async_nats::Error>,
+    > + Unpin,
+    app_filter_pattern: &[String],
+    limit: usize,
+    end_sequence: u64,
+) -> Result<BatchResult> {
+    // Process the fetched messages
+    let mut filtered_messages = Vec::new();
+    let mut last_processed_sequence = None;
+    let mut reached_end = false;
+
+    // Process messages from the fetch result
+    while let Some(msg_result) = messages.next().await {
+        let msg = msg_result
+            .map_err(anyhow::Error::from_boxed)
+            .context("Failed to read JetStream replay batch")?;
+        let sequence = msg
+            .info()
+            .map_err(anyhow::Error::from_boxed)
+            .context("Failed to read replay sequence")?
+            .stream_sequence;
+        if sequence > end_sequence {
+            reached_end = true;
+            break;
+        }
+        last_processed_sequence = Some(sequence);
+
+        match transform_jetstream_message(&msg) {
+            Ok(notification) => {
+                if matches_watch_pattern(&notification.topic, app_filter_pattern) {
+                    filtered_messages.push(notification);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_name = "backend.jetstream.replay.message_transform.failed",
+                    error = %e,
+                    subject = %msg.subject,
+                    "Failed to transform message"
+                );
+            }
+        }
+
+        // The bound is inclusive, even when this message was filtered out.
+        if sequence == end_sequence {
+            reached_end = true;
+            break;
+        }
+        if filtered_messages.len() >= limit {
+            break;
+        }
+    }
+
+    // Determine if more messages are available using deterministic logic
+    let has_more = !reached_end && last_processed_sequence.is_some_and(|seq| seq < end_sequence);
+
+    debug!(
+        retrieved_count = filtered_messages.len(),
+        requested_limit = limit,
+        last_processed_sequence = ?last_processed_sequence,
+        end_sequence,
+        has_more = has_more,
+        "Batch processing completed"
+    );
+
+    // Request-wide replay quotas are applied after SSE request filtering.
+    let mut batch_result = BatchResult::new(filtered_messages, limit);
+    batch_result.has_more = has_more;
+    batch_result.next_sequence = last_processed_sequence.map(|seq| seq + 1);
 
     Ok(batch_result)
 }
@@ -300,6 +285,28 @@ mod tests {
     use super::determine_deliver_policy;
     use crate::notification_backend::replay::StartAt;
     use chrono::{DateTime, Utc};
+
+    #[tokio::test]
+    async fn fetch_stream_error_is_not_empty_exhaustion() {
+        let error: async_nats::Error = Box::new(std::io::Error::other("consumer revoked"));
+        let messages = tokio_stream::StreamExt::chain(
+            tokio_stream::once(Err(error)),
+            futures_util::stream::poll_fn(|_| panic!("must stop reading after fetch error")),
+        );
+        let error = super::read_replay_batch(messages, &["test".into(), "*".into()], 1, 2)
+            .await
+            .unwrap_err();
+        assert!(format!("{error:#}").contains("consumer revoked"));
+    }
+
+    #[tokio::test]
+    async fn clean_fetch_stream_exhaustion_is_empty() {
+        let batch = super::read_replay_batch(tokio_stream::empty(), &[], 1, 2)
+            .await
+            .unwrap();
+        assert!(batch.messages.is_empty());
+        assert!(!batch.has_more);
+    }
 
     #[test]
     fn policy_prefers_sequence_when_both_sequence_and_date_present() {

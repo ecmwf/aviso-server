@@ -595,6 +595,7 @@ mod tests {
     fn ensure_global_schema_for_constraint_tests() {
         GLOBAL_SCHEMA_INIT.call_once(|| {
             let mars_schema = EventSchema {
+                max_historical_notifications: None,
                 payload: Some(PayloadConfig { required: false }),
                 topic: Some(TopicConfig {
                     base: "mars".to_string(),
@@ -614,6 +615,7 @@ mod tests {
                 auth: None,
             };
             let extreme_schema = EventSchema {
+                max_historical_notifications: None,
                 payload: Some(PayloadConfig { required: false }),
                 topic: Some(TopicConfig {
                     base: "extreme".to_string(),
@@ -625,6 +627,7 @@ mod tests {
                 auth: None,
             };
             let dissemination_schema = EventSchema {
+                max_historical_notifications: None,
                 payload: Some(PayloadConfig { required: false }),
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),

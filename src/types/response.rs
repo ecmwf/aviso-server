@@ -18,13 +18,6 @@ pub struct NotificationResponse {
     pub processed_at: String,
 }
 
-/// Information about replay limiting applied during batch retrieval
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ReplayLimitInfo {
-    /// Maximum allowed messages from configuration
-    pub max_allowed: usize,
-}
-
 /// Batch retrieval response for replay functionality
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BatchResult {
@@ -38,8 +31,6 @@ pub struct BatchResult {
     pub next_sequence: Option<u64>,
     /// Total number of messages in this batch
     pub batch_size: usize,
-    /// Replay limiting information if applied
-    pub replay_limit: Option<ReplayLimitInfo>,
 }
 
 impl BatchResult {
@@ -55,7 +46,6 @@ impl BatchResult {
             last_sequence,
             next_sequence,
             batch_size,
-            replay_limit: None, // No limit by default
         }
     }
 
@@ -67,7 +57,6 @@ impl BatchResult {
             last_sequence: None,
             next_sequence: None,
             batch_size: 0,
-            replay_limit: None,
         }
     }
 }

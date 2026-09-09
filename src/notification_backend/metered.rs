@@ -22,12 +22,10 @@ use std::time::Instant;
 
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::Stream;
 
 use super::replay::BatchParams;
 use super::{
-    BackendCapabilities, DeleteMessageResult, NotificationBackend, NotificationMessage,
-    WipeStreamResult,
+    BackendCapabilities, DeleteMessageResult, NotificationBackend, Subscription, WipeStreamResult,
 };
 use crate::metrics::AppMetrics;
 use crate::types::BatchResult;
@@ -151,12 +149,13 @@ impl NotificationBackend for MeteredBackend {
         result
     }
 
-    async fn subscribe_to_topic(
-        &self,
-        topic: &str,
-    ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
+    async fn subscribe_to_topic(&self, topic: &str) -> Result<Subscription> {
         // Not timed: see module docs (lazy stream, setup duration is misleading).
         self.inner.subscribe_to_topic(topic).await
+    }
+
+    async fn history_end(&self, topic: &str) -> Result<u64> {
+        self.inner.history_end(topic).await
     }
 
     async fn shutdown(&self) -> Result<()> {
@@ -209,11 +208,14 @@ mod tests {
         async fn get_messages_batch(&self, _params: BatchParams) -> Result<BatchResult> {
             Ok(BatchResult::new(Vec::new(), 0))
         }
-        async fn subscribe_to_topic(
-            &self,
-            _topic: &str,
-        ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
-            Ok(Box::new(futures::stream::empty()))
+        async fn subscribe_to_topic(&self, _topic: &str) -> Result<Subscription> {
+            Ok(Subscription {
+                stream: Box::new(futures::stream::empty()),
+                history_end: 0,
+            })
+        }
+        async fn history_end(&self, _: &str) -> Result<u64> {
+            Ok(0)
         }
     }
 

@@ -36,6 +36,10 @@ topic:
 | `base`      | Root prefix for the subject. Must be unique across all schemas (case-insensitive). |
 | `key_order` | Ordered list of identifier field names appended to the base, separated by `.`.     |
 
+Bases must match `[A-Za-z0-9][A-Za-z0-9_-]*`. Startup rejects invalid bases,
+including event names used as bases without a topic block. See the
+[base contract](./topic-encoding.md#topic-bases) for details.
+
 Given `base: "weather"` and `key_order: ["region", "date"]`, a request with
 `region=north` and `date=20250706` produces the subject:
 
@@ -47,8 +51,26 @@ Values containing reserved characters (`.`, `*`, `>`, `%`) are automatically
 percent-encoded so they do not interfere with NATS subject routing. See
 [Topic Encoding](./topic-encoding.md) for details.
 
-Only fields listed in `key_order` contribute to the subject. Other identifier
-fields are validated but not part of the topic.
+When a `topic` block is configured, startup requires a nonempty `key_order`.
+Each entry must name a declared identifier and may appear only once. Every
+ordinary identifier must be included, even when `required: false`. Optional
+fields still need a subject position for watch/replay wildcards and filters.
+For example, `key_order: [region, date]` is valid when both fields are declared;
+`key_order: [region, region]` is not.
+
+Spatial geometry is the exception. `PolygonHandler` fields may be omitted
+because their geometry is stored as metadata. Existing polygon subject
+positions remain supported. The reserved `point_cloud` field must never appear
+in `key_order`; it uses spatial metadata instead.
+
+There is no request-only authorization exception for ECPDS. Its `match_key`
+must appear in a configured topic's `key_order`. Checking permission for a
+request value does not restrict delivered events unless routing also retains
+that value. Ordinary fields outside `key_order` are not validation-only fields:
+their values would be lost from routing and topic-based reconstruction.
+
+These checks apply to configured `topic` blocks. They do not change the generic
+fallback used without a topic or schema, including its bare-topic behavior.
 
 ---
 
@@ -71,11 +93,43 @@ identifier:
 
 Every field supports these common properties:
 
-| Property      | Type   | Description                                                                                                                                                                                                           |
-| ------------- | ------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `type`        | string | Handler type (see below). Required.                                                                                                                                                                                   |
-| `required`    | bool   | Affects `watch` and `replay` only: if `true`, those requests must include this field; if `false`, missing keys become wildcards. Has **no effect on `notify`**, which always requires every declared field. Required. |
-| `description` | string | Human-readable text exposed by `GET /api/v1/schema`. Optional.                                                                                                                                                        |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Property | Type |
+|---|---|
+| [`type`](#schema-identifier-type) | string |
+| [`required`](#schema-identifier-required) | bool |
+| [`description`](#schema-identifier-description) | string |
+
+</div>
+<details class="setting-panel" id="schema-identifier-type">
+<summary><code>type</code>
+<span class="setting-meta"><strong>Type:</strong> string</span>
+</summary>
+
+Handler type (see below). Required.
+
+</details>
+<details class="setting-panel" id="schema-identifier-required">
+<summary><code>required</code>
+<span class="setting-meta"><strong>Type:</strong> bool</span>
+</summary>
+
+Affects `watch` and `replay` only: if `true`, those requests must include this
+field; if `false`, missing keys become wildcards. Has **no effect on `notify`**,
+which always requires every declared field. Required.
+
+</details>
+<details class="setting-panel" id="schema-identifier-description">
+<summary><code>description</code>
+<span class="setting-meta"><strong>Type:</strong> string</span>
+</summary>
+
+Human-readable text exposed by `GET /api/v1/schema`. Optional.
+
+</details>
+</div>
 
 `PointCloudHandler` is operation-specific. Publishers provide the declared
 `point_cloud` field. Watch and replay requests provide a closed `polygon`
@@ -204,6 +258,13 @@ must be in `[-90, 90]`; longitude must be in `[-180, 180]`.
 
 #### PointCloudHandler
 
+Spatial identifiers use fixed names: `PolygonHandler` must be named `polygon`,
+and `PointCloudHandler` must be named `point_cloud`. A schema cannot mix the two
+handlers or declare multiple geometries. Polygon metadata and existing routed
+polygon subjects are supported. Neither spatial handler nor the reserved
+`polygon` routing position can be an ECPDS `match_key`; use an ordinary routing
+identifier such as `destination` instead.
+
 Accepts a non-empty JSON array of `[lat,lon]` pairs from providers. Point clouds
 do not have a string syntax and do not need a closing point. Duplicates are
 valid. Their order is preserved.
@@ -308,6 +369,39 @@ role-matching rules.
 
 ---
 
+## Replay Limit
+
+<div class="settings-reference">
+<details class="setting-panel" id="schema-max-historical-notifications">
+<summary><code>max_historical_notifications</code>
+<span class="setting-meta"><strong>Default:</strong> inherited from watch_endpoint · <strong>Type:</strong> positive integer</span>
+</summary>
+
+Optional cap on historical notifications delivered by one replay or replaying
+watch request. Put it directly under the event schema, not in `storage_policy`:
+
+```yaml
+notification_schema:
+  weather:
+    max_historical_notifications: 20000
+    # Existing topic, identifier and other schema fields go here.
+```
+
+Omitting this field inherits `watch_endpoint.max_historical_notifications`
+(default `10000`). An override can raise or lower that value. Zero and
+`unlimited` are rejected. Both backends support this setting; it does not
+change retention. Batch size stays global at `watch_endpoint.replay_batch_size`
+(default `100`). This operational setting is not exposed by the schema API.
+
+Only notifications that pass request filters and render successfully count.
+Exactly filling the cap completes normally unless another deliverable
+notification exists. Truncation closes the request without `replay_completed`
+or live delivery. See
+[Historical Replay Limits](./streaming-semantics.md#historical-replay-limits).
+
+</details>
+</div>
+
 ## Storage Policy (JetStream Only)
 
 When using the JetStream backend, you can configure per-stream retention limits.
@@ -321,13 +415,59 @@ storage_policy:
   compression: true
 ```
 
-| Field              | Type     | Description                                                        |
-| ------------------ | -------- | ------------------------------------------------------------------ |
-| `retention_time`   | duration | Discard messages older than this. Accepts `30m`, `1h`, `7d`, `1w`. |
-| `max_messages`     | integer  | Maximum message count; oldest are discarded when exceeded.         |
-| `max_size`         | size     | Maximum stream size. Accepts `100Mi`, `1Gi`, etc.                  |
-| `allow_duplicates` | bool     | Allow duplicate message IDs. Default: backend-specific.            |
-| `compression`      | bool     | Enable message-level compression. Default: backend-specific.       |
+<div class="settings-reference">
+<div class="setting-index">
+
+| Field | Type |
+|---|---|
+| [`retention_time`](#schema-storage-policy-retention-time) | duration |
+| [`max_messages`](#schema-storage-policy-max-messages) | integer |
+| [`max_size`](#schema-storage-policy-max-size) | size |
+| [`allow_duplicates`](#schema-storage-policy-allow-duplicates) | bool |
+| [`compression`](#schema-storage-policy-compression) | bool |
+
+</div>
+<details class="setting-panel" id="schema-storage-policy-retention-time">
+<summary><code>retention_time</code>
+<span class="setting-meta"><strong>Type:</strong> duration</span>
+</summary>
+
+Discard messages older than this. Accepts `30m`, `1h`, `7d`, `1w`.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-max-messages">
+<summary><code>max_messages</code>
+<span class="setting-meta"><strong>Type:</strong> integer</span>
+</summary>
+
+Maximum message count; oldest are discarded when exceeded.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-max-size">
+<summary><code>max_size</code>
+<span class="setting-meta"><strong>Type:</strong> size</span>
+</summary>
+
+Maximum stream size. Accepts `100Mi`, `1Gi`, etc.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-allow-duplicates">
+<summary><code>allow_duplicates</code>
+<span class="setting-meta"><strong>Type:</strong> bool</span>
+</summary>
+
+Allow duplicate message IDs. Default: backend-specific.
+
+</details>
+<details class="setting-panel" id="schema-storage-policy-compression">
+<summary><code>compression</code>
+<span class="setting-meta"><strong>Type:</strong> bool</span>
+</summary>
+
+Enable message-level compression. Default: backend-specific.
+
+</details>
+</div>
 
 All fields are optional. Omitting `storage_policy` entirely uses backend
 defaults.
@@ -349,7 +489,7 @@ notification_schema:
 
     topic:
       base: "alert"
-      key_order: ["region", "severity_level", "date"]
+      key_order: ["region", "severity_level", "date", "issued_by"]
 
     identifier:
       region:
@@ -388,9 +528,10 @@ notification_schema:
 With this schema:
 
 - Publishing a notification with `region=europe`, `severity_level=3`,
-  `date=2025-07-06` produces the subject `alert.europe.3.20250706`.
-- The `issued_by` field is validated if present but does not appear in the
-  subject (not in `key_order`).
+  `date=2025-07-06`, `issued_by=forecast` produces the subject
+  `alert.europe.3.20250706.forecast`.
+- Publishers must provide `issued_by`. Watch/replay clients may omit it to
+  match any issuer because it is declared `required: false`.
 - Any authenticated user in the `operations` realm can watch/replay.
 - Only users with the `forecaster` or `admin` role can publish.
 - JetStream retains up to 100,000 messages or 30 days, whichever limit is hit
@@ -405,8 +546,8 @@ With this schema:
 - **Use `key_order` deliberately.** Fields in `key_order` become part of the
   NATS subject and affect routing granularity. More fields = more specific
   topics = more efficient filtering, but also more distinct subjects.
-- **Mark routing fields required.** If a field is in `key_order`, consider
-  making it `required: true` so every notification produces a complete subject.
+- **Choose subscriber requirements.** Set `required: true` when watch/replay
+  clients must supply a field. Publishers always supply every declared field.
 - **Keep `base` short and unique.** It is the root of every subject in this
   stream. Avoid collisions with other schemas.
 - **Test with `GET /api/v1/schema/{event_type}`.** This endpoint returns the

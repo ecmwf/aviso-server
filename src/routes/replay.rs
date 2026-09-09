@@ -150,6 +150,7 @@ pub async fn replay(
         filtering_constraints,
         sse_guard,
         request_id_str.clone(),
+        crate::configuration::Settings::replay_limit_for_event_type(&context.event_type),
     )
     .await
     {

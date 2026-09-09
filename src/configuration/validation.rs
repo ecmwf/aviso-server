@@ -53,6 +53,20 @@ pub fn validate_spatial_schema_settings(settings: &Settings) -> Result<()> {
     };
 
     for (event_type, schema) in schema_map {
+        for (name, field) in &schema.identifier {
+            if matches!(field.rule, ValidationRules::PolygonHandler { .. }) && name != "polygon" {
+                bail!(
+                    "Schema '{event_type}' PolygonHandler must use the reserved identifier key 'polygon'; multiple or renamed geometries are not supported"
+                );
+            }
+        }
+        if schema
+            .identifier
+            .get("polygon")
+            .is_some_and(|field| !matches!(field.rule, ValidationRules::PolygonHandler { .. }))
+        {
+            bail!("Schema '{event_type}' reserves identifier key 'polygon' for PolygonHandler");
+        }
         let point_cloud_handlers: Vec<_> = schema
             .identifier
             .iter()
@@ -350,20 +364,40 @@ pub fn validate_schema_storage_policy_support(settings: &Settings) -> Result<()>
     let capabilities = capabilities_for_backend_kind(kind)
         .ok_or_else(|| anyhow::anyhow!("Unknown notification_backend kind: {kind}"))?;
 
+    if kind == "jetstream"
+        && matches!(
+            settings
+                .notification_backend
+                .jetstream
+                .as_ref()
+                .and_then(|js| js.retention_policy.as_ref()),
+            Some(super::JetStreamRetentionPolicy::Workqueue)
+        )
+    {
+        bail!(
+            "notification_backend.jetstream.retention_policy 'workqueue' is not supported for backend defaults or schema storage policies: workqueue retention does not support Aviso's independent watch/replay consumers; use 'limits' or 'interest'"
+        );
+    }
+
     let Some(schema_map) = settings.notification_schema.as_ref() else {
         return Ok(());
     };
 
     let mut topic_owner_by_base: HashMap<String, String> = HashMap::new();
     for (event_type, schema) in schema_map {
-        let Some(topic) = schema.topic.as_ref() else {
-            continue;
-        };
-        let base_key = topic.base.to_ascii_lowercase();
+        let base = schema
+            .topic
+            .as_ref()
+            .map_or(event_type.as_str(), |topic| topic.base.as_str());
+        let binding =
+            crate::notification::topic_parser::TopicBinding::new(base).map_err(|error| {
+                anyhow::anyhow!("Schema '{event_type}' has invalid topic base: {error}")
+            })?;
+        let base_key = binding.stream_name;
         if let Some(previous_owner) = topic_owner_by_base.get(&base_key) {
             bail!(
                 "Schemas '{previous_owner}' and '{event_type}' both define topic base '{}'",
-                topic.base
+                base
             );
         }
         topic_owner_by_base.insert(base_key, event_type.clone());
@@ -573,22 +607,28 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
         bail!("ecpds.connect_timeout_seconds must be greater than zero");
     }
 
-    // The plugin reads `match_key` from the request's canonicalized
-    // identifier params at runtime (`EcpdsChecker::check_access`
-    // does `identifier.get(&self.match_key)`), not from the topic
-    // routing key. Streams without an explicit `topic` block, or
-    // streams whose `topic.key_order` filters on a different field,
-    // still surface the request param to the plugin via the
-    // canonicalized params, so the plugin authorises correctly. We
-    // therefore validate that `match_key` exists in the schema's
-    // `identifier` and is `required: true` (so the value is
-    // guaranteed before the plugin runs), but we deliberately do
-    // NOT require it to appear in `topic.key_order`.
+    // The plugin authorizes the request's canonicalized match_key once.
+    // Configured topics must also carry it so event routing restricts delivery
+    // to that authorized value. Required request validation alone is not enough.
     if let Some(schema) = &settings.notification_schema {
         for stream_name in &ecpds_streams {
             let Some(event_schema) = schema.get(*stream_name) else {
                 continue;
             };
+            if ecpds_config.match_key == "polygon"
+                || event_schema
+                    .identifier
+                    .get(&ecpds_config.match_key)
+                    .is_some_and(|field| {
+                        matches!(field.rule, ValidationRules::PolygonHandler { .. })
+                    })
+            {
+                bail!(
+                    "ecpds.match_key '{}' in schema '{}' must not use polygon routing or PolygonHandler; watch/replay wildcard the spatial routing position",
+                    ecpds_config.match_key,
+                    stream_name
+                );
+            }
             match event_schema.identifier.get(&ecpds_config.match_key) {
                 None => bail!(
                     "ecpds.match_key '{}' has no identifier rule defined in schema '{}'",
@@ -611,6 +651,16 @@ pub fn validate_ecpds_settings(settings: &Settings) -> Result<()> {
                     )
                 }
                 Some(_) => {}
+            }
+            if event_schema
+                .topic
+                .as_ref()
+                .is_some_and(|topic| !topic.key_order.contains(&ecpds_config.match_key))
+            {
+                bail!(
+                    "Schema '{stream_name}' topic.key_order must include ecpds.match_key '{}' to restrict delivery to the authorized value",
+                    ecpds_config.match_key
+                );
             }
         }
     }
@@ -642,6 +692,7 @@ mod tests {
         schema.insert(
             event_type.to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: event_type.to_ascii_lowercase(),
@@ -698,6 +749,77 @@ mod tests {
     fn accepts_valid_point_cloud_schema() {
         let settings = settings_with_point_cloud("point_cloud", 10_000);
         validate_spatial_schema_settings(&settings).expect("valid point-cloud schema");
+    }
+
+    #[test]
+    fn accepts_only_supported_polygon_metadata_and_routing() {
+        for routed in [false, true] {
+            let mut settings = settings_with_point_cloud("point_cloud", 100);
+            let schema = settings
+                .notification_schema
+                .as_mut()
+                .unwrap()
+                .get_mut("cloud")
+                .unwrap();
+            schema.identifier.clear();
+            schema.identifier.insert(
+                "polygon".into(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler {
+                    required: true,
+                }),
+            );
+            if routed {
+                schema
+                    .topic
+                    .as_mut()
+                    .unwrap()
+                    .key_order
+                    .push("polygon".into());
+            }
+            validate_spatial_schema_settings(&settings).unwrap();
+            let schema = settings
+                .notification_schema
+                .as_mut()
+                .unwrap()
+                .get_mut("cloud")
+                .unwrap();
+            schema.identifier.insert(
+                "area".into(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler {
+                    required: true,
+                }),
+            );
+            assert!(
+                validate_spatial_schema_settings(&settings)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("reserved identifier key 'polygon'")
+            );
+            settings
+                .notification_schema
+                .as_mut()
+                .unwrap()
+                .get_mut("cloud")
+                .unwrap()
+                .identifier
+                .remove("polygon");
+            assert!(validate_spatial_schema_settings(&settings).is_err());
+        }
+        let mut settings = settings_with_point_cloud("point_cloud", 100);
+        settings
+            .notification_schema
+            .as_mut()
+            .unwrap()
+            .get_mut("cloud")
+            .unwrap()
+            .identifier
+            .insert(
+                "area".into(),
+                IdentifierFieldConfig::with_rule(ValidationRules::PolygonHandler {
+                    required: true,
+                }),
+            );
+        assert!(validate_spatial_schema_settings(&settings).is_err());
     }
 
     #[test]
@@ -872,6 +994,51 @@ mod tests {
     }
 
     #[test]
+    fn schema_storage_validation_rejects_workqueue_with_or_without_overrides() {
+        for with_schema in [true, false] {
+            let mut settings = settings_with_policy(
+                "jetstream",
+                EventStoragePolicy {
+                    retention_time: Some("7d".to_string()),
+                    ..EventStoragePolicy::default()
+                },
+                "mars",
+            );
+            settings.notification_backend.jetstream = Some(
+                serde_json::from_value(serde_json::json!({"retention_policy": "workqueue"}))
+                    .unwrap(),
+            );
+            if !with_schema {
+                settings.notification_schema = None;
+            }
+            let error = validate_schema_storage_policy_support(&settings)
+                .unwrap_err()
+                .to_string();
+            assert!(error.contains("notification_backend.jetstream.retention_policy 'workqueue'"));
+            assert!(error.contains("backend defaults or schema storage policies"));
+            assert!(error.contains("independent watch/replay consumers"));
+        }
+    }
+
+    #[test]
+    fn schema_storage_validation_accepts_limits_and_interest() {
+        for policy in ["limits", "interest"] {
+            let mut settings = settings_with_policy(
+                "jetstream",
+                EventStoragePolicy {
+                    retention_time: Some("7d".to_string()),
+                    ..EventStoragePolicy::default()
+                },
+                "mars",
+            );
+            settings.notification_backend.jetstream = Some(
+                serde_json::from_value(serde_json::json!({"retention_policy": policy})).unwrap(),
+            );
+            validate_schema_storage_policy_support(&settings).unwrap();
+        }
+    }
+
+    #[test]
     fn rejects_storage_policy_for_unknown_backend_kind() {
         let settings = settings_with_policy(
             "unknown_backend",
@@ -991,6 +1158,7 @@ mod tests {
         schema_map.insert(
             "dissemination".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1008,6 +1176,7 @@ mod tests {
         schema_map.insert(
             "diss_alias".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1058,6 +1227,7 @@ mod tests {
         schema_map.insert(
             "schema_a".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "DISS".to_string(),
@@ -1075,6 +1245,7 @@ mod tests {
         schema_map.insert(
             "schema_b".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1125,6 +1296,7 @@ mod tests {
         schema_map.insert(
             "schema_a".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "shared".to_string(),
@@ -1139,6 +1311,7 @@ mod tests {
         schema_map.insert(
             "schema_b".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "shared".to_string(),
@@ -1406,6 +1579,7 @@ mod tests {
         schema_map.insert(
             "mars".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "mars".to_string(),
@@ -1438,6 +1612,7 @@ mod tests {
         schema_map.insert(
             "diss".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "diss".to_string(),
@@ -1473,6 +1648,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1514,6 +1690,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1552,6 +1729,7 @@ mod tests {
         schema_map.insert(
             event_type.to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: event_type.to_string(),
@@ -1671,6 +1849,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1712,6 +1891,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1750,6 +1930,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1788,6 +1969,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1823,6 +2005,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -1861,6 +2044,7 @@ mod tests {
         schema_map.insert(
             "events".to_string(),
             EventSchema {
+                max_historical_notifications: None,
                 payload: None,
                 topic: Some(TopicConfig {
                     base: "events".to_string(),
@@ -2039,6 +2223,7 @@ mod tests {
             schema.insert(
                 "diss".to_string(),
                 EventSchema {
+                    max_historical_notifications: None,
                     payload: None,
                     topic: Some(TopicConfig {
                         base: "diss".to_string(),
@@ -2125,6 +2310,33 @@ mod tests {
                 err.to_string().contains("no 'ecpds' configuration section"),
                 "got: {err}"
             );
+        }
+
+        #[test]
+        fn rejects_polygon_match_keys_even_with_an_ordinary_handler() {
+            for (key, polygon_handler) in [("polygon", true), ("polygon", false), ("area", true)] {
+                let mut config = good_ecpds_config();
+                config.match_key = key.into();
+                let mut settings = settings_with_ecpds(config, key, true);
+                if polygon_handler {
+                    settings
+                        .notification_schema
+                        .as_mut()
+                        .unwrap()
+                        .get_mut("diss")
+                        .unwrap()
+                        .identifier
+                        .get_mut(key)
+                        .unwrap()
+                        .rule = ValidationRules::PolygonHandler { required: true };
+                }
+                assert!(
+                    validate_ecpds_settings(&settings)
+                        .unwrap_err()
+                        .to_string()
+                        .contains("must not use polygon routing or PolygonHandler")
+                );
+            }
         }
 
         #[test]
@@ -2388,25 +2600,26 @@ mod tests {
         }
 
         #[test]
-        fn accepts_match_key_outside_topic_key_order() {
-            // Explicit regression: streams whose `topic.key_order`
-            // filters on a different field (or whose schema has no
-            // `topic` block at all) must still validate when the
-            // request body's identifier carries `match_key`. The
-            // plugin reads from canonicalized identifier params at
-            // runtime, not from topic routing.
+        fn rejects_match_key_outside_topic_key_order() {
             let cfg = good_ecpds_config();
             let mut schema = ecpds_protected_schema("destination", true);
             if let Some(event) = schema.get_mut("diss")
                 && let Some(topic) = event.topic.as_mut()
             {
                 topic.key_order = vec!["unrelated_field".to_string()];
+                event.identifier.insert(
+                    "unrelated_field".to_string(),
+                    IdentifierFieldConfig::with_rule(ValidationRules::StringHandler {
+                        max_length: None,
+                        required: true,
+                    }),
+                );
             }
             let mut settings = basic_settings_with_schema(schema);
             settings.ecpds = Some(cfg);
-            validate_ecpds_settings(&settings).expect(
-                "match_key absent from topic.key_order must NOT block startup; \
-                 the plugin reads it from the request body, not the topic",
+            assert_eq!(
+                validate_ecpds_settings(&settings).unwrap_err().to_string(),
+                "Schema 'diss' topic.key_order must include ecpds.match_key 'destination' to restrict delivery to the authorized value"
             );
         }
 

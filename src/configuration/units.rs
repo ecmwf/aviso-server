@@ -51,9 +51,17 @@ pub fn parse_duration_spec(input: &str) -> Result<Duration, String> {
 
 /// Parses retention window literals for JetStream defaults and per-schema policies.
 ///
-/// This wrapper keeps retention parsing on the same code path everywhere.
+/// JetStream encodes durations as signed 64-bit nanoseconds: `9223372036s`
+/// fits, but `9223372037s` does not.
 pub fn parse_retention_time_spec(input: &str) -> Result<Duration, String> {
-    parse_duration_spec(input)
+    let duration = parse_duration_spec(input)?;
+    if i64::try_from(duration.as_nanos()).is_err() {
+        return Err(
+            "retention duration exceeds signed 64-bit nanoseconds (maximum 9223372036s)"
+                .to_string(),
+        );
+    }
+    Ok(duration)
 }
 
 /// Parses byte-size literals used in configuration.
@@ -138,6 +146,17 @@ mod tests {
             Duration::from_secs(604_800)
         );
         assert!(parse_retention_time_spec("7x").is_err());
+    }
+
+    #[test]
+    fn retention_must_fit_signed_nanoseconds() {
+        assert_eq!(
+            parse_retention_time_spec("9223372036s").unwrap(),
+            Duration::from_secs(9_223_372_036)
+        );
+        for value in ["9223372037s", "153722868m", "18446744073709551615s"] {
+            assert!(parse_retention_time_spec(value).is_err(), "{value}");
+        }
     }
 
     #[test]

@@ -12,11 +12,10 @@ use crate::notification_backend::jetstream::{
 use crate::notification_backend::replay::BatchParams;
 use crate::notification_backend::{
     BackendCapabilities, DeleteMessageResult, JETSTREAM_CAPABILITIES, NotificationBackend,
-    NotificationMessage, WipeStreamResult,
+    Subscription, WipeStreamResult,
 };
-use anyhow::Result;
+use anyhow::{Context, Result};
 use async_trait::async_trait;
-use futures_util::Stream;
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -82,11 +81,22 @@ impl NotificationBackend for JetStreamBackend {
         replay::get_messages_batch(self, params).await
     }
 
-    async fn subscribe_to_topic(
-        &self,
-        topic: &str,
-    ) -> Result<Box<dyn Stream<Item = NotificationMessage> + Unpin + Send>> {
+    async fn subscribe_to_topic(&self, topic: &str) -> Result<Subscription> {
         subscriber::subscribe_to_topic(self, topic).await
+    }
+
+    async fn history_end(&self, topic: &str) -> Result<u64> {
+        let (pattern, _) = crate::notification::wildcard_matcher::analyze_watch_pattern(topic)?;
+        let name = self
+            .ensure_stream_for_topic(&pattern)
+            .await
+            .context("Failed to ensure stream for replay boundary")?;
+        let stream = self
+            .jetstream
+            .get_stream(name)
+            .await
+            .context("Failed to capture replay boundary")?;
+        Ok(stream.cached_info().state.last_sequence)
     }
 
     async fn shutdown(&self) -> Result<()> {

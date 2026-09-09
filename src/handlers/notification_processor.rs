@@ -74,6 +74,9 @@ pub fn process_notification_request(
 }
 
 fn is_notification_validation_error(error: &anyhow::Error) -> bool {
+    if error.is::<crate::notification::topic_parser::InvalidTopicBase>() {
+        return true;
+    }
     error.chain().any(|cause| {
         let message = cause.to_string().to_ascii_lowercase();
         message.starts_with("required field ")
@@ -87,6 +90,13 @@ fn is_notification_validation_error(error: &anyhow::Error) -> bool {
 #[cfg(test)]
 mod tests {
     use super::is_notification_validation_error;
+
+    #[test]
+    fn classifies_invalid_topic_base_by_type() {
+        let error = anyhow::Error::new(crate::notification::topic_parser::InvalidTopicBase)
+            .context("request validation");
+        assert!(is_notification_validation_error(&error));
+    }
 
     #[test]
     fn classifies_validation_like_messages() {
