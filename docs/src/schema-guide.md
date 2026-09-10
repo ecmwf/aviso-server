@@ -163,10 +163,12 @@ date:
   required: false
 ```
 
-| `canonical_format` | Example output |
-| ------------------ | -------------- |
-| `"%Y%m%d"`         | `20250706`     |
-| `"%Y-%m-%d"`       | `2025-07-06`   |
+Use `canonical_format` to choose the output format:
+
+| Output format | Example output |
+| --- | --- |
+| `"%Y%m%d"` | `20250706` |
+| `"%Y-%m-%d"` | `2025-07-06` |
 
 Invalid dates (e.g. February 30) are rejected.
 
