@@ -326,10 +326,12 @@ payload:
   required: true
 ```
 
-| `required` | Behavior                                                         |
-| ---------- | ---------------------------------------------------------------- |
-| `true`     | Requests without a payload are rejected (400).                   |
-| `false`    | Payload is optional; missing payloads are stored as JSON `null`. |
+The `required` setting controls whether the payload is mandatory:
+
+| Payload required | Behavior |
+| --- | --- |
+| `true` | Requests without a payload are rejected (400). |
+| `false` | Payload is optional; missing payloads are stored as JSON `null`. |
 
 The payload can be any valid JSON value (object, array, string, number, boolean,
 null). It is stored as-is with no reshaping.
