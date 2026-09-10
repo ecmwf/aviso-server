@@ -242,9 +242,8 @@ Input `"1"` → stored as `"0001"`. Input `"test"` → stored as `"test"`.
 
 #### PolygonHandler
 
-Accepts a closed polygon as a JSON array of `[lat,lon]` pairs. Legacy coordinate
-strings remain accepted at the HTTP boundary. The first and last pair must be
-identical.
+Accepts a closed polygon as a JSON array of `[latitude,longitude]` pairs. The
+first and last pair must be identical.
 
 Canonical form: `[[lat,lon],...,[lat,lon]]`. Emitted CloudEvents always use this
 array form.
@@ -255,8 +254,10 @@ polygon:
   required: true
 ```
 
-Constraints: at least three coordinate pairs plus the closing repeat. Latitude
-must be in `[-90, 90]`; longitude must be in `[-180, 180]`.
+Constraints: at least four coordinate pairs including the closing repeat.
+Coordinates must be finite numbers. Latitude must be in `[-90, 90]`; longitude
+must be in `[-180, 180]`. Aviso checks pair count and closure, not vertex
+uniqueness, area, or self-intersections. Supply a non-degenerate polygon.
 
 #### PointCloudHandler
 
@@ -307,7 +308,7 @@ examples.
 
 The `point` field is a reserved identifier that clients can send on `/watch` or
 `/replay` to filter notifications whose polygon contains the point. Canonical
-form is `[lat,lon]`; compatible `lat,lon` strings are also accepted.
+form is `[latitude,longitude]`.
 
 `point` is **not** a schema-configurable handler. It is available on schemas
 that include a `PolygonHandler`. The `/notification` endpoint rejects it.
@@ -316,6 +317,19 @@ See [Spatial Filtering](./practical-examples/spatial-filtering.md) for usage
 examples.
 
 ---
+
+## Alternative Coordinate Format
+
+The HTTP API also accepts comma-separated coordinate strings for polygons and
+points. Parentheses are optional. For example, the polygon string
+`"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"` and point string
+`"52.55,13.50"` represent the arrays in the
+[spatial examples](./practical-examples/spatial-filtering.md). The same
+coordinate order and polygon closure rules apply. Strings containing JSON
+coordinate arrays are also accepted for points and polygons. Polygons and clouds
+need nested pairs, not flat numeric arrays. GeoJSON objects are not accepted as
+spatial identifier values. Point clouds have no string format. CloudEvent
+spatial identifiers are arrays regardless of the input format.
 
 ## Payload Configuration
 

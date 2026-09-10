@@ -8,12 +8,13 @@ Coordinates always use latitude first, then longitude. The canonical JSON forms
 are:
 
 - point: `[lat,lon]`
-- polygon: `[[lat,lon],...,[lat,lon]]`, with the first pair repeated last
+- polygon: `[[lat,lon],...]`, at least four pairs, first pair repeated last
 - point cloud: `[[lat,lon],...]`, with at least one point
 
-Point and polygon strings remain accepted by the HTTP API for compatibility.
 Point clouds accept JSON arrays only. Emitted CloudEvents always use arrays for
-all spatial identifier values.
+all spatial identifier values. See the
+[alternative format](../schema-guide.md#alternative-coordinate-format) for
+point and polygon strings.
 
 ## Schema
 
@@ -64,16 +65,16 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "point_cloud":[
         [52.52,13.40],
         [48.14,11.58],
-        [52.52,13.40]
+        [53.55,9.99]
       ]
     },
     "payload":{"source":"stations"}
   }'
 ```
 
-Duplicate points are valid. Aviso preserves their order. Every latitude and
-longitude must be finite. Latitude must be in `[-90, 90]`; longitude must be in
-`[-180, 180]`.
+Clouds do not need a closing repeat. Duplicate points are valid, and Aviso
+preserves their order. Every latitude and longitude must be finite. Latitude
+must be in `[-90, 90]`; longitude must be in `[-180, 180]`.
 
 The canonical point-cloud JSON is limited to 60 KiB. This conservative Aviso
 interoperability limit is informed by NATS-backed header transport and
@@ -124,7 +125,7 @@ The event reconstructs the provider identifier as JSON:
       "point_cloud": [
         [52.52, 13.4],
         [48.14, 11.58],
-        [52.52, 13.4]
+        [53.55, 9.99]
       ]
     }
   }
