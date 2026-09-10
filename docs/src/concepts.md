@@ -32,21 +32,26 @@ falls back to **generic behavior**: any event type is accepted, fields are
 treated as-is, and the topic is built from sorted keys. This mode is intended
 for local development and quick experiments.
 
-Operators may flip the behavior with `notification_schema_strict`:
+Operators can choose the behavior with `notification_schema_strict`. In the
+table below, **Schemas** refers to `notification_schema`, and **Strict mode**
+refers to `notification_schema_strict`.
 
-| `notification_schema` | `notification_schema_strict` | Effective behavior                                                                                   |
-| --------------------- | ---------------------------- | ---------------------------------------------------------------------------------------------------- |
-| non-empty             | `None` (unset)               | **strict**: unknown event types return 400                                                           |
-| empty / absent        | `None` (unset)               | permissive generic fallback                                                                          |
-| any                   | `false`                      | permissive generic fallback (legacy mode; a startup warning is emitted when the schema is non-empty) |
-| any                   | `true`                       | strict: unknown event types return 400; with no schema this is deny-all                              |
+| Schemas | Strict mode | Behavior |
+| --- | --- | --- |
+| Defined | Unset | Unknown event types return HTTP 400. |
+| Empty or absent | Unset | Generic fallback. |
+| Any | `false` | Generic fallback. |
+| Any | `true` | Unknown event types return HTTP 400. |
+
+With strict mode enabled and no schemas defined, all event types are rejected.
+With strict mode disabled and schemas defined, Aviso logs a startup warning.
 
 Independent of the strict-mode knob, the `event_type` value that ends up on
 Prometheus labels and tracing span fields is always bounded: requests whose
 `event_type` is not in the configured schema have their observability label
 collapsed to the literal `"generic"`. In strict mode this collapsing is rarely
 exercised because unknown event_types are already rejected upstream with
-`400 UNKNOWN_EVENT_TYPE`; in permissive (legacy generic-fallback) mode it is the
+`400 UNKNOWN_EVENT_TYPE`; in permissive generic-fallback mode it is the
 main mechanism preventing unbounded label cardinality from user-controlled
 input.
 
