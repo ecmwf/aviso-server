@@ -198,6 +198,7 @@ fn init_benchmark_schema() {
                 port: 0,
                 base_url: "localhost:8000".to_string(),
                 static_files_path: "./src/static".to_string(),
+                homepage: Default::default(),
             },
             notification_backend: NotificationBackendSettings {
                 kind: "in_memory".to_string(),

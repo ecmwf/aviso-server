@@ -711,6 +711,7 @@ mod tests {
                 port: 8000,
                 base_url: "http://localhost".to_string(),
                 static_files_path: "/tmp".to_string(),
+                homepage: Default::default(),
             },
             notification_backend: NotificationBackendSettings {
                 kind: backend_kind.to_string(),
@@ -909,6 +910,7 @@ mod tests {
                 port: 8000,
                 base_url: "http://localhost".to_string(),
                 static_files_path: "/tmp".to_string(),
+                homepage: Default::default(),
             },
             notification_backend: NotificationBackendSettings {
                 kind: "in_memory".to_string(),
@@ -1198,6 +1200,7 @@ mod tests {
                 port: 8000,
                 base_url: "http://localhost".to_string(),
                 static_files_path: "/tmp".to_string(),
+                homepage: Default::default(),
             },
             notification_backend: NotificationBackendSettings {
                 kind: "jetstream".to_string(),
@@ -1267,6 +1270,7 @@ mod tests {
                 port: 8000,
                 base_url: "http://localhost".to_string(),
                 static_files_path: "/tmp".to_string(),
+                homepage: Default::default(),
             },
             notification_backend: NotificationBackendSettings {
                 kind: "jetstream".to_string(),
@@ -1330,6 +1334,7 @@ mod tests {
                 port: 8000,
                 base_url: "http://localhost".to_string(),
                 static_files_path: "/tmp".to_string(),
+                homepage: Default::default(),
             },
             notification_backend: NotificationBackendSettings {
                 kind: "jetstream".to_string(),
@@ -2114,6 +2119,7 @@ mod tests {
                 port: app_port,
                 base_url: "http://localhost".to_string(),
                 static_files_path: "/tmp".to_string(),
+                homepage: Default::default(),
             },
             notification_backend: NotificationBackendSettings {
                 kind: "in_memory".to_string(),

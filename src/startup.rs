@@ -57,6 +57,7 @@ impl Application {
         configuration: Settings,
         shutdown: CancellationToken,
     ) -> Result<Self, std::io::Error> {
+        configuration.application.homepage.validate()?;
         if let Err(e) = validate_schema_storage_policy_support(&configuration) {
             error!(
                 service_name = SERVICE_NAME,
@@ -234,6 +235,7 @@ impl Application {
             shutdown.clone(),
             Arc::new(configuration.auth.clone()),
             app_metrics,
+            configuration.application,
             #[cfg(feature = "ecpds")]
             ecpds_checker,
         )?;
@@ -339,10 +341,7 @@ async fn shutdown_backend(backend: Arc<dyn NotificationBackend>) -> anyhow::Resu
 }
 
 /// Configure operational/infrastructure routes
-fn configure_ops_routes(cfg: &mut web::ServiceConfig) {
-    let static_path = Settings::get_global_application_settings()
-        .static_files_path
-        .clone();
+fn configure_ops_routes(cfg: &mut web::ServiceConfig, static_path: &str) {
     cfg.service(fs::Files::new("/static", static_path).show_files_listing())
         .route("/health", web::get().to(health_check))
         .route("/ready", web::get().to(ready))
@@ -378,9 +377,11 @@ pub fn run(
     shutdown: CancellationToken,
     auth_settings: Arc<AuthSettings>,
     app_metrics: Option<AppMetrics>,
+    application_settings: crate::configuration::ApplicationSettings,
     #[cfg(feature = "ecpds")] ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>>,
 ) -> Result<Server, std::io::Error> {
     let metrics_data = app_metrics.map(web::Data::new);
+    let application_data = web::Data::new(application_settings);
     #[cfg(feature = "ecpds")]
     let ecpds_data = ecpds_checker.map(web::Data::new);
     let server = HttpServer::new(move || {
@@ -392,7 +393,8 @@ pub fn run(
                 SwaggerUi::new("/swagger-ui/{_:.*}")
                     .url("/api-docs/openapi.json", ApiDoc::openapi()),
             )
-            .configure(configure_ops_routes)
+            .app_data(application_data.clone())
+            .configure(|cfg| configure_ops_routes(cfg, &application_data.static_files_path))
             .configure({
                 let auth_settings = Arc::clone(&auth_settings);
                 move |cfg| configure_api_v1(cfg, Arc::clone(&auth_settings))

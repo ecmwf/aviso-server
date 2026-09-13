@@ -22,6 +22,7 @@ See [Topic Encoding](./topic-encoding.md) for rules and examples.
 | [`port`](#application-port) | none |
 | [`base_url`](#application-base-url) | `http://localhost` |
 | [`static_files_path`](#application-static-files-path) | `/app/static` |
+| [`homepage`](#application-homepage) | public client and server links |
 
 </div>
 <details class="setting-panel" id="application-host">
@@ -59,6 +60,43 @@ Used in generated CloudEvent source links.
 </summary>
 
 Static asset root for homepage assets.
+
+</details>
+<details class="setting-panel" id="application-homepage">
+<summary><code>homepage</code>
+<span class="setting-meta"><strong>Default:</strong> public project links ·
+<strong>Type:</strong> <code>object</code></span>
+</summary>
+
+The homepage leads with **Use Aviso**, with client documentation as the primary
+action and the client repository as a secondary link. **Deploy or operate the
+server** has less prominent server links. The separate API Schema link still
+opens this server's Swagger UI.
+
+All four fields are optional strings. Omitting the object or any field keeps
+the corresponding default:
+
+| Field | Default |
+| --- | --- |
+| `client_documentation_url` | `https://sites.ecmwf.int/docs/aviso-client/main/` |
+| `client_repository_url` | `https://github.com/ecmwf/aviso-client` |
+| `server_documentation_url` | `https://sites.ecmwf.int/docs/aviso-server/main/` |
+| `server_repository_url` | `https://github.com/ecmwf/aviso-server` |
+
+Set these under `application.homepage` in YAML. Environment overrides take
+priority over file values, using these exact keys:
+
+```text
+AVISOSERVER_APPLICATION__HOMEPAGE__CLIENT_DOCUMENTATION_URL
+AVISOSERVER_APPLICATION__HOMEPAGE__CLIENT_REPOSITORY_URL
+AVISOSERVER_APPLICATION__HOMEPAGE__SERVER_DOCUMENTATION_URL
+AVISOSERVER_APPLICATION__HOMEPAGE__SERVER_REPOSITORY_URL
+```
+
+Startup rejects URLs that cannot be parsed as absolute HTTP or HTTPS URLs
+with a host, or that contain a username or password. The error names the
+configuration field without printing its value. Links are HTML-escaped when
+rendered, including quotes and query-string ampersands.
 
 </details>
 </div>
