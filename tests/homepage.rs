@@ -145,9 +145,9 @@ async fn homepage_http_uses_app_settings_and_environment_overrides() {
         assert!(html.contains(&format!("href=\"{url}\"")));
     }
     assert!(html.find("id=\"use-aviso\"").unwrap() < html.find("id=\"operate-server\"").unwrap());
-    assert_eq!(html.matches("class=\"btn btn-secondary\"").count(), 5);
+    assert_eq!(html.matches("class=\"btn btn-secondary\"").count(), 4);
     assert!(!html.contains("btn-primary"));
-    for (id, count) in [("use-aviso", 2), ("operate-server", 3)] {
+    for (id, count) in [("use-aviso", 2), ("operate-server", 2)] {
         let section = html
             .split_once(&format!("<section id=\"{id}\">"))
             .unwrap()
@@ -159,7 +159,18 @@ async fn homepage_http_uses_app_settings_and_environment_overrides() {
             section.matches("class=\"btn btn-secondary\"").count(),
             count
         );
+        assert!(section.contains("📖 Documentation"));
+        assert!(section.contains("📚 GitHub repository"));
+        assert!(
+            section.find("📖 Documentation").unwrap()
+                < section.find("📚 GitHub repository").unwrap()
+        );
+        assert!(!section.contains("swagger-ui/"));
     }
+    assert!(
+        html.find("id=\"operate-server\"").unwrap() < html.find("class=\"api-reference\"").unwrap()
+    );
+    assert!(html.contains("Open API reference"));
     assert!(html.contains("href=\"swagger-ui/\""));
     assert!(!html.contains("{{"));
     shutdown.cancel();
