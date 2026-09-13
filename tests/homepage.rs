@@ -145,7 +145,21 @@ async fn homepage_http_uses_app_settings_and_environment_overrides() {
         assert!(html.contains(&format!("href=\"{url}\"")));
     }
     assert!(html.find("id=\"use-aviso\"").unwrap() < html.find("id=\"operate-server\"").unwrap());
-    assert_eq!(html.matches("class=\"btn btn-primary\"").count(), 1);
+    assert_eq!(html.matches("class=\"btn btn-secondary\"").count(), 5);
+    assert!(!html.contains("btn-primary"));
+    for (id, count) in [("use-aviso", 2), ("operate-server", 3)] {
+        let section = html
+            .split_once(&format!("<section id=\"{id}\">"))
+            .unwrap()
+            .1
+            .split_once("</section>")
+            .unwrap()
+            .0;
+        assert_eq!(
+            section.matches("class=\"btn btn-secondary\"").count(),
+            count
+        );
+    }
     assert!(html.contains("href=\"swagger-ui/\""));
     assert!(!html.contains("{{"));
     shutdown.cancel();
