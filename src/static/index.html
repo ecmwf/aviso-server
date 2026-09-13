@@ -14,233 +14,180 @@
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
             line-height: 1.6;
-            color: #333;
-            background:
-                    radial-gradient(circle at 20% 80%, rgba(120, 160, 200, 0.3) 0%, transparent 50%),
-                    radial-gradient(circle at 80% 20%, rgba(160, 200, 240, 0.3) 0%, transparent 50%),
-                    linear-gradient(135deg, #a8c8ec 0%, #7fb3d3 35%, #6ba6cd 70%, #5a9bc4 100%);
-            min-height: 100vh;
-            display: flex;
-            align-items: center;
-            justify-content: center;
+            color: #202d3d;
+            background: #f7f7f5;
         }
 
         .container {
-            width: calc(100% - 2rem);
-            max-width: 800px;
-            margin: 2rem auto;
-            padding: 2rem;
-            background: white;
-            border-radius: 20px;
-            box-shadow: 0 20px 40px rgba(127, 179, 211, 0.15);
-            text-align: center;
+            width: calc(100% - 3rem);
+            max-width: 760px;
+            margin: clamp(2rem, 8vh, 5rem) auto;
         }
 
         .header {
             display: flex;
             align-items: center;
-            justify-content: center;
-            gap: 1.5rem;
-            margin-bottom: 1rem;
+            gap: 0.75rem;
         }
 
         .logo {
-            width: 80px;
-            height: 80px;
-            background: #fff;
-            border-radius: 50%;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            font-size: 2rem;
-            color: white;
-            font-weight: bold;
+            width: 40px;
+            height: 40px;
             flex-shrink: 0;
+            mix-blend-mode: multiply;
         }
 
-        h1 {
-            font-size: 2.5rem;
-            margin: 0;
-            color: #1e3a5f;
-            font-weight: 700;
+        .brand {
+            font-size: 1.25rem;
+            font-weight: 650;
+            letter-spacing: -0.025em;
         }
 
-        .version-badge {
-            display: inline-block;
-            font-size: 0.85rem;
-            font-weight: 600;
-            color: #2c5282;
-            background: rgba(107, 166, 205, 0.18);
-            padding: 0.25rem 0.7rem;
-            border-radius: 999px;
-            vertical-align: middle;
-            margin-left: 0.6rem;
-            letter-spacing: 0.02em;
-        }
-
-        .subtitle {
-            font-size: 1.2rem;
-            color: #4a90b8;
-            margin-bottom: 2rem;
-            font-weight: 500;
-        }
-
-        .description {
-            font-size: 1.1rem;
-            color: #2c5282;
-            margin-bottom: 2rem;
-            line-height: 1.7;
-        }
-
-        .access-notice {
-            background: linear-gradient(135deg, #e3f2fd 0%, #bbdefb 100%);
-            border: 2px solid #2196f3;
-            border-left: 5px solid #1976d2;
-            border-radius: 10px;
-            padding: 1.5rem;
-            margin-bottom: 2rem;
-            font-size: 1rem;
-            color: #0d47a1;
-            box-shadow: 0 4px 12px rgba(33, 150, 243, 0.2);
-            position: relative;
-        }
-
-        .access-notice::before {
-            content: "⚠️";
-            font-size: 1.2rem;
-            margin-right: 0.5rem;
-        }
-
-        .access-notice strong {
-            color: #1565c0;
-        }
-
-
-
-        .buttons {
-            display: flex;
-            gap: 1rem;
-            justify-content: center;
-            flex-wrap: wrap;
-            margin-bottom: 2rem;
-        }
-
-        .btn {
-            display: inline-flex;
-            align-items: center;
-            gap: 0.5rem;
-            padding: 0.75rem 1.5rem;
-            text-decoration: none;
-            border-radius: 10px;
-            font-weight: 600;
-            transition: all 0.3s ease;
-            font-size: 1rem;
-        }
-
-        .btn-secondary {
-            background: white;
-            color: #4a90b8;
-            border: 2px solid #4a90b8;
-        }
-
-        .btn-secondary:hover {
-            background: #4a90b8;
-            color: white;
-            transform: translateY(-2px);
-            box-shadow: 0 10px 20px rgba(74, 144, 184, 0.25);
+        .version {
+            margin-left: auto;
+            color: #626b76;
+            font-size: 0.8125rem;
+            font-variant-numeric: tabular-nums;
+            overflow-wrap: anywhere;
         }
 
         .client-section {
-            text-align: left;
-            background: #eef6fc;
-            border: 1px solid #c8dfef;
-            border-radius: 12px;
-            padding: 1.5rem;
+            padding: 3.5rem 0 2.5rem;
         }
 
-        h2 { color: #1e3a5f; font-size: 1.5rem; }
-        section p { margin: 0.5rem 0 1.25rem; color: #2c5282; }
-        .client-section .buttons { justify-content: flex-start; margin-bottom: 0; align-items: center; }
-        .btn-primary { background: #245b89; color: white; border: 2px solid #245b89; }
-        .btn-primary:hover { background: #1e3a5f; border-color: #1e3a5f; }
-        .text-link { color: #245b89; text-underline-offset: 0.2em; padding: 0.5rem 0; }
-        a:focus-visible { outline: 3px solid #1976d2; outline-offset: 4px; }
-        .server-section { text-align: left; padding: 1.5rem 0; }
-        .server-section h2 { font-size: 1.1rem; }
-        .server-section p { font-size: 0.95rem; margin-bottom: 0.5rem; }
-        .server-links { display: flex; flex-wrap: wrap; gap: 0.5rem 1.5rem; }
-        .api-reference { border-top: 1px solid #dce6ed; padding-top: 1rem; font-size: 0.9rem; }
-
-        .feature h3 {
-            font-size: 1.1rem;
-            margin-bottom: 0.5rem;
-            color: #1e3a5f;
+        .eyebrow {
+            color: #466581;
+            font-size: 0.8125rem;
+            font-weight: 600;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            margin-bottom: 1rem;
         }
 
-        .feature p {
-            font-size: 0.9rem;
-            color: #4a90b8;
+        h1 {
+            max-width: 560px;
+            font-size: clamp(2rem, 4.5vw, 3rem);
+            line-height: 1.15;
+            font-weight: 650;
+            letter-spacing: -0.04em;
+            text-wrap: balance;
         }
 
-        @media (max-width: 768px) {
-            .container {
-                margin: 1rem;
-                padding: 1.5rem;
+        .description {
+            max-width: 560px;
+            margin-top: 1.25rem;
+            color: #525e6b;
+            font-size: 1.0625rem;
+        }
+
+        .buttons {
+            display: flex;
+            align-items: center;
+            flex-wrap: wrap;
+            gap: 0.75rem 1.5rem;
+            margin-top: 1.75rem;
+        }
+
+        .btn-primary {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 44px;
+            padding: 0.625rem 1.25rem;
+            border: 1px solid #28577b;
+            border-radius: 5px;
+            background: #28577b;
+            color: #fff;
+            font-size: 0.9375rem;
+            font-weight: 600;
+            text-decoration: none;
+        }
+
+        .btn-primary:hover {
+            background: #1d405c;
+            border-color: #1d405c;
+        }
+
+        .text-link {
+            display: inline-flex;
+            align-items: center;
+            min-height: 44px;
+            padding: 0.5rem 0;
+            color: #28577b;
+            font-size: 0.9375rem;
+            text-decoration-thickness: 1px;
+            text-underline-offset: 0.25em;
+        }
+
+        .text-link:hover {
+            color: #1d405c;
+            text-decoration-thickness: 2px;
+        }
+
+        a:focus-visible {
+            outline: 3px solid #1976d2;
+            outline-offset: 4px;
+        }
+
+        .access-notice {
+            max-width: 620px;
+            margin-top: 1.25rem;
+            color: #626b76;
+            font-size: 0.8125rem;
+        }
+
+        .server-section {
+            border-top: 1px solid #d8dcdf;
+            padding-top: 1.75rem;
+        }
+
+        h2 {
+            font-size: 1rem;
+            font-weight: 600;
+        }
+
+        .server-section p {
+            margin-top: 0.375rem;
+            color: #626b76;
+            font-size: 0.9375rem;
+        }
+
+        .server-links {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0 1.5rem;
+            margin-top: 0.5rem;
+        }
+
+        @media (max-width: 480px) {
+            .client-section {
+                padding: 2.5rem 0 2rem;
             }
 
-            .header {
+            .server-links {
                 flex-direction: column;
-                gap: 1rem;
-            }
-
-            h1 {
-                font-size: 2rem;
-            }
-
-            .logo {
-                width: 60px;
-                height: 60px;
-            }
-
-            .buttons {
-                flex-direction: column;
-                align-items: center;
-            }
-
-            .btn {
-                width: 100%;
-                max-width: 300px;
-                justify-content: center;
+                align-items: flex-start;
             }
         }
-
     </style>
 </head>
 <body>
 <main class="container">
-    <div class="header">
-        <img src="/static/logo.png" alt="Aviso" class="logo">
-        <h1>Aviso <span class="version-badge">v{{SERVER_VERSION}}</span></h1>
-    </div>
-
-    <div class="subtitle">Real-time Data Notification Service</div>
-
-    <div class="description">
-        Aviso sends notifications when data is ready, so your workflows can respond without polling. Connect your processing across HPC and cloud environments.
-    </div>
-
-    <div class="access-notice">
-        <strong>Access Notice:</strong> Currently limited to registered users only.<br>
-        Please contact the ECMWF Service Desk for access and configuration instructions.
-    </div>
+    <header class="header">
+        <img src="/static/logo.png" alt="" class="logo" width="40" height="40">
+        <span class="brand">Aviso</span>
+        <span class="version">v{{SERVER_VERSION}}</span>
+    </header>
 
     <section class="client-section" aria-labelledby="use-aviso">
-        <h2 id="use-aviso">Use Aviso</h2>
-        <p>Start with the Aviso client to receive notifications and trigger your workflows.</p>
+        <p class="eyebrow">Data notification service</p>
+        <h1 id="use-aviso">Know when your data is ready.</h1>
+        <p class="description">Receive notifications with the Aviso client and trigger your workflows without polling, across HPC and cloud environments.</p>
         <div class="buttons">
-            <a href="{{CLIENT_DOCUMENTATION_URL}}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">Read the client docs</a>
-            <a href="{{CLIENT_REPOSITORY_URL}}" target="_blank" rel="noopener noreferrer" class="text-link">Client repository</a>
+            <a href="{{CLIENT_DOCUMENTATION_URL}}" target="_blank" rel="noopener noreferrer" class="btn btn-primary">Get started</a>
+            <a href="{{CLIENT_REPOSITORY_URL}}" target="_blank" rel="noopener noreferrer" class="text-link">Client source</a>
         </div>
+        <p class="access-notice">Currently limited to registered users only. Please contact the ECMWF Service Desk for access and configuration instructions.</p>
     </section>
 
     <section class="server-section" aria-labelledby="operate-server">
@@ -248,13 +195,10 @@
         <p>Running an Aviso service? Find setup and configuration guidance here.</p>
         <div class="server-links">
             <a href="{{SERVER_DOCUMENTATION_URL}}" target="_blank" rel="noopener noreferrer" class="text-link">Server documentation</a>
-            <a href="{{SERVER_REPOSITORY_URL}}" target="_blank" rel="noopener noreferrer" class="text-link">Server repository</a>
+            <a href="{{SERVER_REPOSITORY_URL}}" target="_blank" rel="noopener noreferrer" class="text-link">Server source</a>
+            <a href="swagger-ui/" class="text-link">API Schema</a>
         </div>
     </section>
-
-    <div class="api-reference">
-        <a href="swagger-ui/" class="text-link">API Schema</a>
-    </div>
 </main>
 </body>
 </html>
