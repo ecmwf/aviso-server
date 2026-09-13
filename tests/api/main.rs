@@ -20,3 +20,4 @@ mod streaming;
 mod streaming_jetstream;
 mod strict_schema;
 mod test_utils;
+mod unknown_subscriber_filters;
