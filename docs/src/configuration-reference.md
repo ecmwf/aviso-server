@@ -68,10 +68,9 @@ Static asset root for homepage assets.
 <strong>Type:</strong> <code>object</code></span>
 </summary>
 
-The homepage leads with **Use Aviso**, with client documentation as the primary
-action and the client repository as a secondary link. **Deploy or operate the
-server** has less prominent server links. The separate API Schema link still
-opens this server's Swagger UI.
+The homepage puts the **Aviso client** card before the **Aviso server** card.
+Each card links to its documentation and GitHub repository. A separate
+**HTTP API reference** section opens this server's Swagger UI.
 
 All four fields are optional strings. Omitting the object or any field keeps
 the corresponding default:
