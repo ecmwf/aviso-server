@@ -293,8 +293,9 @@ For schema-backed event types, identifier fields in watch/replay requests accept
 **constraint objects** instead of (or in addition to) scalar values. A scalar
 value is treated as an implicit `eq` constraint.
 
-Constraint objects are **rejected on `/notification`**: notify only accepts
-scalar values.
+Constraint objects are **rejected on `/notification`**: publish concrete
+identifier values in the shapes accepted by their handlers, including arrays
+for spatial identifiers, rather than watch/replay predicates.
 
 ### Supported operators by field type
 
