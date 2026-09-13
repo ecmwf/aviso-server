@@ -341,6 +341,8 @@ pub struct NotificationBackendSettings {
 
 #[derive(Deserialize, Serialize, Clone, Debug)]
 pub struct ApplicationSettings {
+    #[serde(default)]
+    pub homepage: super::HomepageSettings,
     pub host: String,
     #[serde(deserialize_with = "deserialize_number_from_string")]
     pub port: u16,

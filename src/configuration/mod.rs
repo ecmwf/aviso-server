@@ -13,6 +13,7 @@
 //! - `units`: strict parsers for duration/size config literals
 mod auth;
 mod global;
+mod homepage;
 mod loader;
 mod topic_validation;
 mod types;
@@ -20,6 +21,7 @@ mod units;
 mod validation;
 
 pub use auth::{AuthMode, AuthSettings};
+pub use homepage::HomepageSettings;
 pub use loader::get_configuration;
 pub use topic_validation::validate_topic_schema_settings;
 pub use types::*;

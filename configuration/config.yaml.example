@@ -9,6 +9,12 @@ application:
   base_url: "http://localhost"
   # Landing-page assets.
   static_files_path: "./src/static"
+  # Optional public homepage links. Omitted fields keep these defaults.
+  homepage:
+    client_documentation_url: "https://sites.ecmwf.int/docs/aviso-client/main/"
+    client_repository_url: "https://github.com/ecmwf/aviso-client"
+    server_documentation_url: "https://sites.ecmwf.int/docs/aviso-server/main/"
+    server_repository_url: "https://github.com/ecmwf/aviso-server"
 
 watch_endpoint:
   # SSE heartbeat interval (seconds).

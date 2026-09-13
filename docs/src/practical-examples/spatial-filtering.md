@@ -14,7 +14,7 @@ you need geographic precision.
 
 ## Seed Notifications
 
-These two notifications differ only by polygon shape.
+These two notifications have different polygon shapes and anomaly values.
 
 ```bash
 curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
@@ -26,7 +26,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "run_time":"1200",
       "severity":"4",
       "anomaly":"42.5",
-      "polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)"
+      "polygon":[[52.5,13.4],[52.6,13.5],[52.5,13.6],[52.4,13.5],[52.5,13.4]]
     },
     "payload":{"note":"poly-a"}
   }'
@@ -40,7 +40,7 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/notification" \
       "run_time":"1200",
       "severity":"4",
       "anomaly":"87.2",
-      "polygon":"(10.0,10.0,10.2,10.0,10.2,10.2,10.0,10.2,10.0,10.0)"
+      "polygon":[[10.0,10.0],[10.2,10.0],[10.2,10.2],[10.0,10.2],[10.0,10.0]]
     },
     "payload":{"note":"poly-b"}
   }'
@@ -63,7 +63,10 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":"north",
       "run_time":"1200",
       "severity":"4",
-      "polygon":"(52.52,13.45,52.62,13.55,52.52,13.65,52.42,13.55,52.52,13.45)"
+      "polygon":[
+        [52.52,13.45],[52.62,13.55],[52.52,13.65],
+        [52.42,13.55],[52.52,13.45]
+      ]
     },
     "from_id":"1"
   }'
@@ -88,7 +91,7 @@ curl -N -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":"north",
       "run_time":"1200",
       "severity":"4",
-      "point":"52.55,13.50"
+      "point":[52.55,13.50]
     },
     "from_id":"1"
   }'
@@ -135,8 +138,8 @@ curl -sS -X POST "http://127.0.0.1:8000/api/v1/replay" \
       "region":"north",
       "run_time":"1200",
       "severity":"4",
-      "polygon":"(52.5,13.4,52.6,13.5,52.5,13.6,52.4,13.5,52.5,13.4)",
-      "point":"52.55,13.50"
+      "polygon":[[52.5,13.4],[52.6,13.5],[52.5,13.6],[52.4,13.5],[52.5,13.4]],
+      "point":[52.55,13.50]
     },
     "from_id":"1"
   }'
