@@ -293,6 +293,10 @@ For schema-backed event types, identifier fields in watch/replay requests accept
 **constraint objects** instead of (or in addition to) scalar values. A scalar
 value is treated as an implicit `eq` constraint.
 
+For schema-backed event types, unknown identifier names return HTTP 400 rather
+than being ignored. The supported spatial filters (`point` for polygon schemas
+and `polygon` for point-cloud schemas) remain valid.
+
 Constraint objects are **rejected on `/notification`**: publish concrete
 identifier values in the shapes accepted by their handlers, including arrays
 for spatial identifiers, rather than watch/replay predicates.

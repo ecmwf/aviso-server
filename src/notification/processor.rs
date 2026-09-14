@@ -266,6 +266,21 @@ impl<'a> NotificationProcessor<'a> {
             );
         }
 
+        for field_name in request_params.keys() {
+            let is_spatial_filter = (field_name == "polygon" && has_point_cloud_schema)
+                || (field_name == "point"
+                    && schema.identifier.get("polygon").is_some_and(|field| {
+                        matches!(field.rule, ValidationRules::PolygonHandler { .. })
+                    }));
+            if !schema.identifier.contains_key(field_name) && !is_spatial_filter {
+                bail!(
+                    "Unknown field '{}' provided for {} operation",
+                    field_name,
+                    operation_name
+                );
+            }
+        }
+
         for (field_name, field_config) in &schema.identifier {
             let is_required = field_config.is_required();
 
@@ -573,6 +588,59 @@ mod tests {
             identifier,
             storage_policy: None,
             auth: None,
+        }
+    }
+
+    #[test]
+    fn streaming_rejects_unknown_names_before_missing_required_fields() {
+        use serde_json::json;
+
+        let registry = NotificationRegistry::from_config(&HashMap::from([(
+            "extreme".to_string(),
+            create_float_constraint_schema(),
+        )]));
+        let processor = NotificationProcessor::new(&registry);
+        for operation in [OperationType::Watch, OperationType::Replay] {
+            for value in [json!(2.0), json!({"gte": 2.0})] {
+                for include_required in [false, true] {
+                    let mut params = HashMap::from([("severtiy".to_string(), value.clone())]);
+                    if include_required {
+                        params.insert("severity".to_string(), json!(2.0));
+                    }
+                    let error = processor
+                        .process_request_with_values("extreme", &params, &None, operation)
+                        .expect_err("unknown filter must not be discarded");
+                    assert!(error.to_string().contains("Unknown field 'severtiy'"));
+                }
+                let params = HashMap::from([("severity".to_string(), value)]);
+                assert!(
+                    processor
+                        .process_request_with_values("extreme", &params, &None, operation)
+                        .is_ok()
+                );
+            }
+            for name in ["point", "polygon"] {
+                let params = HashMap::from([(name.to_string(), json!([0, 0]))]);
+                let error = processor
+                    .process_request_with_values("extreme", &params, &None, operation)
+                    .unwrap_err();
+                assert!(
+                    error
+                        .to_string()
+                        .contains(&format!("Unknown field '{name}'"))
+                );
+            }
+            let params = HashMap::from([("severtiy".to_string(), json!(2.0))]);
+            assert!(
+                processor
+                    .process_request_with_values("generic", &params, &None, operation)
+                    .is_ok()
+            );
+            let params = HashMap::from([("severtiy".to_string(), json!({"gte": 2.0}))]);
+            let error = processor
+                .process_request_with_values("generic", &params, &None, operation)
+                .unwrap_err();
+            assert!(error.to_string().contains("not supported without schema"));
         }
     }
 
