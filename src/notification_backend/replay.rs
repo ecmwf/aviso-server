@@ -18,6 +18,17 @@ pub enum StartAt {
     Date(DateTime<Utc>),
 }
 
+/// Where a replay stops: its end point.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EndAt {
+    /// At the last message stored when the replay starts.
+    Latest,
+    /// At an inclusive backend sequence.
+    Sequence(u64),
+    /// At the last message stored at or before an inclusive UTC timestamp.
+    Date(DateTime<Utc>),
+}
+
 /// Parameters for batch message retrieval
 ///
 /// Encapsulates all parameters needed for retrieving historical messages

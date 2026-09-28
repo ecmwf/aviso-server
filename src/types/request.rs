@@ -39,6 +39,14 @@ pub struct NotificationRequest {
     #[serde(default)]
     #[schema(example = "2025-09-15T12:00:00Z")]
     pub from_date: Option<String>,
+    /// Optional inclusive end sequence for the /replay endpoint
+    #[serde(default)]
+    #[schema(example = "500")]
+    pub to_id: Option<String>,
+    /// Optional inclusive end date for the /replay endpoint
+    #[serde(default)]
+    #[schema(example = "2025-09-16T12:00:00Z")]
+    pub to_date: Option<String>,
     /// Optional JSON payload.
     /// If omitted for optional payload schemas, the backend stores `null`.
     #[serde(default)]
@@ -369,6 +377,8 @@ mod tests {
             identifier: HashMap::new(),
             from_id: None,
             from_date: None,
+            to_id: None,
+            to_date: None,
             payload: None,
         }
     }
