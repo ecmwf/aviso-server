@@ -66,4 +66,11 @@ impl NotificationBackend for EmptyReplay {
     async fn history_end(&self, _: &str) -> Result<u64> {
         Ok(1000)
     }
+    async fn first_sequence_after(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<u64>> {
+        panic!("these replays have no end point")
+    }
 }

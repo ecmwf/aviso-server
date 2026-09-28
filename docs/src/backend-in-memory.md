@@ -14,7 +14,8 @@
 - Topic/message limits are enforced with eviction.
 - No shared state across replicas or pods.
 - Supports live watch subscriptions (live-only delivery).
-- Supports replay batch retrieval for `from_id` and `from_date`.
+- Supports replay batch retrieval for `from_id` and `from_date`, with optional
+  `to_id` and `to_date` end points.
 - Uses in-process fanout only, so subscriptions/replay are node-local.
 
 Historical delivery uses the same request-wide

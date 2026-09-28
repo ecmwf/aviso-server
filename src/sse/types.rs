@@ -76,6 +76,11 @@ pub(crate) enum ControlEvent {
         topic: String,
         from_sequence: Option<u64>,
         from_date: Option<DateTime<Utc>>,
+        /// Last sequence the replay can deliver, when the request set an end
+        /// point.
+        end_sequence: Option<u64>,
+        /// End date the request set, if any.
+        to_date: Option<DateTime<Utc>>,
         batch_size: usize,
         timestamp: DateTime<Utc>,
         request_id: String,

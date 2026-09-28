@@ -6,12 +6,18 @@
 // granted to it by virtue of its status as an intergovernmental organisation nor
 // does it submit to any jurisdiction.
 
-use actix_web::{App, HttpServer, web};
 use aviso_server::configuration::Settings;
 use aviso_server::notification_backend::build_backend;
 use reqwest::{Client, StatusCode};
 use serde_json::{Value, json};
-use tokio_util::sync::CancellationToken;
+
+#[path = "common/nats.rs"]
+mod nats;
+#[path = "common/replay_app.rs"]
+mod replay_app;
+
+use nats::{nats_tests_enabled, nats_url};
+use replay_app::{ReplayApp, sse_data_events};
 
 #[tokio::test]
 async fn default_cap_uses_10001st_notification_only_as_lookahead() {
@@ -34,17 +40,14 @@ async fn default_cap_uses_10001st_notification_only_as_lookahead() {
         .build()
         .unwrap();
     for kind in ["in_memory", "jetstream"] {
-        if kind == "jetstream"
-            && !std::env::var("AVISO_RUN_NATS_TESTS")
-                .is_ok_and(|value| value == "1" || value.eq_ignore_ascii_case("true"))
-        {
+        if kind == "jetstream" && !nats_tests_enabled() {
             continue;
         }
         config.notification_backend = serde_json::from_value(json!({
-            "kind": kind, "in_memory": {"max_topics": 20000}, "jetstream": {
-                "nats_url": std::env::var("NATS_URL").unwrap_or_else(|_| "nats://localhost:4222".into())
-            }
-        })).unwrap();
+            "kind": kind, "in_memory": {"max_topics": 20000},
+            "jetstream": {"nats_url": nats_url()}
+        }))
+        .unwrap();
         let backend = build_backend(&config.notification_backend).await.unwrap();
         for number in 1..=10_001 {
             backend
@@ -55,28 +58,8 @@ async fn default_cap_uses_10001st_notification_only_as_lookahead() {
                 .await
                 .unwrap();
         }
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = format!("http://{}", listener.local_addr().unwrap());
-        let app_config = config.clone();
-        let app_backend = backend.clone();
-        let server = HttpServer::new(move || {
-            App::new()
-                .wrap(tracing_actix_web::TracingLogger::default())
-                .app_data(web::Data::new(app_config.clone()))
-                .app_data(web::Data::new(app_backend.clone()))
-                .app_data(web::Data::new(CancellationToken::new()))
-                .route(
-                    "/replay",
-                    web::post().to(aviso_server::routes::replay::replay),
-                )
-                .route("/watch", web::post().to(aviso_server::routes::watch::watch))
-        })
-        .workers(1)
-        .listen(listener)
-        .unwrap()
-        .run();
-        let handle = server.handle();
-        let task = tokio::spawn(server);
+        let app = ReplayApp::start(&config, backend.clone());
+        let address = &app.address;
         for (cursor, expected, truncated) in [
             (json!({"from_id": "0"}), 10_000, true),
             (json!({"from_id": "2"}), 10_000, false),
@@ -109,11 +92,7 @@ async fn default_cap_uses_10001st_notification_only_as_lookahead() {
                 );
                 assert!(!body.contains("event: error"));
                 assert!(!body.contains("event: live-notification"));
-                let events: Vec<Value> = body
-                    .lines()
-                    .filter_map(|line| line.strip_prefix("data:"))
-                    .map(|data| serde_json::from_str(data.trim()).unwrap())
-                    .collect();
+                let events: Vec<Value> = sse_data_events(&body);
                 assert_eq!(events[0]["batch_size"], 100);
                 let limits: Vec<_> = events
                     .iter()
@@ -134,8 +113,7 @@ async fn default_cap_uses_10001st_notification_only_as_lookahead() {
                 assert_eq!(events.last().unwrap()["reason"], "end_of_stream");
             }
         }
-        handle.stop(true).await;
-        task.await.unwrap().unwrap();
+        app.stop().await;
         backend.wipe_stream(&base.to_uppercase()).await.unwrap();
     }
 }

@@ -150,6 +150,8 @@ pub(crate) fn frame_to_sse_bytes(
                 topic,
                 from_sequence,
                 from_date,
+                end_sequence,
+                to_date,
                 batch_size,
                 timestamp,
                 request_id,
@@ -161,6 +163,8 @@ pub(crate) fn frame_to_sse_bytes(
                         "topic": decode_subject_for_display(&topic),
                         "from_sequence": from_sequence,
                         "from_date": from_date.map(format_stream_timestamp),
+                        "end_sequence": end_sequence,
+                        "to_date": to_date.map(format_stream_timestamp),
                         "batch_size": batch_size,
                         "timestamp": format_stream_timestamp(timestamp),
                         "request_id": request_id,
@@ -572,6 +576,8 @@ mod tests {
                 topic: "polygon.*.1200".to_string(),
                 from_sequence: Some(0),
                 from_date: Some(from_date),
+                end_sequence: Some(40),
+                to_date: Some(control_timestamp),
                 batch_size: 100,
                 timestamp: control_timestamp,
                 request_id: TEST_REQUEST_ID.to_string(),
@@ -584,6 +590,8 @@ mod tests {
 
         assert!(text.contains(r#""timestamp":"2026-02-25T18:58:23Z""#));
         assert!(text.contains(r#""from_date":"2026-02-25T17:01:02Z""#));
+        assert!(text.contains(r#""end_sequence":40"#));
+        assert!(text.contains(r#""to_date":"2026-02-25T18:58:23Z""#));
     }
 
     #[test]
@@ -612,6 +620,8 @@ mod tests {
                 topic: "test.topic".to_string(),
                 from_sequence: Some(42),
                 from_date: None,
+                end_sequence: None,
+                to_date: None,
                 batch_size: 10,
                 timestamp: Utc::now(),
                 request_id: TEST_REQUEST_ID.to_string(),

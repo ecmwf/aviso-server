@@ -19,7 +19,7 @@ use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use crate::types::BatchResult;
 use anyhow::Result;
 use async_trait::async_trait;
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use futures_util::stream::unfold;
 use std::{
     collections::{HashMap, VecDeque},
@@ -250,6 +250,19 @@ impl InMemoryBackend {
     }
 }
 
+/// Stored messages of every topic that match a watch pattern, in no
+/// particular order.
+fn matching_messages<'a>(
+    state: &'a BackendState,
+    app_filter_pattern: &'a [String],
+) -> impl Iterator<Item = &'a NotificationMessage> {
+    state
+        .topics
+        .values()
+        .flat_map(|topic_state| topic_state.messages.iter())
+        .filter(|message| matches_watch_pattern(&message.topic, app_filter_pattern))
+}
+
 #[async_trait]
 impl NotificationBackend for InMemoryBackend {
     fn capabilities(&self) -> BackendCapabilities {
@@ -405,12 +418,8 @@ impl NotificationBackend for InMemoryBackend {
 
         let mut messages = {
             let state = self.state.lock().await;
-            state
-                .topics
-                .values()
-                .flat_map(|topic_state| topic_state.messages.iter())
+            matching_messages(&state, &app_filter_pattern)
                 .filter(|message| message.sequence <= params.end_sequence)
-                .filter(|message| matches_watch_pattern(&message.topic, &app_filter_pattern))
                 .cloned()
                 .collect::<Vec<_>>()
         };
@@ -485,6 +494,15 @@ impl NotificationBackend for InMemoryBackend {
     async fn history_end(&self, topic: &str) -> Result<u64> {
         analyze_watch_pattern(topic)?;
         Ok(self.state.lock().await.next_sequence - 1)
+    }
+
+    async fn first_sequence_after(&self, topic: &str, at: DateTime<Utc>) -> Result<Option<u64>> {
+        let (_backend_pattern, app_filter_pattern) = analyze_watch_pattern(topic)?;
+        let state = self.state.lock().await;
+        Ok(matching_messages(&state, &app_filter_pattern)
+            .filter(|message| message.timestamp.is_some_and(|stored| stored > at))
+            .map(|message| message.sequence)
+            .min())
     }
 }
 

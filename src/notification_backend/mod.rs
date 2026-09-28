@@ -139,6 +139,17 @@ pub trait NotificationBackend: Send + Sync {
     /// This does not freeze storage: retention and deletion still apply.
     async fn history_end(&self, topic: &str) -> Result<u64>;
 
+    /// A sequence that bounds a replay of `topic` ending at `at`: a message of
+    /// `topic` has a lower sequence exactly when it was stored at or before
+    /// `at`. `None` means nothing was stored after `at`. A replay that ends at `at`
+    /// stops one sequence before it.
+    ///
+    /// Backends may return the first message stored after `at` on a broader
+    /// set of subjects than `topic`, such as its backend subject; the replay
+    /// filters those out. Like `from_date`, this relies on storage timestamps
+    /// increasing with the sequence.
+    async fn first_sequence_after(&self, topic: &str, at: DateTime<Utc>) -> Result<Option<u64>>;
+
     async fn shutdown(&self) -> Result<()> {
         Ok(())
     }

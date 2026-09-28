@@ -19,6 +19,14 @@ publishing. The returned live stream must start strictly above that bound.
 Never combine a subscription with a later, independently sampled stream tail.
 `history_end(topic)` captures the replay-only bound without a live subscription.
 
+`first_sequence_after(topic, at)` returns a sequence that bounds a replay ending
+at `at`: a message of `topic` has a lower sequence exactly when it was stored at
+or before `at`. Return `None` when nothing was stored after `at`. A replay with
+`to_date` ends one sequence before the returned value. The first message stored
+after `at` on the topic's backend subject is a valid answer, even when it
+belongs to another topic. Use the storage time that becomes the CloudEvent
+`time`.
+
 `get_messages_batch` must enforce `BatchParams.end_sequence` before filtering,
 rendering or pagination. Preserve that bound when advancing the start cursor.
 Completion must not depend on finding a message exactly at the bound: it may be

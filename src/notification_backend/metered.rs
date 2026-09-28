@@ -22,6 +22,7 @@ use std::time::Instant;
 
 use anyhow::Result;
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 
 use super::replay::BatchParams;
 use super::{
@@ -158,6 +159,10 @@ impl NotificationBackend for MeteredBackend {
         self.inner.history_end(topic).await
     }
 
+    async fn first_sequence_after(&self, topic: &str, at: DateTime<Utc>) -> Result<Option<u64>> {
+        self.inner.first_sequence_after(topic, at).await
+    }
+
     async fn shutdown(&self) -> Result<()> {
         self.inner.shutdown().await
     }
@@ -216,6 +221,9 @@ mod tests {
         }
         async fn history_end(&self, _: &str) -> Result<u64> {
             Ok(0)
+        }
+        async fn first_sequence_after(&self, _: &str, _: DateTime<Utc>) -> Result<Option<u64>> {
+            Ok(None)
         }
     }
 

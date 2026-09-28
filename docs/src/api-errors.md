@@ -123,7 +123,7 @@ auxiliary filters where present.
 | `INVALID_REQUEST_SHAPE` | `400` | JSON structure cannot be deserialized into request model. |
 | `INVALID_NOTIFICATION_REQUEST` | `400` | Notification request failed business validation. |
 | `INVALID_WATCH_REQUEST` | `400` | Watch request failed validation (replay/spatial/schema rules). |
-| `INVALID_REPLAY_REQUEST` | `400` | Replay request failed validation (start cursor/spatial/schema rules). |
+| `INVALID_REPLAY_REQUEST` | `400` | Replay request failed validation (start or end cursor/spatial/schema rules). |
 | `UNAUTHORIZED` | `401` | Missing or invalid credentials (no token, bad format, expired, bad signature). |
 | `FORBIDDEN` | `403` | Valid credentials but user lacks the required role. |
 | `NOTIFICATION_PROCESSING_FAILED` | `500` | Notification processing pipeline failed before storage. |

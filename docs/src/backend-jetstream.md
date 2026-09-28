@@ -411,6 +411,9 @@ Fields to check:
 - **Time replay** (`from_date`): uses JetStream start-time delivery policy.
 - The API enforces mutual exclusivity: `from_id` and `from_date` cannot both be
   present.
+- **End point** (`to_id` or `to_date`): lowers the replay's end sequence. For
+  `to_date`, a pull consumer that starts one nanosecond after it reads one
+  message; the replay ends at the sequence before that message.
 
 ---
 

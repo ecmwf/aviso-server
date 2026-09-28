@@ -17,7 +17,7 @@ use tracing_actix_web::RequestId;
 
 use crate::configuration::Settings;
 use crate::notification::{IdentifierConstraint, NotificationHandler, OperationType};
-use crate::notification_backend::replay::StartAt;
+use crate::notification_backend::replay::{EndAt, StartAt};
 use crate::types::NotificationRequest;
 
 /// Context containing all validated request information
@@ -28,6 +28,9 @@ pub struct StreamingRequestContext {
     pub canonicalized_params: HashMap<String, String>,
     pub identifier_constraints: HashMap<String, IdentifierConstraint>,
     pub start_at: StartAt,
+    /// Where a replay stops: its end point. Always [`EndAt::Latest`] for
+    /// watch.
+    pub end_at: EndAt,
     pub request_id: RequestId,
     /// True if the event_type came from a configured schema entry; false if
     /// it fell through to the generic permissive path.
@@ -92,7 +95,7 @@ impl StreamingRequestProcessor {
         config: ValidationConfig,
     ) -> Result<StreamingRequestContext> {
         // Validate replay parameters based on configuration
-        let start_at = Self::validate_replay_parameters(request, &config)?;
+        let (start_at, end_at) = Self::validate_replay_parameters(request, &config)?;
 
         // Process notification request using schema
         let notification_handler = NotificationHandler::from_config(
@@ -113,6 +116,7 @@ impl StreamingRequestProcessor {
             canonicalized_params: notification_result.canonicalized_params,
             identifier_constraints: notification_result.identifier_constraints,
             start_at,
+            end_at,
             request_id,
             from_schema: notification_result.from_schema,
         })
@@ -122,9 +126,16 @@ impl StreamingRequestProcessor {
     fn validate_replay_parameters(
         request: &NotificationRequest,
         config: &ValidationConfig,
-    ) -> Result<StartAt> {
+    ) -> Result<(StartAt, EndAt)> {
         request.validate_spatial_filters()?;
         let start_at = request.validate_start_at()?;
+
+        // Only /replay accepts an end point.
+        match config.operation_type {
+            OperationType::Replay => {}
+            OperationType::Watch => request.reject_end_point("/watch")?,
+            OperationType::Notify => request.reject_end_point("/notification")?,
+        }
 
         // Check if replay parameters are required but missing
         if config.require_replay_params && matches!(start_at, StartAt::LiveOnly) {
@@ -134,6 +145,7 @@ impl StreamingRequestProcessor {
             );
         }
 
-        Ok(start_at)
+        let end_at = request.validate_end_at(start_at)?;
+        Ok((start_at, end_at))
     }
 }

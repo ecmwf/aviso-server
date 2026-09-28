@@ -203,8 +203,9 @@ notifications as they arrive, optionally starting from a historical point.
 ### Replay: `POST /api/v1/replay`
 
 Opens a finite SSE stream of **historical notifications only**. Requires exactly
-one of `from_id` or `from_date`. Stream closes automatically when history is
-exhausted.
+one of `from_id` or `from_date`, and accepts at most one of `to_id` or `to_date`
+to end earlier. Stream closes automatically when history is exhausted or the end
+point is reached.
 
 For end-to-end working examples of all three operations, including spatial and
 constraint filtering, see

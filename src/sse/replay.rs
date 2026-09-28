@@ -31,7 +31,7 @@ use crate::notification::wildcard_matcher::{
 };
 use crate::notification_backend::{
     NotificationBackend, NotificationMessage,
-    replay::{BatchParams, StartAt},
+    replay::{BatchParams, EndAt, StartAt},
 };
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 
@@ -46,7 +46,7 @@ pub(crate) fn create_historical_replay_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     start_at: StartAt,
-    history_end: u64,
+    end_sequence: u64,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
     prepared_spatial_filter: Arc<Option<PreparedSpatialFilter>>,
@@ -59,7 +59,7 @@ pub(crate) fn create_historical_replay_stream(
     // Build the initial pagination params based on either sequence or date
     let initial_params = BatchParams::new(topic.clone(), watch_config.replay_batch_size)
         .with_start_at(start_at)
-        .with_end_sequence(history_end);
+        .with_end_sequence(end_sequence);
     let base_url = &Settings::get_global_application_settings().base_url;
     unfold(
         (
@@ -261,6 +261,8 @@ pub(crate) async fn create_historical_then_live_stream(
         topic: topic.clone(),
         from_sequence,
         from_date,
+        end_sequence: None,
+        to_date: None,
         batch_size: watch_config.replay_batch_size,
         timestamp: chrono::Utc::now(),
         request_id: request_id.clone(),
@@ -344,6 +346,29 @@ pub(crate) async fn create_historical_then_live_stream(
     Ok(create_sse_response(byte_stream, sse_guard))
 }
 
+/// The inclusive last sequence a replay-only stream can deliver: the last
+/// message stored now, lowered to the end point when there is one.
+///
+/// An end date becomes the sequence before the first message stored after
+/// it. When nothing was stored after it, the replay runs to the last message.
+async fn resolve_end_sequence(
+    backend: &dyn NotificationBackend,
+    topic: &str,
+    end_at: EndAt,
+) -> Result<u64> {
+    let history_end = backend.history_end(topic).await?;
+    Ok(match end_at {
+        EndAt::Latest => history_end,
+        EndAt::Sequence(to_id) => history_end.min(to_id),
+        EndAt::Date(to_date) => match backend.first_sequence_after(topic, to_date).await? {
+            // Sequences start at 1, so `first_after - 1` cannot underflow;
+            // 0 means an empty replay.
+            Some(first_after) => history_end.min(first_after.saturating_sub(1)),
+            None => history_end,
+        },
+    })
+}
+
 /// Create a replay-only stream (historical messages then close).
 ///
 /// This stream ends after replay completion; it does not transition to live
@@ -354,6 +379,7 @@ pub(crate) async fn create_replay_only_stream(
     topic: String,
     backend: Arc<dyn NotificationBackend>,
     start_at: StartAt,
+    end_at: EndAt,
     shutdown: web::Data<CancellationToken>,
     request_params: Arc<std::collections::HashMap<String, String>>,
     request_constraints: Arc<std::collections::HashMap<String, IdentifierConstraint>>,
@@ -363,14 +389,14 @@ pub(crate) async fn create_replay_only_stream(
 ) -> Result<HttpResponse> {
     let watch_config = Settings::get_global_watch_settings();
     let prepared_spatial_filter = Arc::new(prepare_spatial_filter(&request_params));
-    let history_end = backend.history_end(&topic).await?;
+    let end_sequence = resolve_end_sequence(backend.as_ref(), &topic, end_at).await?;
 
     // Create historical replay stream
     let historical_stream = create_historical_replay_stream(
         topic.clone(),
         backend.clone(),
         start_at,
-        history_end,
+        end_sequence,
         request_params.clone(),
         request_constraints.clone(),
         prepared_spatial_filter,
@@ -379,12 +405,20 @@ pub(crate) async fn create_replay_only_stream(
     );
 
     let (from_sequence, from_date) = start_at.as_replay_cursor();
+    // The effective end is reported only when the request set an end point.
+    let (reported_end, to_date) = match end_at {
+        EndAt::Latest => (None, None),
+        EndAt::Sequence(_) => (Some(end_sequence), None),
+        EndAt::Date(date) => (Some(end_sequence), Some(date)),
+    };
 
     // Create control events for replay lifecycle.
     let start_event = StreamFrame::Control(ControlEvent::ReplayStarted {
         topic: topic.clone(),
         from_sequence,
         from_date,
+        end_sequence: reported_end,
+        to_date,
         batch_size: watch_config.replay_batch_size,
         timestamp: Utc::now(),
         request_id: request_id.clone(),
@@ -423,6 +457,8 @@ pub(crate) async fn create_replay_only_stream(
         topic = %decode_subject_for_display(&topic),
         from_sequence = ?from_sequence,
         from_date = ?from_date,
+        end_sequence = ?reported_end,
+        to_date = ?to_date,
         batch_size = watch_config.replay_batch_size,
         request_id = %request_id,
         "Created replay-only SSE stream"
