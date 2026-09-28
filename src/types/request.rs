@@ -15,6 +15,16 @@ use serde_json::Value;
 use std::collections::HashMap;
 use utoipa::ToSchema;
 
+/// Examples of the date formats that `from_date` and `to_date` accept, as
+/// shown in their error messages.
+pub(crate) const DATE_EXAMPLES: [&str; 5] = [
+    "2025-06-09T13:15:00Z",
+    "2025-06-09 13:15:00+00:00",
+    "2025-06-09 13:15:00",
+    "1740509903",
+    "1740509903710",
+];
+
 /// Notification request structure used by both /notification and /watch endpoints
 #[derive(Debug, Deserialize, Serialize, ToSchema)]
 pub struct NotificationRequest {
@@ -22,10 +32,10 @@ pub struct NotificationRequest {
     pub event_type: String,
     /// Request parameters to validate against schema
     pub identifier: HashMap<String, Value>,
-    /// Optional message ID for /watch endpoint correlation
+    /// Optional inclusive start sequence for the /watch and /replay endpoints
     #[serde(default)]
     pub from_id: Option<String>,
-    /// Optional date filter for /watch endpoint
+    /// Optional inclusive start date for the /watch and /replay endpoints
     #[serde(default)]
     #[schema(example = "2025-09-15T12:00:00Z")]
     pub from_date: Option<String>,
@@ -57,7 +67,7 @@ impl NotificationRequest {
     // Accepted examples:
     // - valid: "2026-02-25T18:58:23Z", "2026-02-25 18:58:23", "+1740509903", "1740509903710"
     // - invalid: "2026-02-25", "not-a-date", "-1" (negative unix timestamps are rejected)
-    fn parse_from_date_flexible(date_str: &str) -> Result<DateTime<Utc>> {
+    fn parse_date_flexible(date_str: &str) -> Result<DateTime<Utc>> {
         let trimmed = date_str.trim();
 
         if let Some(stripped) = trimmed.strip_prefix('-')
@@ -167,89 +177,74 @@ impl NotificationRequest {
         Ok(())
     }
 
-    /// Validate and parse from_id parameter for watch endpoint
+    /// Parses an optional sequence field such as `from_id`, an unsigned
+    /// 64-bit integer sent as a string. `field` names it in errors.
     ///
-    /// The from_id parameter specifies a backend-specific sequence number
-    /// from which to start replaying historical messages. This must be
-    /// a valid unsigned 64-bit integer.
+    /// Examples: "0" and "123" are valid; "", "-1" and "1.5" are not.
+    pub(super) fn parse_sequence_field(field: &str, value: Option<&str>) -> Result<Option<u64>> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        if value.trim().is_empty() {
+            bail!("{field} cannot be empty. Provide a valid sequence number or omit the field");
+        }
+        match value.parse::<u64>() {
+            Ok(sequence) => Ok(Some(sequence)),
+            Err(_) => bail!(
+                "{field} must be a valid positive integer. Got: '{value}'. \
+                 Valid examples: '1', '123', '9999'"
+            ),
+        }
+    }
+
+    /// Parses an optional date field such as `from_date`, in any format
+    /// [`DATE_EXAMPLES`] shows. `field` names it in errors.
+    pub(super) fn parse_date_field(
+        field: &str,
+        value: Option<&str>,
+    ) -> Result<Option<DateTime<Utc>>> {
+        let Some(value) = value else {
+            return Ok(None);
+        };
+        if value.trim().is_empty() {
+            bail!("{field} cannot be empty. Provide a valid datetime/timestamp or omit the field");
+        }
+        let date = Self::parse_date_flexible(value).map_err(|parse_error| {
+            let examples: Vec<String> = DATE_EXAMPLES
+                .iter()
+                .map(|example| format!("'{example}'"))
+                .collect();
+            anyhow::anyhow!(
+                "{field} must be a valid datetime/timestamp. Got: '{value}'. Error: {parse_error}. \
+                 Valid examples: {}",
+                examples.join(", ")
+            )
+        })?;
+        Ok(Some(date))
+    }
+
+    /// Validate and parse the `from_id` parameter: the sequence number from
+    /// which to start replaying historical messages.
     ///
     /// # Returns
     /// * `Ok(Option<u64>)` - Parsed sequence number or None if not provided
     /// * `Err(anyhow::Error)` - Invalid sequence number format
     pub fn validate_from_id(&self) -> Result<Option<u64>> {
-        match &self.from_id {
-            Some(id_str) => {
-                if id_str.trim().is_empty() {
-                    bail!(
-                        "from_id cannot be empty. Provide a valid sequence number or omit the field"
-                    );
-                }
-
-                match id_str.parse::<u64>() {
-                    Ok(id) => {
-                        tracing::debug!(
-                            from_id_str = id_str,
-                            from_id_parsed = id,
-                            "from_id successfully validated and parsed"
-                        );
-                        Ok(Some(id))
-                    }
-                    Err(_) => bail!(
-                        "from_id must be a valid positive integer. Got: '{}'. \
-                         Valid examples: '1', '123', '9999'",
-                        id_str
-                    ),
-                }
-            }
-            None => {
-                tracing::debug!("from_id not provided - will start from beginning or current time");
-                Ok(None)
-            }
-        }
+        let from_id = Self::parse_sequence_field("from_id", self.from_id.as_deref())?;
+        tracing::debug!(from_id = ?from_id, "from_id validated");
+        Ok(from_id)
     }
 
-    /// Validate and parse from_date parameter for watch endpoint.
-    ///
-    /// Accepted values include RFC3339 datetimes, space-separated datetimes
-    /// (with optional timezone), and unix epoch seconds/milliseconds.
+    /// Validate and parse the `from_date` parameter, in any of the formats
+    /// the `DATE_EXAMPLES` constant shows.
     ///
     /// # Returns
     /// * `Ok(Option<DateTime<Utc>>)` - Parsed datetime or None if not provided
     /// * `Err(anyhow::Error)` - Invalid datetime format
     pub fn validate_from_date(&self) -> Result<Option<DateTime<Utc>>> {
-        match &self.from_date {
-            Some(date_str) => {
-                if date_str.trim().is_empty() {
-                    bail!(
-                        "from_date cannot be empty. Provide a valid datetime/timestamp or omit the field"
-                    );
-                }
-
-                let utc_date = Self::parse_from_date_flexible(date_str).map_err(|parse_error| {
-                    anyhow::anyhow!(
-                        "from_date must be a valid datetime/timestamp. Got: '{}'. Error: {}. \
-                         Valid examples: '2025-06-09T13:15:00Z', '2025-06-09 13:15:00+00:00', \
-                         '2025-06-09 13:15:00', '1740509903', '1740509903710'",
-                        date_str,
-                        parse_error
-                    )
-                })?;
-
-                tracing::debug!(
-                    from_date_str = date_str,
-                    from_date_parsed = %utc_date,
-                    "from_date successfully validated and parsed to UTC"
-                );
-
-                Ok(Some(utc_date))
-            }
-            None => {
-                tracing::debug!(
-                    "from_date not provided - will start from beginning or current time"
-                );
-                Ok(None)
-            }
-        }
+        let from_date = Self::parse_date_field("from_date", self.from_date.as_deref())?;
+        tracing::debug!(from_date = ?from_date, "from_date validated");
+        Ok(from_date)
     }
 
     /// Validate both from_id and from_date parameters together for watch endpoint
@@ -336,7 +331,34 @@ impl NotificationRequest {
 
 #[cfg(test)]
 mod tests {
-    use super::NotificationRequest;
+    use super::{DATE_EXAMPLES, NotificationRequest};
+
+    #[test]
+    fn every_date_example_parses() {
+        for example in DATE_EXAMPLES {
+            let parsed = NotificationRequest::parse_date_field("from_date", Some(example));
+            assert!(matches!(parsed, Ok(Some(_))), "{example}: {parsed:?}");
+        }
+    }
+
+    #[test]
+    fn field_errors_name_the_field_and_show_the_examples() {
+        let error = NotificationRequest::parse_date_field("to_date", Some("soon")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("to_date must be a valid datetime/timestamp. Got: 'soon'")
+        );
+        assert!(
+            error.to_string().ends_with("'1740509903', '1740509903710'"),
+            "{error}"
+        );
+        let error = NotificationRequest::parse_sequence_field("to_id", Some(" ")).unwrap_err();
+        assert_eq!(
+            error.to_string(),
+            "to_id cannot be empty. Provide a valid sequence number or omit the field"
+        );
+    }
     use chrono::{DateTime, Utc};
     use serde_json::Value;
     use std::collections::HashMap;
