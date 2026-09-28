@@ -49,6 +49,13 @@ impl NotificationBackend for PublishingBackend {
             .await?;
         Ok(h)
     }
+    async fn first_sequence_after(
+        &self,
+        topic: &str,
+        at: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<u64>> {
+        self.inner.first_sequence_after(topic, at).await
+    }
     async fn get_messages_batch(&self, params: BatchParams) -> Result<BatchResult> {
         assert_ne!(params.end_sequence, u64::MAX);
         let n = self.batches.fetch_add(1, Ordering::SeqCst);

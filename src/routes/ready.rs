@@ -126,6 +126,13 @@ mod tests {
         async fn history_end(&self, _: &str) -> anyhow::Result<u64> {
             unreachable!("readiness must not touch the data path")
         }
+        async fn first_sequence_after(
+            &self,
+            _: &str,
+            _: chrono::DateTime<chrono::Utc>,
+        ) -> anyhow::Result<Option<u64>> {
+            unreachable!("readiness must not touch the data path")
+        }
     }
 
     async fn ready_status(healthy: bool) -> actix_web::http::StatusCode {

@@ -16,6 +16,7 @@ use crate::notification_backend::{
 };
 use anyhow::{Context, Result};
 use async_trait::async_trait;
+use chrono::{DateTime, Utc};
 use std::collections::HashMap;
 
 #[derive(Clone)]
@@ -97,6 +98,10 @@ impl NotificationBackend for JetStreamBackend {
             .await
             .context("Failed to capture replay boundary")?;
         Ok(stream.cached_info().state.last_sequence)
+    }
+
+    async fn first_sequence_after(&self, topic: &str, at: DateTime<Utc>) -> Result<Option<u64>> {
+        replay::first_sequence_after(self, topic, at).await
     }
 
     async fn shutdown(&self) -> Result<()> {

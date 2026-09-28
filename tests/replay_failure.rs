@@ -75,6 +75,14 @@ impl NotificationBackend for FailedReplay {
         Ok(1000)
     }
 
+    async fn first_sequence_after(
+        &self,
+        _: &str,
+        _: chrono::DateTime<chrono::Utc>,
+    ) -> Result<Option<u64>> {
+        panic!("these replays have no end point")
+    }
+
     async fn put_messages(&self, _: &str, _: String) -> Result<()> {
         panic!("replay must not publish")
     }

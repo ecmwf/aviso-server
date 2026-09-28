@@ -9,6 +9,8 @@
 //! JetStream-specific implementation of replay functionality using pull consumers
 
 use anyhow::{Context, Result};
+use async_nats::jetstream::consumer::DeliverPolicy;
+use chrono::{DateTime, TimeDelta, Utc};
 use tokio_stream::StreamExt;
 use tracing::{debug, info, warn};
 
@@ -77,8 +79,9 @@ pub async fn get_messages_batch(
     }
 
     // Create ephemeral pull consumer
+    let deliver_policy = determine_deliver_policy(params.start_at)?;
     let consumer =
-        create_pull_consumer(backend, &stream_name, &backend_pattern, params.start_at).await?;
+        create_pull_consumer(backend, &stream_name, &backend_pattern, deliver_policy).await?;
 
     // Fetch messages using batch method
     let messages = consumer
@@ -183,17 +186,81 @@ async fn read_replay_batch(
     Ok(batch_result)
 }
 
+/// JetStream implementation of `NotificationBackend::first_sequence_after`.
+///
+/// A one-message pull consumer on the topic's backend subject starts one
+/// nanosecond after `at`. The backend subject can be broader than the topic,
+/// so a message of another topic may set the bound; the replay filters it
+/// out.
+pub async fn first_sequence_after(
+    backend: &JetStreamBackend,
+    topic: &str,
+    at: DateTime<Utc>,
+) -> Result<Option<u64>> {
+    let (backend_pattern, _app_filter_pattern) = analyze_watch_pattern(topic)?;
+    backend
+        .ensure_stream_for_topic(&backend_pattern)
+        .await
+        .context("Failed to ensure stream exists for the replay end")?;
+    let stream_name = derive_stream_name_from_topic(&backend_pattern)
+        .context("Failed to derive stream name from topic")?;
+
+    // Nothing can have been stored after a time past the range JetStream can
+    // express, and everything was stored after a time before it.
+    let start_time = at
+        .checked_add_signed(TimeDelta::nanoseconds(1))
+        .and_then(jetstream_start_time);
+    let deliver_policy = match start_time {
+        Some(start_time) => DeliverPolicy::ByStartTime { start_time },
+        None if at > DateTime::UNIX_EPOCH => return Ok(None),
+        None => DeliverPolicy::All,
+    };
+    let consumer =
+        create_pull_consumer(backend, &stream_name, &backend_pattern, deliver_policy).await?;
+    let mut messages = consumer
+        .fetch()
+        .max_messages(1)
+        .messages()
+        .await
+        .context("Failed to fetch the first message after the replay end")?;
+
+    let Some(message) = messages.next().await else {
+        return Ok(None);
+    };
+    let sequence = message
+        .map_err(anyhow::Error::from_boxed)
+        .context("Failed to read the first message after the replay end")?
+        .info()
+        .map_err(anyhow::Error::from_boxed)
+        .context("Failed to read the sequence after the replay end")?
+        .stream_sequence;
+    debug!(
+        stream_name = %stream_name,
+        at = %at,
+        sequence,
+        "Found the first message after the replay end"
+    );
+    Ok(Some(sequence))
+}
+
+/// A date as a JetStream start time, or `None` outside the range JetStream can
+/// express: nanoseconds since the epoch, from 1677 to 2262.
+fn jetstream_start_time(date: DateTime<Utc>) -> Option<time::OffsetDateTime> {
+    let nanos = date.timestamp_nanos_opt()?;
+    // reason: every i64 nanosecond count is within OffsetDateTime's range, so
+    // this conversion cannot fail.
+    time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos)).ok()
+}
+
 /// Create an ephemeral pull consumer for batch retrieval
 async fn create_pull_consumer(
     backend: &JetStreamBackend,
     stream_name: &str,
     backend_pattern: &str,
-    start_at: StartAt,
+    deliver_policy: DeliverPolicy,
 ) -> Result<async_nats::jetstream::consumer::Consumer<async_nats::jetstream::consumer::pull::Config>>
 {
     use async_nats::jetstream::consumer::{AckPolicy, ReplayPolicy};
-
-    let deliver_policy = determine_deliver_policy(start_at)?;
 
     // Create consumer configuration for batch retrieval.
     // UUID suffix prevents collision on concurrent same-event_type replays
@@ -240,18 +307,11 @@ async fn create_pull_consumer(
     Ok(consumer)
 }
 
-fn determine_deliver_policy(
-    start_at: StartAt,
-) -> Result<async_nats::jetstream::consumer::DeliverPolicy> {
-    use async_nats::jetstream::consumer::DeliverPolicy;
-
+fn determine_deliver_policy(start_at: StartAt) -> Result<DeliverPolicy> {
     match start_at {
         StartAt::Date(start_date) => {
-            let nanos = start_date
-                .timestamp_nanos_opt()
+            let start_time = jetstream_start_time(start_date)
                 .context("from_date is outside supported timestamp range")?;
-            let start_time = time::OffsetDateTime::from_unix_timestamp_nanos(i128::from(nanos))
-                .context("from_date could not be converted to JetStream start time")?;
             debug!(
                 start_time = ?start_time,
                 "Using ByStartTime delivery policy"
