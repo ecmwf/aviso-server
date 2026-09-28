@@ -19,7 +19,7 @@
   - [Constraint Filtering](./practical-examples/constraint-filtering.md)
   - [Spatial Filtering](./practical-examples/spatial-filtering.md)
   - [Point-Cloud Filtering](./practical-examples/point-cloud-filtering.md)
-  - [Replay Starting Points](./practical-examples/replay-starting-points.md)
+  - [Replay Start and End Points](./practical-examples/replay-starting-points.md)
   - [Admin Operations](./practical-examples/admin-operations.md)
 
 ---

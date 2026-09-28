@@ -147,7 +147,7 @@ sequenceDiagram
 ## Replay Request Flow
 
 `POST /api/v1/replay` is like watch but historical-only; the stream closes when
-history ends.
+history ends, or at the optional end point (`to_id` or `to_date`).
 
 ```mermaid
 sequenceDiagram
@@ -157,13 +157,14 @@ sequenceDiagram
     participant P as Stream Processor
     participant B as Backend
 
-    C->>A: POST /api/v1/replay (JSON + from_id or from_date)
+    C->>A: POST /api/v1/replay (JSON + from_id or from_date, optional to_id or to_date)
     alt stream requires auth
         A->>A: resolve user (JWT or auth-o-tron)
         A-->>C: 401/403 if unauthorized
     end
     A->>R: forward request (+ user identity)
     R->>P: process_request (ValidationConfig::for_replay)
+    P->>B: resolve end sequence (history end, lowered by EndAt)
     P->>B: batch fetch from StartAt::Sequence or StartAt::Date
     loop batches
         B-->>P: NotificationMessage[]
@@ -186,6 +187,13 @@ which keeps the lifecycle explicit and the endpoint logic thin.
 - `StartAt::LiveOnly`: no history, subscribe immediately.
 - `StartAt::Sequence(u64)`: start from a specific backend sequence number.
 - `StartAt::Date(DateTime<Utc>)`: start from a UTC timestamp.
+
+**End types** describe where a replay stops:
+
+- `EndAt::Latest`: at the last notification stored when the replay starts.
+- `EndAt::Sequence(u64)`: at a backend sequence number, inclusive.
+- `EndAt::Date(DateTime<Utc>)`: at the last notification stored at or before a
+  UTC timestamp.
 
 **Frame types** are what the stream produces before rendering to SSE wire
 format:

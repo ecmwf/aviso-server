@@ -99,6 +99,9 @@ subscription. Its sequence range stays fixed across every page, including quota
 lookahead. Messages above `H` cannot consume the replay quota or prove
 truncation. A deleted or filtered message at `H` does not prevent completion.
 
+An end point (`to_id` or `to_date`) lowers `H` for that request. See
+[End Point for Historical Events](#end-point-for-historical-events).
+
 This snapshots a sequence range, not immutable storage. Deletion, overwrite and
 retention can remove history before it is read. In-memory live queues can lag;
 JetStream retention can remove queued live messages before delivery. The
@@ -194,6 +197,7 @@ Close reasons emitted in the final `connection-closing` SSE event:
   - historical replay starts first, then transitions to live stream.
 - If both are present:
   - request is rejected with `400`.
+- `to_id` and `to_date` are not accepted; they are rejected with `400`.
 
 ```mermaid
 flowchart TD
@@ -216,7 +220,11 @@ flowchart TD
   - `from_date` (time-based).
 - If both are missing or both are present:
   - request is rejected with `400`.
-- Stream closes with `end_of_stream` when history is exhausted.
+- Accepts at most one replay end parameter:
+  - `to_id` (sequence-based), or
+  - `to_date` (time-based).
+- Stream closes with `end_of_stream` when history is exhausted or the end point
+  is reached.
 
 ---
 
@@ -240,6 +248,44 @@ matching history.
 | Unix milliseconds (≥ 12 digits)     | `1740509903710`             |
 
 All inputs are normalized to UTC internally.
+
+---
+
+## End Point for Historical Events
+
+A replay can stop before the last stored notification. `to_id` and `to_date`
+mirror `from_id` and `from_date`, and are accepted only by
+`POST /api/v1/replay`.
+
+`to_id` is an unsigned 64-bit sequence number encoded as a JSON string. Delivery
+ends at that number (inclusive). Unlike `from_id`, the value `"0"` has no
+special meaning: sequences start at `1`, so it produces an empty replay.
+`to_date` accepts the same formats as `from_date` and ends delivery with the
+last notification stored at or before that time (inclusive). Like `from_date`,
+it refers to the time the server stored the notification, which is the
+CloudEvent `time`.
+
+The replay ends at whichever comes first: the end point, or the last
+notification stored when the replay starts. An end point in the future
+therefore ends at the last stored notification, and an end point before every
+stored notification produces an empty replay that completes normally.
+
+The end point bounds history before filtering, like `H`. The replay limit
+counts only notifications inside it, so a window with no more notifications
+than the limit is never truncated.
+
+Requests are rejected with `400` when:
+
+- both `to_id` and `to_date` are present;
+- `to_id` is lower than `from_id`, or `to_date` is earlier than `from_date`.
+
+A sequence end may follow a date start, and a date end may follow a sequence
+start. These are not compared, and may produce an empty replay.
+
+The `replay_started` event reports the end point. `end_sequence` is the last
+sequence the replay can deliver, which may be lower than the requested `to_id`,
+and `to_date` repeats the requested time (truncated to whole seconds). Both are
+`null` without an end point.
 
 ---
 
@@ -370,4 +416,4 @@ For end-to-end examples, see:
 - [Basic Notify/Watch/Replay](./practical-examples/basic-notify-watch-replay.md)
 - [Constraint Filtering](./practical-examples/constraint-filtering.md)
 - [Spatial Filtering](./practical-examples/spatial-filtering.md)
-- [Replay Starting Points](./practical-examples/replay-starting-points.md)
+- [Replay Start and End Points](./practical-examples/replay-starting-points.md)

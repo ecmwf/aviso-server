@@ -70,5 +70,5 @@ Next:
 - [Basic Notify/Watch/Replay](./basic-notify-watch-replay.md)
 - [Spatial Filtering](./spatial-filtering.md)
 - [Constraint Filtering](./constraint-filtering.md)
-- [Replay Starting Points](./replay-starting-points.md)
+- [Replay Start and End Points](./replay-starting-points.md)
 - [Admin Operations](./admin-operations.md)
