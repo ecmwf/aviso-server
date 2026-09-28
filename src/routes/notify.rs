@@ -110,6 +110,15 @@ pub async fn notify(
     let event_type_label = bucket_event_type_for_observability(event_type);
     tracing::Span::current().record("event_type", event_type_label);
 
+    if let Err(error) = payload.reject_end_point("/notification") {
+        record_notification(&metrics, event_type_label, "error");
+        return request_validation_error_response(
+            RequestKind::Notification,
+            error,
+            &request_id_str,
+        );
+    }
+
     if payload.identifier.contains_key("point") {
         record_notification(&metrics, event_type_label, "error");
         return request_validation_error_response(

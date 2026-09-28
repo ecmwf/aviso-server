@@ -8,7 +8,7 @@
 
 use crate::auth::middleware::{auth_mode, get_user, is_auth_enabled, unauthorized_response};
 use crate::configuration::{AuthMode, AuthSettings, EventSchema, Settings};
-use crate::notification_backend::replay::StartAt;
+use crate::notification_backend::replay::{EndAt, StartAt};
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde_json::json;
 use std::collections::HashMap;
@@ -120,6 +120,19 @@ pub(crate) fn enforce_known_event_type_inner(
         "configured_event_types": configured,
         "request_id": request_id,
     }))))
+}
+
+/// Records the replay end point on the current span.
+pub fn record_end_at_span_fields(end_at: EndAt) {
+    match end_at {
+        EndAt::Sequence(id) => {
+            tracing::Span::current().record("to_id", id);
+        }
+        EndAt::Date(date) => {
+            tracing::Span::current().record("to_date", date.to_rfc3339());
+        }
+        EndAt::Latest => {}
+    }
 }
 
 pub fn record_start_at_span_fields(start_at: StartAt) {

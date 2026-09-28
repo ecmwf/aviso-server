@@ -17,7 +17,7 @@ use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::streaming::{
     StreamOperation, bucket_event_type_for_observability, enforce_known_event_type,
-    enforce_stream_auth, record_start_at_span_fields,
+    enforce_stream_auth, record_end_at_span_fields, record_start_at_span_fields,
 };
 use crate::sse::replay::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
@@ -36,7 +36,7 @@ use tracing_actix_web::RequestId;
     request_body = crate::types::request::NotificationRequest,
     responses(
         (status = 200, description = "Historical replay stream established successfully", content_type = "text/event-stream"),
-        (status = 400, description = "Invalid request parameters or missing from_id/from_date"),
+        (status = 400, description = "Invalid request parameters, missing from_id/from_date, or an invalid to_id/to_date"),
         (status = 401, description = "Missing or invalid credentials (when stream requires auth)"),
         (status = 403, description = "Valid credentials but the user lacks role-based access for this stream, or, when the stream enables the ECPDS plugin, the requested destination is not in the user's ECPDS allow-list"),
         (status = 500, description = "Failed to establish replay stream"),
@@ -55,6 +55,8 @@ use tracing_actix_web::RequestId;
         request_id = %request_id,
         from_id = tracing::field::Empty,
         from_date = tracing::field::Empty,
+        to_id = tracing::field::Empty,
+        to_date = tracing::field::Empty,
         endpoint = "replay",
         username = tracing::field::Empty,
         auth_realm = tracing::field::Empty,
@@ -116,6 +118,7 @@ pub async fn replay(
 
     tracing::Span::current().record("event_type", event_type_label);
     record_start_at_span_fields(context.start_at);
+    record_end_at_span_fields(context.end_at);
 
     #[cfg(feature = "ecpds")]
     if let Err(response) = crate::routes::streaming::enforce_ecpds_auth(
@@ -145,6 +148,7 @@ pub async fn replay(
         context.topic.clone(),
         notification_backend.get_ref().clone(),
         context.start_at,
+        context.end_at,
         shutdown.clone(),
         filtering_params,
         filtering_constraints,
@@ -162,6 +166,7 @@ pub async fn replay(
                 outcome = "success",
                 topic = %display_topic,
                 start_at = ?context.start_at,
+                end_at = ?context.end_at,
                 stream_mode = "replay_only",
                 setup_duration_ms = setup_started_at.elapsed().as_millis() as u64,
                 "Replay-only SSE stream established successfully"

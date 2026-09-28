@@ -24,6 +24,15 @@ impl NotificationRequest {
         self.to_id.is_some() || self.to_date.is_some()
     }
 
+    /// Rejects an end point sent to an endpoint other than /replay.
+    /// `endpoint` is the path it was sent to, such as "/watch".
+    pub fn reject_end_point(&self, endpoint: &str) -> Result<()> {
+        if self.has_end_point() {
+            bail!("to_id and to_date are only supported for the replay endpoint, not {endpoint}");
+        }
+        Ok(())
+    }
+
     /// Validate the end point against the already validated start point.
     ///
     /// Examples, with `from_id` "100":

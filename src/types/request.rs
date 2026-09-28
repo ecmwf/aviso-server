@@ -155,6 +155,8 @@ impl NotificationRequest {
             "identifier",
             "from_id",
             "from_date",
+            "to_id",
+            "to_date",
             "payload",
         ]
     }
@@ -340,6 +342,34 @@ impl NotificationRequest {
 #[cfg(test)]
 mod tests {
     use super::{DATE_EXAMPLES, NotificationRequest};
+    use chrono::{DateTime, Utc};
+    use serde_json::Value;
+    use std::collections::HashMap;
+
+    #[test]
+    fn accepted_field_names_match_the_request_fields() {
+        // Every field set, so none is skipped when serialized.
+        let request = NotificationRequest {
+            event_type: String::new(),
+            identifier: HashMap::new(),
+            from_id: Some(String::new()),
+            from_date: Some(String::new()),
+            to_id: Some(String::new()),
+            to_date: Some(String::new()),
+            payload: Some(Value::Null),
+        };
+        let serialized = serde_json::to_value(&request).unwrap();
+        let mut fields: Vec<&str> = serialized
+            .as_object()
+            .unwrap()
+            .keys()
+            .map(String::as_str)
+            .collect();
+        let mut accepted = NotificationRequest::all_field_names();
+        fields.sort_unstable();
+        accepted.sort_unstable();
+        assert_eq!(fields, accepted);
+    }
 
     #[test]
     fn every_date_example_parses() {
@@ -367,9 +397,6 @@ mod tests {
             "to_id cannot be empty. Provide a valid sequence number or omit the field"
         );
     }
-    use chrono::{DateTime, Utc};
-    use serde_json::Value;
-    use std::collections::HashMap;
 
     fn base_request() -> NotificationRequest {
         NotificationRequest {
