@@ -27,26 +27,40 @@ data: {"type":"connection_established","topic":"...","timestamp":"...","connecti
 
 The `event:` line above is `live-notification` (so an EventSource client listens
 for `live-notification`); the `data.type` value is `connection_established` (so
-the client distinguishes it from a normal notification, which has no `type`
-field).
+the client distinguishes it from a normal notification, whose `type` is the
+CloudEvent type `int.ecmwf.aviso.<event_type>`).
+
+In the tables below, *Event* is the SSE `event:` line and *Type* is the
+`data.type` field.
 
 In-stream events that include `request_id`:
 
-| SSE `event:`         | `data.type` (when present)                   | Frequency                                                  | Purpose                   |
-| -------------------- | -------------------------------------------- | ---------------------------------------------------------- | ------------------------- |
-| `live-notification`  | `connection_established`                     | Once at the start of a live-only watch                     | First-event correlation   |
-| `replay-control`     | `replay_started`                             | Once at the start of any stream that begins with replay    | First-event correlation   |
-| `error`              | (none; uses `error` field as discriminator)  | Rare, on mid-stream backend or CloudEvent-creation failure | Failure-event correlation |
-| `connection-closing` | (none; uses `reason` field as discriminator) | Once on graceful close                                     | Final-event correlation   |
+<div class="event-table">
+
+| Event                | Type                                   | Sent                                                   |
+| -------------------- | -------------------------------------- | ------------------------------------------------------ |
+| `live-notification`  | `connection_established`               | First event of a live-only watch                       |
+| `replay-control`     | `replay_started`                       | First event of a stream that begins with replay        |
+| `error`              | none; the `error` field identifies it  | On a backend or CloudEvent-creation failure mid-stream |
+| `connection-closing` | none; the `reason` field identifies it | Last event, on a graceful close                        |
+
+</div>
 
 In-stream events that intentionally do **not** include `request_id`:
 
-| SSE `event:`        | `data.type` (when present)                              | Frequency               | Why                                                                                                                                                                 |
-| ------------------- | ------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `live-notification` | (none; CloudEvent body)                                 | Per message             | Repeating the same UUID on every notification would inflate the wire for no extra value (correlation is already covered by the first event and the response header) |
-| `replay`            | (none; CloudEvent body)                                 | Per message             | Same                                                                                                                                                                |
-| `heartbeat`         | (none)                                                  | Every few seconds       | Same                                                                                                                                                                |
-| `replay-control`    | `replay_completed`, `notification_replay_limit_reached` | Replay phase boundaries | The first `replay-control` event (`replay_started`) already carries the UUID; repeating it is noise                                                                 |
+<div class="event-table">
+
+| Event               | Type                                                    | Sent                        |
+| ------------------- | ------------------------------------------------------- | --------------------------- |
+| `live-notification` | CloudEvent type                                         | Every live notification     |
+| `replay`            | CloudEvent type                                         | Every replayed notification |
+| `heartbeat`         | none                                                    | Every few seconds           |
+| `replay-control`    | `replay_completed`, `notification_replay_limit_reached` | At replay phase boundaries  |
+
+</div>
+
+The response header and the first event already carry the UUID, so repeating
+it would add bytes without adding information.
 
 The first event of any stream is guaranteed to carry the `request_id` (a
 `live-notification` event with `data.type = "connection_established"` for

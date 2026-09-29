@@ -19,6 +19,12 @@ pre.mermaid svg {
     max-width: 100%;
 }
 
+/* Tables of SSE event names: keep each name on one line, since a name such as
+   `live-notification` would otherwise break at its hyphen. */
+.event-table td code {
+    white-space: nowrap;
+}
+
 /* Expandable reference entries; ordinary tables keep the book's styling. */
 .settings-reference .setting-panel {
     margin-block: 1.5em;
