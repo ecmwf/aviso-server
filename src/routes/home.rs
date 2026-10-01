@@ -112,4 +112,22 @@ mod tests {
         assert!(!html.contains("{{"));
         assert!(html.contains(SERVICE_VERSION));
     }
+
+    /// The homepage uses the documentation's icons; the copies must not drift.
+    #[test]
+    fn homepage_icons_match_the_documentation() {
+        let html = include_str!("../static/index.html");
+        assert!(html.contains(r#"<link rel="icon" type="image/png" href="/static/logo.png">"#));
+        assert!(html.contains(
+            r#"<link rel="icon" type="image/svg+xml" sizes="any" href="/static/favicon.svg">"#
+        ));
+        assert_eq!(
+            include_bytes!("../static/favicon.svg").as_slice(),
+            include_bytes!("../../docs/theme/favicon.svg").as_slice()
+        );
+        assert_eq!(
+            include_bytes!("../static/logo.png").as_slice(),
+            include_bytes!("../../docs/theme/favicon.png").as_slice()
+        );
+    }
 }

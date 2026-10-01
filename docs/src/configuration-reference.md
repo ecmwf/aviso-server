@@ -59,7 +59,10 @@ Used in generated CloudEvent source links.
 <strong>Type:</strong> <code>string</code></span>
 </summary>
 
-Static asset root for homepage assets.
+Static asset root for homepage assets. The directory holds `index.html`, the
+homepage, and the files it links: `logo.png`, which is also the PNG favicon,
+and `favicon.svg`. Both icons are the documentation's own. A custom directory
+needs all three files.
 
 </details>
 <details class="setting-panel" id="application-homepage">
