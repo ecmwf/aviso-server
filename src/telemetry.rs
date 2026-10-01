@@ -7,6 +7,7 @@
 // does it submit to any jurisdiction.
 
 mod otlp;
+mod span_context;
 
 use crate::configuration::LoggingSettings;
 use chrono::{SecondsFormat, Utc};
@@ -18,12 +19,11 @@ use tracing::level_filters::LevelFilter;
 use tracing::subscriber::set_global_default;
 use tracing::{Event, Level, Subscriber};
 use tracing_log::LogTracer;
-use tracing_subscriber::fmt::FormattedFields;
 use tracing_subscriber::fmt::format::FmtSpan;
 use tracing_subscriber::fmt::format::{FormatEvent, FormatFields, Writer};
 use tracing_subscriber::fmt::{FmtContext, MakeWriter};
 use tracing_subscriber::registry::LookupSpan;
-use tracing_subscriber::{EnvFilter, Registry, layer::SubscriberExt};
+use tracing_subscriber::{EnvFilter, Layer, Registry, layer::SubscriberExt};
 
 /// Handle to the OTLP log pipeline; call `shutdown()` on process exit to
 /// flush buffered records. Re-exported so the binary does not need to
@@ -67,12 +67,7 @@ where
 
     let filter_layer = build_env_filter(&level);
 
-    let formatter = OTelLogFormatter::new(name.clone());
-    let formatting_layer = tracing_subscriber::fmt::layer()
-        .with_writer(sink)
-        .with_ansi(false)
-        .with_span_events(FmtSpan::NONE)
-        .event_format(formatter);
+    let formatting_layer = stdout_layer(name.clone(), sink);
 
     let (otlp_layer, otlp_provider) = match logging_config
         .and_then(|config| config.otlp.as_ref())
@@ -90,6 +85,23 @@ where
         .with(formatting_layer)
         .with(otlp_layer);
     Ok((subscriber, otlp_provider))
+}
+
+/// The stdout JSON layer: the formatter, and the layer that keeps each span's
+/// request context values for it (see [`span_context`]). Production and
+/// tests build stdout through this one function.
+fn stdout_layer<S, Sink>(name: String, sink: Sink) -> impl Layer<S> + use<S, Sink>
+where
+    S: Subscriber + for<'span> LookupSpan<'span>,
+    Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
+{
+    span_context::SpanContextLayer.and_then(
+        tracing_subscriber::fmt::layer()
+            .with_writer(sink)
+            .with_ansi(false)
+            .with_span_events(FmtSpan::NONE)
+            .event_format(OTelLogFormatter::new(name)),
+    )
 }
 
 /// Build the runtime `EnvFilter` honouring `RUST_LOG` first, then falling back
@@ -560,51 +572,6 @@ const HYDRATABLE_SPAN_FIELDS: &[&str] = &[
     "auth_realm",
 ];
 
-/// Pre-compiled regex per hydratable field, keyed by field name.
-///
-/// `tracing-subscriber`'s `DefaultVisitor` formats span fields as `key=value`
-/// where the quoting depends on how the field was recorded:
-/// - `record_str` (any `&str`/`String` value, including `Span::record(&str)`)
-///   delegates to `record_debug`, which writes `key={value:?}` with quotes
-///   and Debug-escaping. So fields recorded from string references are
-///   always quoted, even when the value contains no whitespace.
-/// - `record_debug` (anything formatted via `?value`) is also quoted.
-/// - `Display` values (anything formatted via `%value`) write `key=value`
-///   unquoted and unescaped.
-///
-/// In production, `request_id` is recorded via `%request_id` (Display,
-/// unquoted) while `event_type`, `topic`, `username`, and `auth_realm` go
-/// through `record_str` (quoted). The regex must therefore match either a
-/// quoted run (`"[^"]+"`) or an unquoted contiguous non-space run
-/// (`[^ ]+`), which is what the alternation expresses.
-///
-/// The `\b` word-boundary anchor prevents `event_type` from accidentally
-/// matching `aviso_event_type` or `event_typeable`.
-///
-/// The unquoted branch deliberately uses `[^ ]+` rather than `[^\s]+`. Tabs
-/// and newlines do not appear in any current hydratable value
-/// (`request_id` is a UUID; quoted fields cannot reach this branch), and
-/// using `[^\s]+` would only matter if a future hydratable field were
-/// recorded via `Display` AND could contain whitespace, which the
-/// curation principle forbids.
-static SPAN_FIELD_REGEXES: std::sync::LazyLock<Vec<(&'static str, Regex)>> =
-    std::sync::LazyLock::new(|| {
-        HYDRATABLE_SPAN_FIELDS
-            .iter()
-            .map(|name| {
-                let pattern = field_pattern(name);
-                let regex = Regex::new(&pattern).unwrap_or_else(|error| {
-                    panic!("hydratable field pattern {pattern:?} must compile: {error}")
-                });
-                (*name, regex)
-            })
-            .collect()
-    });
-
-fn field_pattern(field_name: &str) -> String {
-    format!(r#"\b{}=("[^"]+"|[^ ]+)"#, regex::escape(field_name))
-}
-
 fn populate_attributes_from_span<S, N>(
     ctx: &FmtContext<'_, S, N>,
     attributes: &mut Map<String, Value>,
@@ -624,7 +591,7 @@ fn populate_attributes_from_span<S, N>(
     // loop iteration can re-walk without re-traversing the parent chain.
     let scope_spans: Vec<_> = span.scope().collect();
 
-    for (field_name, regex) in SPAN_FIELD_REGEXES.iter() {
+    for field_name in HYDRATABLE_SPAN_FIELDS {
         // Event fields always win: a call site that sets `event_type=foo`
         // explicitly is more specific than the span context.
         if attributes.contains_key(*field_name) {
@@ -632,26 +599,15 @@ fn populate_attributes_from_span<S, N>(
         }
         for scope_span in &scope_spans {
             let extensions = scope_span.extensions();
-            let Some(formatted) = extensions.get::<FormattedFields<N>>() else {
+            let Some(context) = extensions.get::<span_context::SpanContext>() else {
                 continue;
             };
-            if let Some(value) = extract_named_field_from_text(formatted.fields.as_str(), regex) {
-                attributes.insert((*field_name).to_string(), json!(value));
+            if let Some(value) = context.get(field_name) {
+                attributes.insert((*field_name).to_string(), value.clone());
                 break;
             }
         }
     }
-}
-
-/// Extract a single `key=value` field from formatted span text.
-///
-/// `regex` must be one of the pre-compiled patterns from `SPAN_FIELD_REGEXES`;
-/// the helper exists so unit tests can exercise the matching logic against
-/// ad-hoc text without standing up a `FmtContext`.
-fn extract_named_field_from_text(formatted_fields: &str, regex: &Regex) -> Option<String> {
-    let captures = regex.captures(formatted_fields)?;
-    let raw = captures.get(1)?.as_str();
-    Some(raw.trim_matches('"').to_string())
 }
 
 fn redact_json_value(key: &str, value: Value) -> Value {
@@ -752,74 +708,6 @@ fn redact_message(message: &str) -> String {
 mod tests {
     use super::*;
 
-    fn regex_for(field_name: &str) -> &'static Regex {
-        SPAN_FIELD_REGEXES
-            .iter()
-            .find(|(name, _)| *name == field_name)
-            .map(|(_, regex)| regex)
-            .unwrap_or_else(|| {
-                panic!(
-                    "test helper requested {field_name:?} which is not in HYDRATABLE_SPAN_FIELDS"
-                )
-            })
-    }
-
-    #[test]
-    fn request_id_extractor_handles_quoted_and_unquoted_values() {
-        let request_id = regex_for("request_id");
-        assert_eq!(
-            extract_named_field_from_text(r#"request_id="abc-123" foo=bar"#, request_id),
-            Some("abc-123".to_string())
-        );
-        assert_eq!(
-            extract_named_field_from_text("request_id=req-42 foo=bar", request_id),
-            Some("req-42".to_string())
-        );
-        assert_eq!(extract_named_field_from_text("foo=bar", request_id), None);
-    }
-
-    #[test]
-    fn span_field_regexes_extract_each_hydratable_field() {
-        // Pin the contract that every hydratable field has a working
-        // extraction regex. A new field added to HYDRATABLE_SPAN_FIELDS
-        // without a corresponding regex would be silently invisible at
-        // runtime (LazyLock would compile fine but no event would ever
-        // hydrate). This test compiles all regexes by touching the static
-        // and exercises one extraction per field.
-        let cases: &[(&str, &str, &str)] = &[
-            ("request_id", "request_id=req-1 other=x", "req-1"),
-            ("event_type", "event_type=mars other=x", "mars"),
-            ("topic", "topic=mars.od.0001 other=x", "mars.od.0001"),
-        ];
-        for (field, text, expected) in cases {
-            let regex = regex_for(field);
-            assert_eq!(
-                extract_named_field_from_text(text, regex).as_deref(),
-                Some(*expected),
-                "{field:?} extractor failed on {text:?}"
-            );
-        }
-        assert_eq!(SPAN_FIELD_REGEXES.len(), HYDRATABLE_SPAN_FIELDS.len());
-    }
-
-    #[test]
-    fn span_field_regex_word_boundary_rejects_prefix_collisions() {
-        // event_type pattern must not match aviso_event_type. Without the
-        // \b anchor, the substring would silently leak into hydration.
-        let event_type = regex_for("event_type");
-        assert_eq!(
-            extract_named_field_from_text("aviso_event_type=foo other=x", event_type),
-            None,
-            "regex must require a word boundary before the field name"
-        );
-        // The same check the other direction: a longer suffix match must
-        // also be rejected (event_type vs event_typeable).
-        assert_eq!(
-            extract_named_field_from_text("event_typeable=foo", event_type),
-            None,
-        );
-    }
-
     #[test]
     fn hydratable_field_names_are_not_in_attribute_normalization_table() {
         // The event-fields-win precedence in populate_attributes_from_span
@@ -844,26 +732,6 @@ mod tests {
                  event-fields-win precedence breaks silently"
             );
         }
-    }
-
-    #[test]
-    fn span_field_regex_handles_quoted_values_with_dots() {
-        // Topic values are dotted (mars.od.0001.g...), and Span::record on a
-        // string with whitespace would be quoted by the default formatter.
-        // Both forms must extract correctly; this is the failure-side log
-        // hydration use case.
-        let topic = regex_for("topic");
-        assert_eq!(
-            extract_named_field_from_text(
-                "topic=mars.od.0001.g.20260706.1200.enfo.1 other=x",
-                topic
-            ),
-            Some("mars.od.0001.g.20260706.1200.enfo.1".to_string())
-        );
-        assert_eq!(
-            extract_named_field_from_text(r#"topic="value with spaces" other=x"#, topic),
-            Some("value with spaces".to_string())
-        );
     }
 
     /// `MakeWriter` that captures all output into a shared buffer so a test
@@ -918,15 +786,9 @@ mod tests {
         // the warn-level events the tests emit, leaving the captured
         // buffer empty and the assertions panicking on `first()`.
         let writer = CapturingWriter::new();
-        let formatter = OTelLogFormatter::new("test-subscriber".to_string());
-        let formatting_layer = tracing_subscriber::fmt::layer()
-            .with_writer(writer.clone())
-            .with_ansi(false)
-            .with_span_events(FmtSpan::NONE)
-            .event_format(formatter);
         let subscriber = Registry::default()
             .with(EnvFilter::new("trace"))
-            .with(formatting_layer);
+            .with(stdout_layer("test-subscriber".to_string(), writer.clone()));
         tracing::subscriber::with_default(subscriber, body);
         writer
             .captured_lines()
@@ -973,6 +835,38 @@ mod tests {
         assert_eq!(attrs.get("event_type"), Some(&json!("diss")));
         assert_eq!(attrs.get("topic"), Some(&json!("diss.FOO.E1.od")));
         assert_eq!(attrs.get("request_id"), Some(&json!("req-hydrate-1")));
+    }
+
+    /// Span values are taken as recorded, not parsed from the span's
+    /// formatted text: a value that looks like another field, quotes and
+    /// backslashes come through unchanged, and a field recorded twice gives
+    /// its later value.
+    #[test]
+    fn span_values_reach_events_exactly_as_recorded() {
+        let records = run_with_capturing_subscriber(|| {
+            let span = tracing::info_span!(
+                "test_route",
+                request_id = %"req-1",
+                aviso_event_type = "not the event type",
+                username = tracing::field::Empty,
+                auth_realm = tracing::field::Empty,
+                topic = tracing::field::Empty,
+            );
+            span.record("username", "alice");
+            span.record("auth_realm", "username=bob");
+            span.record("topic", r#"a "quoted" \ value"#);
+            span.record("username", "carol");
+            span.in_scope(|| {
+                tracing::info!(event_name = "test.inside", "inside the span");
+            });
+        });
+
+        let attrs = first_event_attributes(&records);
+        assert_eq!(attrs.get("request_id"), Some(&json!("req-1")));
+        assert_eq!(attrs.get("username"), Some(&json!("carol")));
+        assert_eq!(attrs.get("auth_realm"), Some(&json!("username=bob")));
+        assert_eq!(attrs.get("topic"), Some(&json!(r#"a "quoted" \ value"#)));
+        assert_eq!(attrs.get("event_type"), None);
     }
 
     #[test]
