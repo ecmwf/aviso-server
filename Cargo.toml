@@ -58,7 +58,10 @@ tracing-actix-web = "0.7"
 opentelemetry = { version = "0.32", default-features = false, features = ["logs"] }
 opentelemetry_sdk = { version = "0.32", default-features = false, features = ["logs", "internal-logs"] }
 opentelemetry-otlp = { version = "0.32", default-features = false, features = ["logs", "grpc-tonic", "http-proto", "reqwest-blocking-client", "internal-logs"] }
-opentelemetry-appender-tracing = { version = "0.32", default-features = false }
+# `experimental_span_attributes` copies the request span's context fields
+# (HYDRATABLE_SPAN_FIELDS in src/telemetry.rs) onto exported records, as the
+# stdout formatter does. The feature's API may change in minor releases.
+opentelemetry-appender-tracing = { version = "0.32", default-features = false, features = ["experimental_span_attributes"] }
 async-trait = "0.1"
 anyhow = "1.0"
 thiserror = "2.0"

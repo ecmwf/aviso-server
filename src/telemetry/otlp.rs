@@ -14,10 +14,11 @@
 //! sink, and export runs on a background batch thread so a slow or absent
 //! collector never blocks request handling.
 
+use super::unique_attributes::UniqueAttributesProcessor;
 use crate::configuration::{OtlpProtocol, OtlpSettings};
 use opentelemetry::logs::{AnyValue, LogRecord, Severity};
 use opentelemetry::{InstrumentationScope, KeyValue};
-use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
+use opentelemetry_appender_tracing::layer::{OpenTelemetryTracingBridge, TracingSpanAttributes};
 use opentelemetry_otlp::WithExportConfig;
 use opentelemetry_sdk::Resource;
 use opentelemetry_sdk::error::OTelSdkResult;
@@ -128,20 +129,48 @@ where
         source,
     })?;
 
-    let provider = SdkLoggerProvider::builder()
+    let provider = provider_with(
+        BatchLogProcessor::builder(MeteredLogExporter::new(exporter)).build(),
+        service_name,
+    );
+
+    let layer = bridge_layer(&provider).with_filter(export_noise_filter());
+    Ok((layer, provider))
+}
+
+/// The logger provider: every exported record passes through the same
+/// processors before reaching `sink`, the batch exporter in production.
+fn provider_with<P>(sink: P, service_name: &str) -> SdkLoggerProvider
+where
+    P: LogProcessor + 'static,
+{
+    SdkLoggerProvider::builder()
         .with_resource(build_resource(service_name))
         // Processors run in registration order and mutations are visible
-        // to the next one: backfill timestamps first, then redact and
-        // hand off to the batch exporter.
+        // to the next one: backfill timestamps first, keep one value per
+        // attribute key, then redact and hand off to the sink.
         .with_log_processor(EventTimestampProcessor)
-        .with_log_processor(RedactingLogProcessor::new(
-            BatchLogProcessor::builder(MeteredLogExporter::new(exporter)).build(),
-        ))
-        .build();
+        .with_log_processor(UniqueAttributesProcessor::new())
+        .with_log_processor(RedactingLogProcessor::new(sink))
+        .build()
+}
 
-    let bridge = OpenTelemetryTracingBridge::new(&provider);
-    let layer = bridge.with_filter(export_noise_filter());
-    Ok((layer, provider))
+/// The tracing-to-OTLP bridge for `provider`.
+///
+/// Besides each event's own fields, the bridge copies the request context
+/// recorded on spans (`super::HYDRATABLE_SPAN_FIELDS`: which request, who,
+/// which stream), as the stdout formatter does. It copies them from every
+/// span in scope and before the event's fields, so a field can arrive more
+/// than once; [`UniqueAttributesProcessor`] keeps the last value.
+fn bridge_layer<S>(provider: &SdkLoggerProvider) -> impl Layer<S> + use<S>
+where
+    S: Subscriber + for<'span> LookupSpan<'span>,
+{
+    OpenTelemetryTracingBridge::builder(provider)
+        .with_tracing_span_attributes(TracingSpanAttributes::allowlist(
+            super::HYDRATABLE_SPAN_FIELDS.iter().copied(),
+        ))
+        .build()
 }
 
 /// Normalize a configured OTLP endpoint for the chosen transport.
@@ -416,7 +445,9 @@ fn redact_body(record: &mut SdkLogRecord) {
 mod tests {
     use super::*;
     use opentelemetry::logs::{LogRecord, Logger, LoggerProvider};
+    use std::collections::HashMap;
     use std::sync::{Arc, Mutex};
+    use tracing_subscriber::layer::SubscriberExt;
 
     #[test]
     fn normalize_endpoint_adds_scheme_when_missing() {
@@ -518,6 +549,182 @@ mod tests {
                 .lock()
                 .expect("test lock poisoned")
                 .push(resource.clone());
+        }
+    }
+
+    /// String attributes of a captured record, keyed by name, plus the count
+    /// of keys, so a repeated key shows up as a count above the map's size.
+    fn string_attributes(record: &SdkLogRecord) -> (HashMap<String, String>, usize) {
+        let mut count = 0;
+        let mut map = HashMap::new();
+        for (key, value) in record.attributes_iter() {
+            count += 1;
+            if let AnyValue::String(text) = value {
+                map.insert(key.to_string(), text.to_string());
+            }
+        }
+        (map, count)
+    }
+
+    /// Collects what the stdout formatter writes, one JSON record per line.
+    #[derive(Clone, Default)]
+    struct StdoutCapture(Arc<Mutex<Vec<u8>>>);
+
+    impl std::io::Write for StdoutCapture {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0
+                .lock()
+                .expect("test lock poisoned")
+                .extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> tracing_subscriber::fmt::MakeWriter<'a> for StdoutCapture {
+        type Writer = Self;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    /// The same events go to both sinks. Each record must carry the request
+    /// context once per key, with the value stdout shows: the event's own,
+    /// else the innermost span's, and a field recorded twice gives its later
+    /// value. `username` is recorded after the span opens, as the route
+    /// handlers do after authentication.
+    #[test]
+    fn stdout_and_otlp_records_carry_the_same_request_context() {
+        let capturing = CapturingProcessor::default();
+        let records = capturing.records.clone();
+        let provider = provider_with(capturing, "test");
+        let stdout = StdoutCapture::default();
+        let subscriber = tracing_subscriber::registry()
+            .with(super::super::stdout_layer(
+                "test".to_string(),
+                stdout.clone(),
+            ))
+            .with(bridge_layer(&provider));
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::info!(event_name = "outside", "before any request");
+            let request = tracing::info_span!("HTTP request", request_id = %"outer");
+            let _request = request.enter();
+            let route = tracing::info_span!(
+                "replay",
+                request_id = %"inner",
+                topic = "route.topic",
+                username = tracing::field::Empty,
+                auth_realm = tracing::field::Empty,
+                event_type = tracing::field::Empty,
+            );
+            let _route = route.enter();
+            route.record("username", "alice");
+            route.record("username", "bob");
+            route.record("auth_realm", "localrealm");
+            route.record("event_type", "mars");
+            tracing::info!(event_name = "inherits", "replay started");
+            tracing::info!(
+                event_name = "overrides",
+                event_type = "wave",
+                topic = "event.topic",
+                "event sets its own"
+            );
+            // A child span that repeats none of the context: every field
+            // comes from an ancestor span.
+            tracing::info_span!("storage").in_scope(|| {
+                tracing::info!(event_name = "from ancestors", "stored");
+            });
+            drop(_route);
+            // The request span alone: request_id comes from the outermost span.
+            tracing::info_span!("background").in_scope(|| {
+                tracing::info!(event_name = "from the request span", "after the route");
+            });
+        });
+
+        let context = super::super::HYDRATABLE_SPAN_FIELDS;
+        let mut exported = HashMap::new();
+        for record in records.lock().expect("test lock poisoned").iter() {
+            let (map, count) = string_attributes(record);
+            assert_eq!(count, map.len(), "a key is repeated in {map:?}");
+            exported.insert(map["event_name"].clone(), map);
+        }
+        let mut printed = HashMap::new();
+        let text = String::from_utf8(stdout.0.lock().expect("test lock poisoned").clone())
+            .expect("stdout is utf-8");
+        for line in text.lines() {
+            let record: serde_json::Value = serde_json::from_str(line).expect("stdout is json");
+            let attributes = record["attributes"]
+                .as_object()
+                .expect("attributes")
+                .clone();
+            let name = attributes["event.name"]
+                .as_str()
+                .expect("event name")
+                .to_string();
+            let fields: HashMap<String, String> = context
+                .iter()
+                .filter_map(|field| {
+                    attributes
+                        .get(*field)
+                        .and_then(|value| value.as_str())
+                        .map(|value| ((*field).to_string(), value.to_string()))
+                })
+                .collect();
+            printed.insert(name, fields);
+        }
+
+        let expected: [(&str, &[(&str, &str)]); 5] = [
+            ("outside", &[]),
+            (
+                "inherits",
+                &[
+                    ("request_id", "inner"),
+                    ("username", "bob"),
+                    ("auth_realm", "localrealm"),
+                    ("event_type", "mars"),
+                    ("topic", "route.topic"),
+                ],
+            ),
+            (
+                "overrides",
+                &[
+                    ("request_id", "inner"),
+                    ("username", "bob"),
+                    ("auth_realm", "localrealm"),
+                    ("event_type", "wave"),
+                    ("topic", "event.topic"),
+                ],
+            ),
+            (
+                "from ancestors",
+                &[
+                    ("request_id", "inner"),
+                    ("username", "bob"),
+                    ("auth_realm", "localrealm"),
+                    ("event_type", "mars"),
+                    ("topic", "route.topic"),
+                ],
+            ),
+            ("from the request span", &[("request_id", "outer")]),
+        ];
+        for (name, fields) in expected {
+            let want: HashMap<String, String> = fields
+                .iter()
+                .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
+                .collect();
+            let otlp: HashMap<String, String> = context
+                .iter()
+                .filter_map(|field| {
+                    exported[name]
+                        .get(*field)
+                        .map(|value| ((*field).to_string(), value.clone()))
+                })
+                .collect();
+            assert_eq!(printed[name], want, "stdout, {name}");
+            assert_eq!(otlp, want, "otlp, {name}");
         }
     }
 

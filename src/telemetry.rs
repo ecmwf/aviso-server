@@ -8,6 +8,7 @@
 
 mod otlp;
 mod span_context;
+mod unique_attributes;
 
 use crate::configuration::LoggingSettings;
 use chrono::{SecondsFormat, Utc};
@@ -564,6 +565,9 @@ fn promote_trace_correlation(attributes: &mut Map<String, Value>) {
 /// identity (route handlers record them at entry); who performed an
 /// operation is request-level triage context in the same way `request_id`
 /// is, so every event in the request span carries it.
+///
+/// The OTLP export copies the same fields from spans, so both outputs carry
+/// the same request context; see `otlp::build_layer`.
 const HYDRATABLE_SPAN_FIELDS: &[&str] = &[
     "request_id",
     "event_type",

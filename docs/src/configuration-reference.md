@@ -255,6 +255,10 @@ Operational behavior:
   `aviso_otlp_export_failures_total` counts failed batch exports and
   `aviso_otlp_suppressed_log_records_total` counts records withheld by
   the redaction guard. Alert on a sustained non-zero rate of either.
+- Exported records carry the same request context as stdout records:
+  `request_id`, `username`, `auth_realm`, `event_type` and `topic`, taken
+  from the request when the log event does not set them itself. Each key
+  appears once, with the event's own value when it has one.
 - The global filter (`logging.level` / `RUST_LOG`) applies to both sinks,
   so the collector receives the same event stream as stdout. The export
   transport's own targets (`opentelemetry*`, `tonic`, `hyper`, `h2`,
