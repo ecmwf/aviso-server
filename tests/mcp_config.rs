@@ -148,3 +148,23 @@ async fn enabled_block_registers_mcp_and_metadata_routes() {
     });
     assert_eq!(statuses(load(file, &[])).await, [401, 405, 200]);
 }
+
+#[tokio::test]
+async fn realm_shared_with_rest_admins_fails_startup() {
+    let mut file = base();
+    file["auth"] = json!({"admin_roles": {"mcp": ["admin"]}});
+    file["mcp"] = json!({
+        "enabled": true,
+        "resource_url": "https://aviso.example.int/mcp",
+        "oauth": {
+            "issuer": "https://auth.example.int/",
+            "jwks_uri": "https://auth.example.int/jwks"
+        }
+    });
+    let result = Application::build(load(file, &[]), CancellationToken::new()).await;
+    let Err(error) = result else {
+        panic!("startup must fail");
+    };
+    assert!(error.to_string().contains("mcp.identity.realm"), "{error}");
+    assert!(error.to_string().contains("auth.admin_roles"), "{error}");
+}

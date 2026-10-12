@@ -136,7 +136,13 @@ impl Application {
             return Err(std::io::Error::other(e));
         }
 
-        if let Err(e) = configuration.mcp.validate() {
+        let mcp_validation = configuration.mcp.validate().and_then(|()| {
+            configuration.mcp.validate_realm_isolation(
+                &configuration.auth.admin_roles,
+                configuration.notification_schema.as_ref(),
+            )
+        });
+        if let Err(e) = mcp_validation {
             error!(
                 service_name = SERVICE_NAME,
                 service_version = SERVICE_VERSION,

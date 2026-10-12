@@ -103,6 +103,10 @@ When `enabled` is `true`, startup fails unless:
 - Each `allowed_origins` entry is a bare origin such as
   `https://app.example.int` (no trailing slash, no path).
 - `max_results` is between 1 and 200, and the timeouts are above zero.
+- `identity.realm` is not a key of `auth.admin_roles` or of any stream's
+  `write_roles`. Those realms belong to REST users, and sharing one would let
+  token roles match rules written for them. Naming the realm in `read_roles`
+  is fine; that is how streams are opened to MCP users.
 
 `resource_url` must be the public URL clients use. Tokens must name it as
 their audience, byte for byte. `oauth.issuer` is also compared byte for

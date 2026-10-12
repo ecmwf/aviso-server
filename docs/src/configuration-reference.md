@@ -706,7 +706,8 @@ this value, and at least one hour.
 </summary>
 
 Realm given to every MCP user. Use it as the realm key in stream
-`read_roles`.
+`read_roles`. Startup fails if it is also a key of `auth.admin_roles` or of a
+stream's `write_roles`.
 
 </details>
 </div>
