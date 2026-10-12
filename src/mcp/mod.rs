@@ -16,3 +16,32 @@ pub mod metadata;
 pub mod protocol;
 pub mod state;
 pub mod tools;
+pub mod transport;
+
+use crate::configuration::MCP_PATH;
+use actix_web::web;
+use state::{METADATA_PREFIX, McpState};
+
+/// Mount `/mcp` and its metadata routes. Call only when MCP is enabled.
+///
+/// The routes sit outside `/api/v1`, so the REST auth middleware does not
+/// apply; `/mcp` checks its own bearer tokens.
+pub fn configure(cfg: &mut web::ServiceConfig, state: web::Data<McpState>) {
+    let metadata = || web::get().to(metadata::protected_resource_metadata);
+    cfg.service(
+        web::resource(MCP_PATH)
+            .app_data(state.clone())
+            .route(web::post().to(transport::post_mcp))
+            .default_service(web::to(transport::method_not_allowed)),
+    )
+    .service(
+        web::resource(format!("{METADATA_PREFIX}{MCP_PATH}"))
+            .app_data(state.clone())
+            .route(metadata()),
+    )
+    .service(
+        web::resource(METADATA_PREFIX)
+            .app_data(state)
+            .route(metadata()),
+    );
+}
