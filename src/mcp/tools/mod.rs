@@ -20,7 +20,7 @@ use crate::configuration::{McpSettings, Settings};
 use crate::mcp::access::{mcp_can_read, mcp_replay_access};
 use crate::notification_backend::NotificationBackend;
 use crate::routes::schema::{event_schema_body, lookup_event_schema};
-use crate::sse::collect::{CollectLimits, collect_replay};
+use crate::sse::collect::{CollectLimits, CollectReplayError, collect_replay};
 use crate::telemetry::SERVICE_VERSION;
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use definitions::{
@@ -170,11 +170,10 @@ struct DescribeArguments {
 fn describe_event_type(context: &ToolContext<'_>, arguments: Value) -> Result<Value, String> {
     let arguments: DescribeArguments = parse_arguments(arguments)?;
     let event_type = arguments.event_type;
-    let not_found = || format!("Event type '{event_type}' not found");
     if !mcp_can_read(context.user, &event_type) {
-        return Err(not_found());
+        return Err(not_found(&event_type));
     }
-    let schema = lookup_event_schema(&event_type).map_err(|_| not_found())?;
+    let schema = lookup_event_schema(&event_type).map_err(|_| not_found(&event_type))?;
     Ok(event_schema_body(&event_type, &schema))
 }
 
@@ -205,7 +204,7 @@ async fn replay_notifications(
         _ => arguments.from_date,
     };
     let body = json!({
-        "event_type": arguments.event_type,
+        "event_type": &arguments.event_type,
         "identifier": arguments.identifier,
         "from_date": from_date,
         "from_id": arguments.from_id,
@@ -216,7 +215,7 @@ async fn replay_notifications(
         .max_results
         .unwrap_or(context.settings.max_results)
         .min(context.settings.max_results);
-    let collected = run_replay(context, &body, max_results).await?;
+    let collected = run_replay(context, &arguments.event_type, &body, max_results).await?;
     Ok(json!({
         "event_type": collected.event_type,
         "count": collected.events.len(),
@@ -242,12 +241,12 @@ async fn check_data_available(
     // Without a start time, sequence 1 covers the whole retained history.
     let from_id = arguments.from_date.is_none().then_some("1");
     let body = json!({
-        "event_type": arguments.event_type,
+        "event_type": &arguments.event_type,
         "identifier": arguments.identifier,
         "from_date": arguments.from_date,
         "from_id": from_id,
     });
-    let collected = run_replay(context, &body, 1).await?;
+    let collected = run_replay(context, &arguments.event_type, &body, 1).await?;
     let notification = collected.events.into_iter().next();
     let first_seen = notification
         .as_ref()
@@ -261,13 +260,24 @@ async fn check_data_available(
     }))
 }
 
+/// Answer for an event type that is unknown or that the caller may not
+/// read. Both cases look the same, so the tools do not reveal which
+/// event types exist.
+fn not_found(event_type: &str) -> String {
+    format!("Event type '{event_type}' not found")
+}
+
 async fn run_replay(
     context: &ToolContext<'_>,
+    event_type: &str,
     body: &Value,
     max_results: usize,
 ) -> Result<crate::sse::collect::CollectedReplay, String> {
     let max_results = NonZeroUsize::new(max_results)
         .ok_or_else(|| "max_results must be at least 1".to_string())?;
+    if !mcp_can_read(context.user, event_type) {
+        return Err(not_found(event_type));
+    }
     let limits = CollectLimits {
         max_results,
         timeout: Duration::from_millis(context.settings.request_timeout_ms),
@@ -281,7 +291,12 @@ async fn run_replay(
         &request_id,
     )
     .await
-    .map_err(|error| error.to_string())
+    .map_err(|error| match error {
+        CollectReplayError::UnknownEventType { .. }
+        | CollectReplayError::Access(_)
+        | CollectReplayError::UnsupportedAuthPlugin { .. } => not_found(event_type),
+        other => other.to_string(),
+    })
 }
 
 fn default_from_date() -> String {

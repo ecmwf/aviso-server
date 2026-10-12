@@ -281,16 +281,26 @@ async fn replay_respects_stream_read_roles() {
             arguments(event_type),
         )
         .await;
-        assert!(message.contains("read role"), "{message}");
+        assert_eq!(message, format!("Event type '{event_type}' not found"));
+    }
+    for event_type in ["plugged", "missing"] {
+        let message = tool_error(
+            &backend,
+            &["aviso-mcp"],
+            "aviso_replay_notifications",
+            arguments(event_type),
+        )
+        .await;
+        assert_eq!(message, format!("Event type '{event_type}' not found"));
     }
     let message = tool_error(
         &backend,
-        &["aviso-mcp"],
-        "aviso_replay_notifications",
-        arguments("plugged"),
+        &[],
+        "aviso_check_data_available",
+        json!({"event_type": "guarded", "identifier": {"class": "od", "number": 2}}),
     )
     .await;
-    assert!(message.contains("plugin"), "{message}");
+    assert_eq!(message, "Event type 'guarded' not found");
 }
 
 #[tokio::test]
