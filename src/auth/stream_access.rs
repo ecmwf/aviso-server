@@ -73,6 +73,19 @@ pub fn check_stream_access(
     check_stream_access_with(stream_auth, user, admin_roles, operation)
 }
 
+/// Whether the stream of `event_type` lists any auth plugin (for example
+/// ECPDS). Plugin checks need an HTTP request, so entry points without one
+/// must refuse such streams to non-admin callers. Unknown event types have
+/// no plugins.
+pub fn stream_requires_plugins(event_type: &str) -> bool {
+    Settings::get_global_notification_schema()
+        .as_ref()
+        .and_then(|schemas| schemas.get(event_type))
+        .and_then(|schema| schema.auth.as_ref())
+        .and_then(|auth| auth.plugins.as_ref())
+        .is_some_and(|plugins| !plugins.is_empty())
+}
+
 /// Pure core of [`check_stream_access`] that takes the stream auth block
 /// directly, so tests can cover every rule without global configuration.
 pub(crate) fn check_stream_access_with(

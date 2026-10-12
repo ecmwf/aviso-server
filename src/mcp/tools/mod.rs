@@ -16,11 +16,11 @@
 pub mod definitions;
 
 use crate::auth::User;
-use crate::auth::stream_access::{StreamOperation, check_stream_access};
 use crate::configuration::{McpSettings, Settings};
+use crate::mcp::access::{mcp_can_read, mcp_replay_access};
 use crate::notification_backend::NotificationBackend;
 use crate::routes::schema::{event_schema_body, lookup_event_schema};
-use crate::sse::collect::{CollectLimits, ReplayAccess, collect_replay};
+use crate::sse::collect::{CollectLimits, collect_replay};
 use crate::telemetry::SERVICE_VERSION;
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use definitions::{
@@ -28,7 +28,6 @@ use definitions::{
 };
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
@@ -136,11 +135,6 @@ fn parse_arguments<T: for<'de> Deserialize<'de>>(arguments: Value) -> Result<T, 
     serde_json::from_value(arguments).map_err(|error| format!("Invalid arguments: {error}"))
 }
 
-/// MCP users are never admins, so access checks use an empty admin map.
-fn no_admin_roles() -> HashMap<String, Vec<String>> {
-    HashMap::new()
-}
-
 fn health(context: &ToolContext<'_>) -> Value {
     let connected = context.backend.connection_healthy();
     json!({
@@ -150,28 +144,6 @@ fn health(context: &ToolContext<'_>) -> Value {
     })
 }
 
-/// Whether the caller may read `event_type` over MCP. Streams that need
-/// an auth plugin are unreadable because MCP callers cannot pass plugin
-/// checks.
-fn can_read(context: &ToolContext<'_>, event_type: &str) -> bool {
-    let requires_plugins = Settings::get_global_notification_schema()
-        .as_ref()
-        .and_then(|schemas| schemas.get(event_type))
-        .and_then(|schema| schema.auth.as_ref())
-        .and_then(|auth| auth.plugins.as_ref())
-        .is_some_and(|plugins| !plugins.is_empty());
-    let admin_roles = no_admin_roles();
-    !requires_plugins
-        && check_stream_access(
-            true,
-            Some(context.user),
-            Some(&admin_roles),
-            event_type,
-            StreamOperation::Read,
-        )
-        .is_ok()
-}
-
 /// Configured event types the caller may read.
 fn list_event_types(context: &ToolContext<'_>) -> Value {
     let mut event_types: Vec<&String> = Settings::get_global_notification_schema()
@@ -179,7 +151,7 @@ fn list_event_types(context: &ToolContext<'_>) -> Value {
         .map(|schemas| {
             schemas
                 .keys()
-                .filter(|name| can_read(context, name))
+                .filter(|name| mcp_can_read(context.user, name))
                 .collect()
         })
         .unwrap_or_default();
@@ -199,7 +171,7 @@ fn describe_event_type(context: &ToolContext<'_>, arguments: Value) -> Result<Va
     let arguments: DescribeArguments = parse_arguments(arguments)?;
     let event_type = arguments.event_type;
     let not_found = || format!("Event type '{event_type}' not found");
-    if !can_read(context, &event_type) {
+    if !mcp_can_read(context.user, &event_type) {
         return Err(not_found());
     }
     let schema = lookup_event_schema(&event_type).map_err(|_| not_found())?;
@@ -296,12 +268,6 @@ async fn run_replay(
 ) -> Result<crate::sse::collect::CollectedReplay, String> {
     let max_results = NonZeroUsize::new(max_results)
         .ok_or_else(|| "max_results must be at least 1".to_string())?;
-    let admin_roles = no_admin_roles();
-    let access = ReplayAccess {
-        auth_enabled: true,
-        user: Some(context.user),
-        admin_roles: Some(&admin_roles),
-    };
     let limits = CollectLimits {
         max_results,
         timeout: Duration::from_millis(context.settings.request_timeout_ms),
@@ -310,7 +276,7 @@ async fn run_replay(
     collect_replay(
         body.to_string().as_bytes(),
         context.backend.clone(),
-        access,
+        mcp_replay_access(context.user),
         limits,
         &request_id,
     )

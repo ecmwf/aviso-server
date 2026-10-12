@@ -9,6 +9,7 @@
 //! Model Context Protocol endpoint: read-only Aviso tools for MCP clients,
 //! protected by OAuth access tokens from an external issuer.
 
+pub mod access;
 pub mod auth;
 pub mod dispatch;
 pub mod jwks;

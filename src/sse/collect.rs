@@ -14,7 +14,9 @@
 //! than an SSE connection. It records no SSE connection or delivery metrics.
 
 use crate::auth::User;
-use crate::auth::stream_access::{StreamAccessError, StreamOperation, check_stream_access};
+use crate::auth::stream_access::{
+    StreamAccessError, StreamOperation, check_stream_access, stream_requires_plugins,
+};
 use crate::configuration::Settings;
 use crate::handlers::{
     RequestParseError, StreamingRequestProcessor, ValidationConfig, parse_and_validate_request,
@@ -166,12 +168,7 @@ fn reject_auth_plugins(
     if !access.auth_enabled {
         return Ok(());
     }
-    let has_plugins = Settings::get_global_notification_schema()
-        .as_ref()
-        .and_then(|schemas| schemas.get(event_type))
-        .and_then(|schema| schema.auth.as_ref())
-        .and_then(|auth| auth.plugins.as_ref())
-        .is_some_and(|plugins| !plugins.is_empty());
+    let has_plugins = stream_requires_plugins(event_type);
     let is_admin = access
         .user
         .zip(access.admin_roles)
