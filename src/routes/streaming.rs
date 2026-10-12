@@ -82,39 +82,53 @@ pub fn bucket_event_type_for_observability(event_type: &str) -> &str {
     }
 }
 
-/// Pure-logic core of `enforce_known_event_type`, factored out so unit tests
-/// can drive every cell of the truth table without touching the `OnceLock`
+/// Transport-independent strict-mode check behind `enforce_known_event_type`.
+///
+/// Returns `Err` with the sorted configured event types when strict mode
+/// rejects `event_type`. Reads the global schema settings.
+pub fn check_known_event_type(event_type: &str) -> Result<(), Vec<String>> {
+    check_known_event_type_with(
+        Settings::get_global_notification_schema_strict(),
+        Settings::get_global_notification_schema().as_ref(),
+        event_type,
+    )
+}
+
+/// Pure core of [`check_known_event_type`], factored out so unit tests can
+/// drive every cell of the truth table without touching the `OnceLock`
 /// globals.
+pub(crate) fn check_known_event_type_with(
+    strict: bool,
+    schema_map: Option<&HashMap<String, EventSchema>>,
+    event_type: &str,
+) -> Result<(), Vec<String>> {
+    if !strict || schema_map.is_some_and(|m| m.contains_key(event_type)) {
+        return Ok(());
+    }
+    let mut configured: Vec<String> = schema_map
+        .map(|m| m.keys().cloned().collect())
+        .unwrap_or_default();
+    configured.sort();
+    Err(configured)
+}
+
+/// Pure-logic core of `enforce_known_event_type`: the strict-mode decision
+/// from [`check_known_event_type_with`] rendered as the REST 400 response.
 pub(crate) fn enforce_known_event_type_inner(
     strict: bool,
     schema_map: Option<&HashMap<String, EventSchema>>,
     request_id: &str,
     event_type: &str,
 ) -> Result<(), Box<HttpResponse>> {
-    if !strict {
-        return Ok(());
-    }
-
-    let known = schema_map.is_some_and(|m| m.contains_key(event_type));
-    if known {
-        return Ok(());
-    }
-
-    let configured: Vec<String> = schema_map
-        .map(|m| {
-            let mut names: Vec<String> = m.keys().cloned().collect();
-            names.sort();
-            names
-        })
-        .unwrap_or_default();
-
-    Err(Box::new(HttpResponse::BadRequest().json(json!({
-        "code": "UNKNOWN_EVENT_TYPE",
-        "error": "unknown_event_type",
-        "message": format!("unknown event type '{event_type}'"),
-        "configured_event_types": configured,
-        "request_id": request_id,
-    }))))
+    check_known_event_type_with(strict, schema_map, event_type).map_err(|configured| {
+        Box::new(HttpResponse::BadRequest().json(json!({
+            "code": "UNKNOWN_EVENT_TYPE",
+            "error": "unknown_event_type",
+            "message": format!("unknown event type '{event_type}'"),
+            "configured_event_types": configured,
+            "request_id": request_id,
+        })))
+    })
 }
 
 /// Records the replay end point on the current span.
@@ -414,7 +428,7 @@ pub async fn enforce_ecpds_auth(
 
 #[cfg(test)]
 mod enforce_known_event_type_tests {
-    use super::enforce_known_event_type_inner;
+    use super::{check_known_event_type_with, enforce_known_event_type_inner};
     use crate::configuration::{EventSchema, IdentifierFieldConfig};
     use aviso_validators::ValidationRules;
     use std::collections::HashMap;
@@ -472,6 +486,20 @@ mod enforce_known_event_type_tests {
             result.is_err(),
             "strict mode with no schema is a deny-all drain mode, not a permissive bypass"
         );
+    }
+
+    #[test]
+    fn check_known_event_type_lists_sorted_configured_types() {
+        let map = schema(&["mars", "dissemination"]);
+        assert_eq!(
+            check_known_event_type_with(true, Some(&map), "mars"),
+            Ok(())
+        );
+        assert_eq!(
+            check_known_event_type_with(true, Some(&map), "nope"),
+            Err(vec!["dissemination".to_string(), "mars".to_string()])
+        );
+        assert_eq!(check_known_event_type_with(false, None, "nope"), Ok(()));
     }
 
     #[test]
