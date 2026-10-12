@@ -351,7 +351,7 @@ pub(crate) async fn create_historical_then_live_stream(
 ///
 /// An end date becomes the sequence before the first message stored after
 /// it. When nothing was stored after it, the replay runs to the last message.
-async fn resolve_end_sequence(
+pub(crate) async fn resolve_end_sequence(
     backend: &dyn NotificationBackend,
     topic: &str,
     end_at: EndAt,

@@ -15,6 +15,7 @@
 //!
 //! This keeps endpoint behavior stable while making stream lifecycle easier to reason about.
 
+pub mod collect;
 pub mod helpers;
 pub mod live;
 pub mod replay;
