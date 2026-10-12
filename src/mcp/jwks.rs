@@ -23,8 +23,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tokio::sync::{Mutex, RwLock};
-use tracing::{info, warn};
+use tokio::sync::{Mutex, OwnedMutexGuard, RwLock};
+use tracing::{Instrument, Span, info, warn};
 
 /// Largest key set document accepted from the issuer.
 const MAX_JWKS_BYTES: usize = 256 * 1024;
@@ -118,7 +118,8 @@ struct FetchState {
 ///
 /// Readers clone the current [`Snapshot`] under a short read lock and
 /// never wait for the network. At most one fetch runs at a time, guarded
-/// by a separate lock:
+/// by a separate lock that the spawned fetch task holds until the new set
+/// is published:
 /// - a known `kid` in a fresh set is served at once;
 /// - a known `kid` in a stale set is served from the cached copy, while
 ///   the first caller to find the fetch lock free refreshes the set;
@@ -127,10 +128,10 @@ struct FetchState {
 ///   fetched or fetches one itself.
 pub struct JwksCache {
     client: Client,
-    uri: String,
+    uri: Arc<str>,
     timing: JwksTiming,
-    snapshot: RwLock<Arc<Snapshot>>,
-    fetch_state: Mutex<FetchState>,
+    snapshot: Arc<RwLock<Arc<Snapshot>>>,
+    fetch_state: Arc<Mutex<FetchState>>,
 }
 
 impl JwksCache {
@@ -144,10 +145,10 @@ impl JwksCache {
             .map_err(JwksError::ClientBuild)?;
         Ok(Self {
             client,
-            uri: uri.to_string(),
+            uri: Arc::from(uri),
             timing,
-            snapshot: RwLock::new(Arc::new(Snapshot::default())),
-            fetch_state: Mutex::new(FetchState::default()),
+            snapshot: Arc::new(RwLock::new(Arc::new(Snapshot::default()))),
+            fetch_state: Arc::new(Mutex::new(FetchState::default())),
         })
     }
 
@@ -159,17 +160,17 @@ impl JwksCache {
         let now = Instant::now();
         if snapshot.usable(kid, now, max_stale) {
             let fresh = snapshot.age(now).is_some_and(|age| age < self.timing.ttl);
-            if !fresh && let Ok(mut fetch_state) = self.fetch_state.try_lock() {
-                self.refresh(&mut fetch_state).await;
+            if !fresh && let Ok(fetch_state) = Arc::clone(&self.fetch_state).try_lock_owned() {
+                self.refresh(fetch_state).await;
                 return self.snapshot().await.lookup(kid, max_stale);
             }
             return snapshot.lookup(kid, max_stale);
         }
 
-        let mut fetch_state = self.fetch_state.lock().await;
+        let fetch_state = Arc::clone(&self.fetch_state).lock_owned().await;
         let snapshot = self.snapshot().await;
         if !snapshot.usable(kid, Instant::now(), max_stale) {
-            self.refresh(&mut fetch_state).await;
+            self.refresh(fetch_state).await;
             return self.snapshot().await.lookup(kid, max_stale);
         }
         snapshot.lookup(kid, max_stale)
@@ -181,7 +182,11 @@ impl JwksCache {
 
     /// Fetch and publish a new set unless the last attempt is too recent.
     /// A failed fetch keeps the cached set.
-    async fn refresh(&self, fetch_state: &mut FetchState) {
+    ///
+    /// The fetch runs in a spawned task that owns `fetch_state`, so
+    /// dropping this future does not abandon it: later requests wait for
+    /// the lock and then see the set the task published.
+    async fn refresh(&self, mut fetch_state: OwnedMutexGuard<FetchState>) {
         let now = Instant::now();
         let may_fetch = fetch_state
             .last_attempt
@@ -190,70 +195,92 @@ impl JwksCache {
             return;
         }
         fetch_state.last_attempt = Some(now);
-        match self.fetch().await {
-            Ok(keys) => {
-                info!(
-                    service_name = SERVICE_NAME,
-                    service_version = SERVICE_VERSION,
-                    event_name = "mcp.jwks.fetch.succeeded",
-                    key_count = keys.len(),
-                    "Fetched MCP token signing keys"
-                );
-                *self.snapshot.write().await = Arc::new(Snapshot {
-                    keys,
-                    fetched_at: Some(now),
-                });
+        let client = self.client.clone();
+        let uri = Arc::clone(&self.uri);
+        let snapshot = Arc::clone(&self.snapshot);
+        let task = tokio::spawn(
+            async move {
+                publish(&client, &uri, &snapshot, now).await;
+                drop(fetch_state);
             }
-            Err(error) => {
-                let cached_keys = self.snapshot().await.keys.len();
-                warn!(
-                    service_name = SERVICE_NAME,
-                    service_version = SERVICE_VERSION,
-                    event_name = "mcp.jwks.fetch.failed",
-                    error = %error,
-                    cached_keys,
-                    "Fetching MCP token signing keys failed"
-                );
-            }
+            .instrument(Span::current()),
+        );
+        if let Err(error) = task.await {
+            warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "mcp.jwks.fetch.failed",
+                error = %error,
+                "MCP token signing key fetch task did not complete"
+            );
         }
     }
+}
 
-    async fn fetch(&self) -> Result<HashMap<String, DecodingKey>, String> {
-        let mut response = self
-            .client
-            .get(&self.uri)
-            .header(reqwest::header::ACCEPT, "application/json")
-            .send()
-            .await
-            .map_err(|error| format!("request failed: {error}"))?;
-        if response.status() != StatusCode::OK {
-            return Err(format!("unexpected status {}", response.status().as_u16()));
+/// Fetch the set and replace the cached snapshot on success.
+async fn publish(client: &Client, uri: &str, snapshot: &RwLock<Arc<Snapshot>>, now: Instant) {
+    match fetch(client, uri).await {
+        Ok(keys) => {
+            info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "mcp.jwks.fetch.succeeded",
+                key_count = keys.len(),
+                "Fetched MCP token signing keys"
+            );
+            *snapshot.write().await = Arc::new(Snapshot {
+                keys,
+                fetched_at: Some(now),
+            });
         }
-        if response
-            .content_length()
-            .is_some_and(|len| len > MAX_JWKS_BYTES as u64)
-        {
+        Err(error) => {
+            let cached_keys = snapshot.read().await.keys.len();
+            warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "mcp.jwks.fetch.failed",
+                error = %error,
+                cached_keys,
+                "Fetching MCP token signing keys failed"
+            );
+        }
+    }
+}
+
+async fn fetch(client: &Client, uri: &str) -> Result<HashMap<String, DecodingKey>, String> {
+    let mut response = client
+        .get(uri)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .map_err(|error| format!("request failed: {error}"))?;
+    if response.status() != StatusCode::OK {
+        return Err(format!("unexpected status {}", response.status().as_u16()));
+    }
+    if response
+        .content_length()
+        .is_some_and(|len| len > MAX_JWKS_BYTES as u64)
+    {
+        return Err("key set exceeds size limit".to_string());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|error| format!("reading body failed: {error}"))?
+    {
+        if body.len() + chunk.len() > MAX_JWKS_BYTES {
             return Err("key set exceeds size limit".to_string());
         }
-        let mut body = Vec::new();
-        while let Some(chunk) = response
-            .chunk()
-            .await
-            .map_err(|error| format!("reading body failed: {error}"))?
-        {
-            if body.len() + chunk.len() > MAX_JWKS_BYTES {
-                return Err("key set exceeds size limit".to_string());
-            }
-            body.extend_from_slice(&chunk);
-        }
-        let set: JwkSet =
-            serde_json::from_slice(&body).map_err(|error| format!("invalid key set: {error}"))?;
-        let keys = usable_keys(&set);
-        if keys.is_empty() {
-            return Err("key set has no usable RS256 signing key".to_string());
-        }
-        Ok(keys)
+        body.extend_from_slice(&chunk);
     }
+    let set: JwkSet =
+        serde_json::from_slice(&body).map_err(|error| format!("invalid key set: {error}"))?;
+    let keys = usable_keys(&set);
+    if keys.is_empty() {
+        return Err("key set has no usable RS256 signing key".to_string());
+    }
+    Ok(keys)
 }
 
 /// Keep RSA signing keys that have a `kid` and do not declare another

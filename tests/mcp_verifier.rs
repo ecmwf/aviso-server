@@ -198,6 +198,27 @@ async fn unknown_kid_refetches_at_most_once_per_interval() {
 }
 
 #[tokio::test]
+async fn dropped_request_does_not_abandon_the_key_set_fetch() {
+    let server =
+        JwksServer::start_with_delay(vec![jwk(&key_a(), KID_A)], Duration::from_millis(500));
+    let verifier = verifier(&server, Duration::from_secs(60));
+    let cancelled =
+        tokio::time::timeout(Duration::from_millis(100), verifier.verify(&good_token())).await;
+    assert!(
+        cancelled.is_err(),
+        "first request must be dropped mid-fetch"
+    );
+
+    assert!(verifier.verify(&good_token()).await.is_ok());
+    assert_eq!(
+        server.hits(),
+        1,
+        "the second request reuses the first fetch"
+    );
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn unknown_kid_picks_up_a_rotated_key() {
     let server = JwksServer::start(vec![jwk(&key_a(), KID_A)]);
     let verifier = verifier(&server, Duration::ZERO);
