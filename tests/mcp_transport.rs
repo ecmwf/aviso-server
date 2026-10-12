@@ -296,7 +296,10 @@ async fn initialize_negotiates_and_never_opens_a_session() {
         assert_eq!(body["id"], 7);
         assert_eq!(body["result"]["protocolVersion"], expected);
         assert_eq!(body["result"]["serverInfo"]["name"], "aviso-server");
-        assert_eq!(body["result"]["capabilities"], json!({"tools": {}}));
+        assert_eq!(
+            body["result"]["capabilities"],
+            json!({"tools": {"listChanged": false}})
+        );
     }
     let request = post(&rpc(8, "initialize", json!({}))).to_request();
     let body: Value = test::call_and_read_body_json(&app, request).await;

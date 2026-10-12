@@ -89,7 +89,7 @@ fn initialize(params: Option<&Value>) -> Result<Value, RpcError> {
     }
     Ok(json!({
         "protocolVersion": negotiate_version(requested),
-        "capabilities": {"tools": {}},
+        "capabilities": {"tools": {"listChanged": false}},
         "serverInfo": {"name": "aviso-server", "version": SERVICE_VERSION},
         "instructions": "Read-only access to Aviso notifications. Use \
             aviso_list_event_types first, then aviso_describe_event_type to \
