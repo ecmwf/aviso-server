@@ -21,7 +21,7 @@ use crate::mcp::access::{mcp_can_read, mcp_replay_access};
 use crate::notification_backend::NotificationBackend;
 use crate::routes::schema::{event_schema_body, lookup_event_schema};
 use crate::sse::collect::{CollectLimits, CollectReplayError, collect_replay};
-use crate::telemetry::SERVICE_VERSION;
+use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use definitions::{
     CHECK_DATA_AVAILABLE, DESCRIBE_EVENT_TYPE, HEALTH, LIST_EVENT_TYPES, REPLAY_NOTIFICATIONS,
@@ -32,6 +32,10 @@ use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
+use tracing::warn;
+
+/// Tool error text for a replay the backend could not serve.
+const REPLAY_FAILED: &str = "Replay failed on the server. Try again later.";
 
 /// Default look-back of a replay without a start point.
 const DEFAULT_REPLAY_WINDOW_HOURS: i64 = 24;
@@ -291,12 +295,30 @@ async fn run_replay(
         &request_id,
     )
     .await
-    .map_err(|error| match error {
+    .map_err(|error| replay_error(event_type, error))
+}
+
+/// Text the model sees for a failed replay. Request problems keep their
+/// detail so the model can fix the call. Backend failures may carry
+/// server internals, so the model gets a generic message and the detail
+/// goes to the log.
+fn replay_error(event_type: &str, error: CollectReplayError) -> String {
+    match error {
         CollectReplayError::UnknownEventType { .. }
         | CollectReplayError::Access(_)
         | CollectReplayError::UnsupportedAuthPlugin { .. } => not_found(event_type),
+        CollectReplayError::Backend(detail) => {
+            warn!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "mcp.tool.replay.failed",
+                error = %detail,
+                "MCP replay failed in the notification backend"
+            );
+            REPLAY_FAILED.to_string()
+        }
         other => other.to_string(),
-    })
+    }
 }
 
 fn default_from_date() -> String {
@@ -306,8 +328,15 @@ fn default_from_date() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::no_arguments;
+    use super::{REPLAY_FAILED, no_arguments, replay_error};
+    use crate::sse::collect::CollectReplayError;
     use serde_json::json;
+
+    #[test]
+    fn backend_failures_do_not_reach_the_model() {
+        let error = CollectReplayError::Backend("nats://10.0.0.7:4222 refused".to_string());
+        assert_eq!(replay_error("open", error), REPLAY_FAILED);
+    }
 
     #[test]
     fn argument_free_tools_reject_arguments() {
