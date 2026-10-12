@@ -30,6 +30,10 @@ use tracing::{info, warn};
 const MAX_JWKS_BYTES: usize = 256 * 1024;
 /// Most signing keys kept from one key set.
 const MAX_KEYS: usize = 32;
+/// Factor of the TTL after which a cached set is no longer trusted.
+const MAX_STALE_TTL_FACTOR: u32 = 12;
+/// Lower bound of the maximum stale age.
+const MIN_MAX_STALE: Duration = Duration::from_secs(3600);
 
 /// Why no key could be produced for a token.
 #[derive(Debug, Error)]
@@ -55,16 +59,21 @@ pub struct JwksTiming {
     pub min_refetch_interval: Duration,
     /// Deadline for one fetch.
     pub fetch_timeout: Duration,
+    /// Age after which a cached set is refused when it cannot be
+    /// refreshed, so an issuer outage cannot keep revoked keys alive.
+    pub max_stale: Duration,
 }
 
 impl JwksTiming {
     /// Production timing: the given TTL, refetch at most once per minute,
-    /// and a five second fetch deadline.
+    /// a five second fetch deadline, and a maximum stale age of twelve
+    /// TTLs but at least one hour.
     pub fn with_ttl(ttl: Duration) -> Self {
         Self {
             ttl,
             min_refetch_interval: Duration::from_secs(60),
             fetch_timeout: Duration::from_secs(5),
+            max_stale: ttl.saturating_mul(MAX_STALE_TTL_FACTOR).max(MIN_MAX_STALE),
         }
     }
 }
@@ -81,14 +90,21 @@ impl Snapshot {
         self.fetched_at.map(|at| now.duration_since(at))
     }
 
-    fn lookup(&self, kid: &str) -> Result<DecodingKey, JwksError> {
-        if let Some(key) = self.keys.get(kid) {
-            return Ok(key.clone());
-        }
-        if self.fetched_at.is_none() {
+    fn lookup(&self, kid: &str, max_stale: Duration) -> Result<DecodingKey, JwksError> {
+        let Some(age) = self.age(Instant::now()) else {
             return Err(JwksError::Unavailable("no key set fetched yet".to_string()));
+        };
+        if age >= max_stale {
+            return Err(JwksError::Unavailable(
+                "cached key set is past its maximum stale age".to_string(),
+            ));
         }
-        Err(JwksError::UnknownKey)
+        self.keys.get(kid).cloned().ok_or(JwksError::UnknownKey)
+    }
+
+    /// Whether `kid` is cached and the set is still within `max_stale`.
+    fn usable(&self, kid: &str, now: Instant, max_stale: Duration) -> bool {
+        self.keys.contains_key(kid) && self.age(now).is_some_and(|age| age < max_stale)
     }
 }
 
@@ -106,8 +122,9 @@ struct FetchState {
 /// - a known `kid` in a fresh set is served at once;
 /// - a known `kid` in a stale set is served from the cached copy, while
 ///   the first caller to find the fetch lock free refreshes the set;
-/// - an unknown `kid`, or no set at all, waits for the fetch lock, then
-///   uses the set the previous holder fetched or fetches one itself.
+/// - an unknown `kid`, no set at all, or a set past its maximum stale age
+///   waits for the fetch lock, then uses the set the previous holder
+///   fetched or fetches one itself.
 pub struct JwksCache {
     client: Client,
     uri: String,
@@ -137,25 +154,25 @@ impl JwksCache {
     /// Return the key for `kid`, fetching the set when it is stale or
     /// missing the id and the refetch interval allows it.
     pub async fn key(&self, kid: &str) -> Result<DecodingKey, JwksError> {
+        let max_stale = self.timing.max_stale;
         let snapshot = self.snapshot().await;
-        if snapshot.keys.contains_key(kid) {
-            let fresh = snapshot
-                .age(Instant::now())
-                .is_some_and(|age| age < self.timing.ttl);
+        let now = Instant::now();
+        if snapshot.usable(kid, now, max_stale) {
+            let fresh = snapshot.age(now).is_some_and(|age| age < self.timing.ttl);
             if !fresh && let Ok(mut fetch_state) = self.fetch_state.try_lock() {
                 self.refresh(&mut fetch_state).await;
-                return self.snapshot().await.lookup(kid);
+                return self.snapshot().await.lookup(kid, max_stale);
             }
-            return snapshot.lookup(kid);
+            return snapshot.lookup(kid, max_stale);
         }
 
         let mut fetch_state = self.fetch_state.lock().await;
         let snapshot = self.snapshot().await;
-        if !snapshot.keys.contains_key(kid) {
+        if !snapshot.usable(kid, Instant::now(), max_stale) {
             self.refresh(&mut fetch_state).await;
-            return self.snapshot().await.lookup(kid);
+            return self.snapshot().await.lookup(kid, max_stale);
         }
-        snapshot.lookup(kid)
+        snapshot.lookup(kid, max_stale)
     }
 
     async fn snapshot(&self) -> Arc<Snapshot> {

@@ -160,6 +160,12 @@ The key set is cached for `jwks_cache_ttl_seconds`. A token with an unknown
 `kid` triggers an early refetch, at most once per minute, so key rotation is
 picked up without letting forged tokens flood the issuer.
 
+Once the TTL has passed, one request refreshes the key set while the others
+keep using the cached keys, so a slow issuer does not stall verification. If
+the issuer stays unreachable, the cached set is used for at most twelve TTLs,
+and never less than one hour. After that, tokens get `503` until a fetch
+succeeds, so an issuer outage cannot keep removed keys valid forever.
+
 The metadata document is served at both
 `/.well-known/oauth-protected-resource/mcp` and
 `/.well-known/oauth-protected-resource`:

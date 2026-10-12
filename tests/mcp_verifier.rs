@@ -25,6 +25,7 @@ fn verifier(server: &JwksServer, min_refetch: Duration) -> TokenVerifier {
         ttl: Duration::from_secs(300),
         min_refetch_interval: min_refetch,
         fetch_timeout: Duration::from_secs(2),
+        max_stale: Duration::from_secs(3600),
     };
     let jwks = JwksCache::new(&server.uri, timing).unwrap();
     TokenVerifier::new(jwks, &settings(&server.uri))
@@ -215,6 +216,7 @@ fn shared_verifier(server: &JwksServer, ttl: Duration) -> Arc<TokenVerifier> {
         ttl,
         min_refetch_interval: Duration::ZERO,
         fetch_timeout: Duration::from_secs(5),
+        max_stale: Duration::from_secs(3600),
     };
     let jwks = JwksCache::new(&server.uri, timing).unwrap();
     Arc::new(TokenVerifier::new(jwks, &settings(&server.uri)))
@@ -263,4 +265,36 @@ async fn concurrent_lookups_without_a_key_set_share_one_fetch() {
     assert!(results.iter().all(Result::is_ok));
     assert_eq!(server.hits(), 1);
     server.stop().await;
+}
+
+#[tokio::test]
+async fn key_set_past_its_maximum_stale_age_is_unavailable() {
+    let server = JwksServer::start(vec![jwk(&key_a(), KID_A)]);
+    let uri = server.uri.clone();
+    let timing = JwksTiming {
+        ttl: Duration::from_millis(50),
+        min_refetch_interval: Duration::ZERO,
+        fetch_timeout: Duration::from_secs(2),
+        max_stale: Duration::from_millis(400),
+    };
+    let verifier = TokenVerifier::new(JwksCache::new(&uri, timing).unwrap(), &settings(&uri));
+    verifier.verify(&good_token()).await.unwrap();
+    server.stop().await;
+
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(
+        verifier.verify(&good_token()).await.is_ok(),
+        "a stale set is used while the issuer is down"
+    );
+    tokio::time::sleep(Duration::from_millis(400)).await;
+    let error = verifier.verify(&good_token()).await.unwrap_err();
+    assert!(matches!(error, TokenError::KeysUnavailable), "{error:?}");
+}
+
+#[test]
+fn production_maximum_stale_age_is_twelve_ttls_but_at_least_an_hour() {
+    let short = JwksTiming::with_ttl(Duration::from_secs(60));
+    assert_eq!(short.max_stale, Duration::from_secs(3600));
+    let long = JwksTiming::with_ttl(Duration::from_secs(600));
+    assert_eq!(long.max_stale, Duration::from_secs(7200));
 }

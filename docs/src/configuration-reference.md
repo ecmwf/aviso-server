@@ -695,6 +695,8 @@ entry.
 </summary>
 
 How long a fetched key set is used before it is refreshed. Must be `> 0`.
+When refreshing fails, the cached set stays in use for up to twelve times
+this value, and at least one hour.
 
 </details>
 <details class="setting-panel" id="mcp-identity-realm">
