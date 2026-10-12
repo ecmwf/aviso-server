@@ -13,6 +13,27 @@ use crate::mcp::tools::{self, ToolContext};
 use crate::telemetry::SERVICE_VERSION;
 use serde_json::{Value, json};
 
+/// MCP method names this server knows. Requests use the first four;
+/// the notifications are accepted and need no answer.
+pub mod methods {
+    pub const INITIALIZE: &str = "initialize";
+    pub const PING: &str = "ping";
+    pub const TOOLS_LIST: &str = "tools/list";
+    pub const TOOLS_CALL: &str = "tools/call";
+    pub const INITIALIZED: &str = "notifications/initialized";
+    pub const CANCELLED: &str = "notifications/cancelled";
+
+    /// Every known name, for logging client input safely.
+    pub const ALL: [&str; 6] = [
+        INITIALIZE,
+        PING,
+        TOOLS_LIST,
+        TOOLS_CALL,
+        INITIALIZED,
+        CANCELLED,
+    ];
+}
+
 /// Result of one method call.
 pub struct Dispatched {
     /// The JSON-RPC `result`, or the error to answer with.
@@ -40,10 +61,10 @@ pub async fn dispatch(
     params: Option<Value>,
 ) -> Dispatched {
     match method {
-        "initialize" => Dispatched::plain(initialize(params.as_ref())),
-        "ping" => Dispatched::plain(Ok(json!({}))),
-        "tools/list" => Dispatched::plain(Ok(tools::list())),
-        "tools/call" => match tools::call(context, params.as_ref()).await {
+        methods::INITIALIZE => Dispatched::plain(initialize(params.as_ref())),
+        methods::PING => Dispatched::plain(Ok(json!({}))),
+        methods::TOOLS_LIST => Dispatched::plain(Ok(tools::list())),
+        methods::TOOLS_CALL => match tools::call(context, params.as_ref()).await {
             Ok(output) => Dispatched {
                 result: Ok(output.result),
                 tool: Some(output.name),

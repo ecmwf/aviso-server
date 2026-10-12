@@ -16,7 +16,7 @@
 
 use crate::auth::{User, extract_bearer_token};
 use crate::mcp::auth::{TokenError, VerifiedToken};
-use crate::mcp::dispatch::dispatch;
+use crate::mcp::dispatch::{dispatch, methods};
 use crate::mcp::protocol::{
     DEFAULT_PROTOCOL_VERSION, Message, RpcError, codes, failure, is_supported_version,
     parse_message, success,
@@ -387,15 +387,7 @@ fn add_cors_headers(response: &mut HttpResponse, origin: &str) {
 
 /// Method names are client input; only known names reach the logs.
 fn known_method(method: &str) -> &'static str {
-    const KNOWN: [&str; 6] = [
-        "initialize",
-        "notifications/initialized",
-        "ping",
-        "tools/list",
-        "tools/call",
-        "notifications/cancelled",
-    ];
-    KNOWN
+    methods::ALL
         .iter()
         .copied()
         .find(|known| *known == method)
