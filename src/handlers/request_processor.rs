@@ -13,7 +13,6 @@
 
 use anyhow::Result;
 use std::collections::HashMap;
-use tracing_actix_web::RequestId;
 
 use crate::configuration::Settings;
 use crate::notification::{IdentifierConstraint, NotificationHandler, OperationType};
@@ -31,7 +30,6 @@ pub struct StreamingRequestContext {
     /// Where a replay stops: its end point. Always [`EndAt::Latest`] for
     /// watch.
     pub end_at: EndAt,
-    pub request_id: RequestId,
     /// True if the event_type came from a configured schema entry; false if
     /// it fell through to the generic permissive path.
     ///
@@ -83,7 +81,6 @@ impl StreamingRequestProcessor {
     ///
     /// # Arguments
     /// * `request` - The incoming notification request
-    /// * `request_id` - Request ID for tracking
     /// * `config` - Validation configuration
     ///
     /// # Returns
@@ -91,7 +88,6 @@ impl StreamingRequestProcessor {
     /// * `Err(anyhow::Error)` - Validation failed
     pub fn process_request(
         request: &NotificationRequest,
-        request_id: RequestId,
         config: ValidationConfig,
     ) -> Result<StreamingRequestContext> {
         // Validate replay parameters based on configuration
@@ -117,7 +113,6 @@ impl StreamingRequestProcessor {
             identifier_constraints: notification_result.identifier_constraints,
             start_at,
             end_at,
-            request_id,
             from_schema: notification_result.from_schema,
         })
     }

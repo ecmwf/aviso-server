@@ -115,7 +115,6 @@ pub async fn watch(
     // Process request using shared processor
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,
-        request_id,
         ValidationConfig::for_watch(),
     ) {
         Ok(ctx) => ctx,

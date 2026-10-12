@@ -108,7 +108,6 @@ pub async fn replay(
 
     let context = match StreamingRequestProcessor::process_request(
         &notification_request,
-        request_id,
         ValidationConfig::for_replay(),
     ) {
         Ok(ctx) => ctx,
