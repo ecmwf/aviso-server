@@ -196,7 +196,8 @@ The metadata document is served at both
 The endpoint implements the stateless form of the MCP Streamable HTTP
 transport:
 
-- `POST /mcp` takes exactly one JSON-RPC message. Batches are rejected.
+- `POST /mcp` takes exactly one JSON-RPC message. A batch (a JSON array)
+  gets `400` with JSON-RPC error `-32600`, whatever the protocol version.
 - Requests get `200` with an `application/json` body. Notifications and
   responses get `202` with no body.
 - `GET` and `DELETE` get `405`. There is no SSE stream and no session; the
@@ -211,6 +212,11 @@ transport:
   get `403`. Requests without `Origin`, as sent by desktop and CLI clients,
   are allowed.
 - Bodies over 64 KiB get `413`.
+
+Revision `2025-03-26` allowed clients to send batches, and later revisions
+removed them. This server rejects batches under every revision, including
+`2025-03-26`. Clients that follow that revision but never batch, which covers
+the common SDKs, are unaffected.
 
 The bearer token is checked before the body is read. Every unauthenticated
 request gets the same `401` challenge, whatever it contains.
