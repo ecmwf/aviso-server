@@ -94,7 +94,7 @@ pub async fn call(
     let outcome = match name {
         HEALTH => no_arguments(arguments).map(|()| health(context)),
         LIST_EVENT_TYPES => no_arguments(arguments).map(|()| list_event_types(context)),
-        DESCRIBE_EVENT_TYPE => describe_event_type(arguments),
+        DESCRIBE_EVENT_TYPE => describe_event_type(context, arguments),
         REPLAY_NOTIFICATIONS => replay_notifications(context, arguments).await,
         CHECK_DATA_AVAILABLE => check_data_available(context, arguments).await,
         other => return Err(ToolCallError::UnknownTool(other.to_string())),
@@ -150,33 +150,36 @@ fn health(context: &ToolContext<'_>) -> Value {
     })
 }
 
-/// Configured event types the caller may read. Streams that need an auth
-/// plugin are left out because MCP callers cannot pass plugin checks.
-fn list_event_types(context: &ToolContext<'_>) -> Value {
+/// Whether the caller may read `event_type` over MCP. Streams that need
+/// an auth plugin are unreadable because MCP callers cannot pass plugin
+/// checks.
+fn can_read(context: &ToolContext<'_>, event_type: &str) -> bool {
+    let requires_plugins = Settings::get_global_notification_schema()
+        .as_ref()
+        .and_then(|schemas| schemas.get(event_type))
+        .and_then(|schema| schema.auth.as_ref())
+        .and_then(|auth| auth.plugins.as_ref())
+        .is_some_and(|plugins| !plugins.is_empty());
     let admin_roles = no_admin_roles();
+    !requires_plugins
+        && check_stream_access(
+            true,
+            Some(context.user),
+            Some(&admin_roles),
+            event_type,
+            StreamOperation::Read,
+        )
+        .is_ok()
+}
+
+/// Configured event types the caller may read.
+fn list_event_types(context: &ToolContext<'_>) -> Value {
     let mut event_types: Vec<&String> = Settings::get_global_notification_schema()
         .as_ref()
         .map(|schemas| {
             schemas
-                .iter()
-                .filter(|(_, schema)| {
-                    schema
-                        .auth
-                        .as_ref()
-                        .and_then(|auth| auth.plugins.as_ref())
-                        .is_none_or(Vec::is_empty)
-                })
-                .map(|(name, _)| name)
-                .filter(|name| {
-                    check_stream_access(
-                        true,
-                        Some(context.user),
-                        Some(&admin_roles),
-                        name,
-                        StreamOperation::Read,
-                    )
-                    .is_ok()
-                })
+                .keys()
+                .filter(|name| can_read(context, name))
                 .collect()
         })
         .unwrap_or_default();
@@ -190,10 +193,17 @@ struct DescribeArguments {
     event_type: String,
 }
 
-fn describe_event_type(arguments: Value) -> Result<Value, String> {
+/// Describe one event type. A type the caller may not read answers
+/// exactly like an unknown one, so its existence is not revealed.
+fn describe_event_type(context: &ToolContext<'_>, arguments: Value) -> Result<Value, String> {
     let arguments: DescribeArguments = parse_arguments(arguments)?;
-    let schema = lookup_event_schema(&arguments.event_type).map_err(|error| error.to_string())?;
-    Ok(event_schema_body(&arguments.event_type, &schema))
+    let event_type = arguments.event_type;
+    let not_found = || format!("Event type '{event_type}' not found");
+    if !can_read(context, &event_type) {
+        return Err(not_found());
+    }
+    let schema = lookup_event_schema(&event_type).map_err(|_| not_found())?;
+    Ok(event_schema_body(&event_type, &schema))
 }
 
 #[derive(Deserialize)]

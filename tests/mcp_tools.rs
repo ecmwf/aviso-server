@@ -203,7 +203,26 @@ async fn describe_matches_the_rest_schema_document() {
         json!({"event_type": "nope"}),
     )
     .await;
-    assert!(message.contains("not found"), "{message}");
+    assert_eq!(message, "Event type 'nope' not found");
+}
+
+#[tokio::test]
+async fn describe_hides_event_types_the_caller_cannot_read() {
+    let backend = seeded_backend().await;
+    for (roles, event_type) in [
+        (&[][..], "guarded"),
+        (&["aviso-mcp"][..], "denied"),
+        (&["aviso-mcp"][..], "plugged"),
+    ] {
+        let message = tool_error(
+            &backend,
+            roles,
+            "aviso_describe_event_type",
+            json!({"event_type": event_type}),
+        )
+        .await;
+        assert_eq!(message, format!("Event type '{event_type}' not found"));
+    }
 }
 
 #[tokio::test]
