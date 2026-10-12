@@ -32,6 +32,7 @@ pub fn configure(cfg: &mut web::ServiceConfig, state: web::Data<McpState>) {
         web::resource(MCP_PATH)
             .app_data(state.clone())
             .route(web::post().to(transport::post_mcp))
+            .route(web::method(actix_web::http::Method::OPTIONS).to(transport::preflight))
             .default_service(web::to(transport::method_not_allowed)),
     )
     .service(

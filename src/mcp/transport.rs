@@ -11,7 +11,7 @@
 //! Every POST carries exactly one JSON-RPC message and gets a plain JSON
 //! answer; the server never opens an SSE stream and never issues a
 //! session id. Checks run in a fixed order so an unauthenticated caller
-//! learns nothing about the body: bearer token, `Accept`,
+//! learns nothing about the body: origin, bearer token, `Accept`,
 //! `Content-Type`, protocol version header, then the body itself.
 
 use crate::auth::{User, extract_bearer_token};
@@ -36,6 +36,7 @@ use tracing::{debug, info};
 /// Largest request body accepted on `/mcp`.
 pub const MAX_BODY_BYTES: usize = 64 * 1024;
 const PROTOCOL_VERSION_HEADER: &str = "mcp-protocol-version";
+const CORS_ALLOW_HEADERS: &str = "authorization, content-type, accept, mcp-protocol-version";
 
 /// What one POST did, for the request log.
 struct Outcome {
@@ -99,8 +100,19 @@ pub async fn post_mcp(
     backend: web::Data<Arc<dyn NotificationBackend>>,
 ) -> HttpResponse {
     let started = Instant::now();
-    let outcome = handle_post(&request, payload, &state, backend.get_ref().clone()).await;
+    let origin = match allowed_origin(&request, &state) {
+        Ok(origin) => origin,
+        Err(()) => {
+            let outcome = Outcome::new(origin_denied(), "origin_denied");
+            log_outcome(&outcome, started);
+            return outcome.response;
+        }
+    };
+    let mut outcome = handle_post(&request, payload, &state, backend.get_ref().clone()).await;
     log_outcome(&outcome, started);
+    if let Some(origin) = origin {
+        add_cors_headers(&mut outcome.response, &origin);
+    }
     outcome.response
 }
 
@@ -173,6 +185,20 @@ fn rpc_outcome(error: &RpcError) -> &'static str {
         codes::METHOD_NOT_FOUND => "method_not_found",
         codes::INVALID_PARAMS => "invalid_params",
         _ => "rpc_error",
+    }
+}
+
+/// `Ok(Some(origin))` for an allow-listed browser origin, `Ok(None)` when
+/// no `Origin` header was sent, `Err` when the origin is not allowed.
+fn allowed_origin(request: &HttpRequest, state: &McpState) -> Result<Option<String>, ()> {
+    let Some(origin) = request.headers().get(header::ORIGIN) else {
+        return Ok(None);
+    };
+    let origin = origin.to_str().map_err(|_| ())?;
+    if state.settings.allowed_origins.iter().any(|o| o == origin) {
+        Ok(Some(origin.to_string()))
+    } else {
+        Err(())
     }
 }
 
@@ -324,6 +350,39 @@ pub async fn method_not_allowed() -> HttpResponse {
     HttpResponse::MethodNotAllowed()
         .insert_header((header::ALLOW, "POST"))
         .json(json!({"error": "only POST is supported on this endpoint"}))
+}
+
+/// `OPTIONS /mcp`: CORS preflight for allow-listed browser origins.
+pub async fn preflight(request: HttpRequest, state: web::Data<McpState>) -> HttpResponse {
+    match allowed_origin(&request, &state) {
+        Ok(Some(origin)) => {
+            let mut response = HttpResponse::NoContent()
+                .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "POST"))
+                .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, CORS_ALLOW_HEADERS))
+                .insert_header((header::ACCESS_CONTROL_MAX_AGE, "600"))
+                .finish();
+            add_cors_headers(&mut response, &origin);
+            response
+        }
+        Ok(None) => method_not_allowed().await,
+        Err(()) => origin_denied(),
+    }
+}
+
+fn origin_denied() -> HttpResponse {
+    HttpResponse::Forbidden().json(json!({"error": "origin not allowed"}))
+}
+
+fn add_cors_headers(response: &mut HttpResponse, origin: &str) {
+    let headers = response.headers_mut();
+    if let Ok(value) = header::HeaderValue::from_str(origin) {
+        headers.insert(header::ACCESS_CONTROL_ALLOW_ORIGIN, value);
+    }
+    headers.insert(header::VARY, header::HeaderValue::from_static("Origin"));
+    headers.insert(
+        header::ACCESS_CONTROL_EXPOSE_HEADERS,
+        header::HeaderValue::from_static("www-authenticate"),
+    );
 }
 
 /// Method names are client input; only known names reach the logs.

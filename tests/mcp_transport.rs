@@ -142,6 +142,46 @@ async fn invalid_token_and_missing_scope_are_distinguished() {
 }
 
 #[actix_web::test]
+async fn origin_must_be_absent_or_allowed() {
+    let (_jwks, app) = harness!();
+    let denied = post(&rpc(1, "ping", json!({})))
+        .insert_header((header::ORIGIN, "https://evil.example"))
+        .to_request();
+    assert_eq!(
+        test::call_service(&app, denied).await.status(),
+        StatusCode::FORBIDDEN
+    );
+    let allowed = post(&rpc(1, "ping", json!({})))
+        .insert_header((header::ORIGIN, "http://localhost:6274"))
+        .to_request();
+    let response = test::call_service(&app, allowed).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_ORIGIN)
+            .unwrap(),
+        "http://localhost:6274"
+    );
+    let preflight = test::TestRequest::default()
+        .method(Method::OPTIONS)
+        .uri("/mcp")
+        .insert_header((header::ORIGIN, "http://localhost:6274"))
+        .to_request();
+    let response = test::call_service(&app, preflight).await;
+    assert_eq!(response.status(), StatusCode::NO_CONTENT);
+    assert!(
+        response
+            .headers()
+            .get(header::ACCESS_CONTROL_ALLOW_HEADERS)
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .contains("authorization")
+    );
+}
+
+#[actix_web::test]
 async fn get_and_delete_are_not_allowed() {
     let (_jwks, app) = harness!();
     for method in [Method::GET, Method::DELETE, Method::PUT] {
