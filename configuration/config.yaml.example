@@ -134,6 +134,33 @@ auth:
 #   #   you want to keep serving during a partial outage.
 #   partial_outage_policy: strict
 
+# MCP endpoint (optional, disabled by default).
+# When enabled, aviso-server mounts POST /mcp (Model Context Protocol,
+# read-only tools) and the OAuth protected resource metadata at
+# /.well-known/oauth-protected-resource/mcp. Tokens are verified locally
+# against the issuer's JWKS. See docs/src/mcp.md.
+mcp:
+  enabled: false
+  # Public URL of the endpoint; tokens must carry it as audience.
+  # Must be https and its path must be exactly /mcp.
+  # resource_url: "https://aviso.example.int/mcp"
+  # Browser origins allowed to call /mcp. Requests without Origin pass.
+  # allowed_origins: ["http://localhost:6274"]
+  # Most notifications one tool call may return (1 to 200).
+  max_results: 100
+  # Deadline for one backend-reading tool call (milliseconds).
+  request_timeout_ms: 10000
+  oauth:
+    # Expected `iss` claim, compared byte for byte.
+    # issuer: "https://auth.example.int/"
+    # HTTPS URL of the issuer's JSON Web Key Set.
+    # jwks_uri: "https://auth.example.int/.well-known/jwks.json"
+    required_scopes: ["aviso:read"]
+    jwks_cache_ttl_seconds: 300
+  identity:
+    # Realm given to every MCP user; use it in stream read_roles.
+    realm: "mcp"
+
 metrics:
   # Enable Prometheus metrics on a separate internal port.
   enabled: false

@@ -135,6 +135,17 @@ impl Application {
             return Err(std::io::Error::other(e));
         }
 
+        if let Err(e) = configuration.mcp.validate() {
+            error!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "startup.mcp.validation.failed",
+                error = %e,
+                "MCP configuration validation failed"
+            );
+            return Err(std::io::Error::other(e));
+        }
+
         #[cfg(feature = "ecpds")]
         let ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>> = {
             if let Err(e) = validate_ecpds_settings(&configuration) {

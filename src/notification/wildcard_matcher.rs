@@ -662,6 +662,7 @@ mod tests {
                 watch_endpoint: WatchEndpointSettings::default(),
                 auth: AuthSettings::default(),
                 metrics: MetricsSettings::default(),
+                mcp: Default::default(),
                 ecpds: None,
             };
 

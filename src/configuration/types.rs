@@ -416,6 +416,9 @@ pub struct Settings {
     pub auth: AuthSettings,
     #[serde(default)]
     pub metrics: MetricsSettings,
+    /// Optional MCP endpoint; disabled by default.
+    #[serde(default)]
+    pub mcp: super::McpSettings,
     // When the `ecpds` feature is enabled, deserialize the typed EcpdsConfig.
     #[cfg(feature = "ecpds")]
     pub ecpds: Option<aviso_ecpds::config::EcpdsConfig>,
