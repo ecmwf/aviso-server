@@ -144,6 +144,8 @@ A token is accepted only when all of these hold:
 - `iss` equals `mcp.oauth.issuer`.
 - `aud` is `mcp.resource_url`, or an array that contains it.
 - `exp`, `nbf`, and `iat` are valid with 30 seconds of clock skew.
+- `sub`, `jti`, and `client_id` are present and not empty, as RFC 9068
+  requires.
 - `scope` contains every entry of `mcp.oauth.required_scopes`.
 
 A missing token gets `401` with a challenge like this:

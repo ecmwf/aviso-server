@@ -91,6 +91,10 @@ struct AccessClaims {
     sub: String,
     iat: u64,
     #[serde(default)]
+    jti: Option<String>,
+    #[serde(default)]
+    client_id: Option<String>,
+    #[serde(default)]
     scope: Option<String>,
     #[serde(default)]
     roles: Option<Vec<String>>,
@@ -163,6 +167,15 @@ impl TokenVerifier {
         }
         if !bounded(&claims.sub) {
             return Err(TokenError::Claims("sub is empty or too long"));
+        }
+        // RFC 9068 section 2.2 makes both claims required in access tokens.
+        if !claims.jti.as_deref().is_some_and(bounded) {
+            return Err(TokenError::Claims("jti is missing, empty, or too long"));
+        }
+        if !claims.client_id.as_deref().is_some_and(bounded) {
+            return Err(TokenError::Claims(
+                "client_id is missing, empty, or too long",
+            ));
         }
         let roles = claims.roles.unwrap_or_default();
         if roles.len() > MAX_ROLES || !roles.iter().all(|role| bounded(role)) {

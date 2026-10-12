@@ -92,6 +92,18 @@ async fn future_iat_and_missing_claims_are_rejected() {
     let mut no_sub = good_claims();
     no_sub.as_object_mut().unwrap().remove("sub");
     assert!(check(no_sub).await.is_err());
+    for claim in ["jti", "client_id"] {
+        let mut missing = good_claims();
+        missing.as_object_mut().unwrap().remove(claim);
+        assert!(
+            matches!(check(missing).await, Err(TokenError::Claims(_))),
+            "{claim}"
+        );
+        assert!(matches!(
+            check(with(claim, json!(""))).await,
+            Err(TokenError::Claims(_))
+        ));
+    }
     let too_many_roles = with("roles", json!(vec!["r"; 65]));
     assert!(matches!(
         check(too_many_roles).await,
