@@ -38,6 +38,7 @@
 - [Configuration](./configuration.md)
 - [Configuration Reference](./configuration-reference.md)
 - [Authentication](./authentication.md)
+- [MCP Endpoint](./mcp.md)
 - [ECPDS Plugin Runbook](./ecpds-runbook.md)
 
 ---

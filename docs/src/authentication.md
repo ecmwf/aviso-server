@@ -26,6 +26,9 @@ Authentication is optional. When enabled, Aviso supports two modes:
 Schema endpoints (`GET /api/v1/schema`, `GET /api/v1/schema/{event_type}`) are
 always publicly accessible, even when auth is enabled.
 
+The optional `/mcp` endpoint does not use this middleware. It verifies OAuth
+access tokens from its own issuer; see [MCP Endpoint](./mcp.md).
+
 ## Quick Start (Direct Mode)
 
 ### 1. Start auth-o-tron

@@ -586,6 +586,129 @@ See
 for setup and runtime behavior, and the [ECPDS runbook](./ecpds-runbook.md)
 for troubleshooting.
 
+## `mcp`
+
+Optional [MCP endpoint](./mcp.md) at `/mcp`. Disabled by default; while
+disabled no route is mounted and no key set is fetched. When enabled, every
+field is validated at startup and an invalid block stops the server.
+
+<div class="settings-reference">
+<div class="setting-index">
+
+| Setting | Default |
+| --- | --- |
+| [`enabled`](#mcp-enabled) | `false` |
+| [`resource_url`](#mcp-resource-url) | `""` |
+| [`allowed_origins`](#mcp-allowed-origins) | `[]` |
+| [`max_results`](#mcp-max-results) | `100` |
+| [`request_timeout_ms`](#mcp-request-timeout-ms) | `10000` |
+| [`oauth.issuer`](#mcp-oauth-issuer) | `""` |
+| [`oauth.jwks_uri`](#mcp-oauth-jwks-uri) | `""` |
+| [`oauth.required_scopes`](#mcp-oauth-required-scopes) | `["aviso:read"]` |
+| [`oauth.jwks_cache_ttl_seconds`](#mcp-oauth-jwks-cache-ttl-seconds) | `300` |
+| [`identity.realm`](#mcp-identity-realm) | `"mcp"` |
+
+</div>
+<details class="setting-panel" id="mcp-enabled">
+<summary><code>enabled</code>
+<span class="setting-meta"><strong>Default:</strong> <code>false</code> ·
+<strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Mount `/mcp` and the protected resource metadata routes. While `false`, the
+other fields are checked for type only.
+
+</details>
+<details class="setting-panel" id="mcp-resource-url">
+<summary><code>resource_url</code>
+<span class="setting-meta"><strong>Default:</strong> <code>""</code> ·
+<strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Public URL of the endpoint. Must be `https` with path `/mcp`. Tokens must
+carry it as audience, byte for byte.
+
+</details>
+<details class="setting-panel" id="mcp-allowed-origins">
+<summary><code>allowed_origins</code>
+<span class="setting-meta"><strong>Default:</strong> <code>[]</code> ·
+<strong>Type:</strong> <code>string[]</code></span>
+</summary>
+
+Browser origins allowed to call `/mcp`, as bare origins like
+`https://app.example.int`. Requests without `Origin` are always allowed.
+
+</details>
+<details class="setting-panel" id="mcp-max-results">
+<summary><code>max_results</code>
+<span class="setting-meta"><strong>Default:</strong> <code>100</code> ·
+<strong>Type:</strong> <code>usize</code></span>
+</summary>
+
+Most notifications one tool call returns. Must be between 1 and 200.
+
+</details>
+<details class="setting-panel" id="mcp-request-timeout-ms">
+<summary><code>request_timeout_ms</code>
+<span class="setting-meta"><strong>Default:</strong> <code>10000</code> ·
+<strong>Type:</strong> <code>u64</code></span>
+</summary>
+
+Deadline for one tool call that reads the backend (milliseconds). Must be
+`> 0`.
+
+</details>
+<details class="setting-panel" id="mcp-oauth-issuer">
+<summary><code>oauth.issuer</code>
+<span class="setting-meta"><strong>Default:</strong> <code>""</code> ·
+<strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Expected `iss` claim, compared byte for byte. Must be an `https` URL. Also
+published as the authorization server in the metadata document.
+
+</details>
+<details class="setting-panel" id="mcp-oauth-jwks-uri">
+<summary><code>oauth.jwks_uri</code>
+<span class="setting-meta"><strong>Default:</strong> <code>""</code> ·
+<strong>Type:</strong> <code>string</code></span>
+</summary>
+
+`https` URL of the issuer's JSON Web Key Set. Fetched on first use, not at
+startup. Redirects are not followed.
+
+</details>
+<details class="setting-panel" id="mcp-oauth-required-scopes">
+<summary><code>oauth.required_scopes</code>
+<span class="setting-meta"><strong>Default:</strong>
+<code>["aviso:read"]</code> · <strong>Type:</strong> <code>string[]</code></span>
+</summary>
+
+Scopes every token must carry. Must be non-empty, with no spaces inside an
+entry.
+
+</details>
+<details class="setting-panel" id="mcp-oauth-jwks-cache-ttl-seconds">
+<summary><code>oauth.jwks_cache_ttl_seconds</code>
+<span class="setting-meta"><strong>Default:</strong> <code>300</code> ·
+<strong>Type:</strong> <code>u64</code></span>
+</summary>
+
+How long a fetched key set is used before it is refreshed. Must be `> 0`.
+
+</details>
+<details class="setting-panel" id="mcp-identity-realm">
+<summary><code>identity.realm</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"mcp"</code> ·
+<strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Realm given to every MCP user. Use it as the realm key in stream
+`read_roles`.
+
+</details>
+</div>
+
 ## `metrics`
 
 Optional Prometheus metrics endpoint. When enabled, a separate HTTP server
