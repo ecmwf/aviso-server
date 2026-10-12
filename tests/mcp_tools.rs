@@ -1,0 +1,184 @@
+// (C) Copyright 2024- ECMWF and individual contributors.
+//
+// This software is licensed under the terms of the Apache Licence Version 2.0
+// which can be obtained at http://www.apache.org/licenses/LICENSE-2.0.
+// In applying this licence, ECMWF does not waive the privileges and immunities
+// granted to it by virtue of its status as an intergovernmental organisation nor
+// does it submit to any jurisdiction.
+
+//! MCP tools over the in-memory backend with a seeded history.
+
+use aviso_server::auth::User;
+use aviso_server::configuration::{McpSettings, Settings};
+use aviso_server::mcp::tools::{ToolCallError, ToolContext, ToolOutput, call, list};
+use aviso_server::notification_backend::{NotificationBackend, build_backend};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::{Arc, OnceLock};
+
+fn init_config() {
+    static INIT: OnceLock<()> = OnceLock::new();
+    INIT.get_or_init(|| {
+        let identifier = json!({
+            "class": {"type": "StringHandler", "required": true},
+            "number": {"type": "IntHandler", "required": true}
+        });
+        let stream = |base: &str, auth: Value| {
+            let mut schema = json!({
+                "topic": {"base": base, "key_order": ["class", "number"]},
+                "identifier": identifier,
+                "payload": {"required": false}
+            });
+            if !auth.is_null() {
+                schema["auth"] = auth;
+            }
+            schema
+        };
+        let mut config: Settings = serde_json::from_value(json!({
+            "application": {"host": "127.0.0.1", "port": 0},
+            "notification_backend": {"kind": "in_memory"},
+            "notification_schema": {
+                "open": stream("McpOpen", Value::Null),
+                "guarded": stream("McpGuarded",
+                    json!({"required": true, "read_roles": {"mcp": ["aviso-mcp"]}})),
+                "denied": stream("McpDenied",
+                    json!({"required": true, "read_roles": {"ecmwf": ["reader"]}})),
+                "plugged": stream("McpPlugged",
+                    json!({"required": true, "plugins": ["ecpds"]}))
+            }
+        }))
+        .unwrap();
+        config.watch_endpoint.replay_batch_delay_ms = 0;
+        config.init_global_config();
+    });
+}
+
+fn user(roles: &[&str]) -> User {
+    User {
+        username: "f00dbabe".to_string(),
+        realm: Some("mcp".to_string()),
+        roles: roles.iter().map(|role| role.to_string()).collect(),
+        attributes: HashMap::new(),
+    }
+}
+
+fn settings() -> McpSettings {
+    McpSettings {
+        max_results: 5,
+        ..McpSettings::default()
+    }
+}
+
+async fn seeded_backend() -> Arc<dyn NotificationBackend> {
+    init_config();
+    let backend = build_backend(&serde_json::from_value(json!({"kind": "in_memory"})).unwrap())
+        .await
+        .unwrap();
+    for number in 1..=8u64 {
+        let class = if number % 2 == 0 { "od" } else { "rd" };
+        for base in ["McpOpen", "McpGuarded", "McpDenied"] {
+            backend
+                .put_messages(
+                    &format!("{base}.{class}.{number}"),
+                    json!({"number": number}).to_string(),
+                )
+                .await
+                .unwrap();
+        }
+    }
+    backend
+}
+
+async fn run(
+    backend: &Arc<dyn NotificationBackend>,
+    roles: &[&str],
+    name: &str,
+    arguments: Value,
+) -> Result<ToolOutput, ToolCallError> {
+    let caller = user(roles);
+    let settings = settings();
+    let context = ToolContext {
+        user: &caller,
+        settings: &settings,
+        backend: backend.clone(),
+    };
+    call(
+        &context,
+        Some(&json!({"name": name, "arguments": arguments})),
+    )
+    .await
+}
+
+async fn ok(backend: &Arc<dyn NotificationBackend>, name: &str, arguments: Value) -> Value {
+    let output = run(backend, &["aviso-mcp"], name, arguments).await.unwrap();
+    assert!(!output.is_error, "{}", output.result);
+    let structured = output.result["structuredContent"].clone();
+    let text = output.result["content"][0]["text"].as_str().unwrap();
+    assert_eq!(serde_json::from_str::<Value>(text).unwrap(), structured);
+    structured
+}
+
+#[test]
+fn list_names_all_tools() {
+    let names: Vec<String> = list()["tools"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|tool| tool["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(
+        names,
+        [
+            "aviso_health",
+            "aviso_list_event_types",
+            "aviso_describe_event_type",
+            "aviso_replay_notifications",
+            "aviso_check_data_available"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn health_reports_backend_state() {
+    let backend = seeded_backend().await;
+    let result = ok(&backend, "aviso_health", json!({})).await;
+    assert_eq!(result["status"], "ok");
+    assert_eq!(result["backend_connected"], true);
+}
+
+#[tokio::test]
+async fn event_types_are_filtered_by_read_access() {
+    let backend = seeded_backend().await;
+    let result = ok(&backend, "aviso_list_event_types", json!({})).await;
+    assert_eq!(result["event_types"], json!(["guarded", "open"]));
+    let output = run(&backend, &[], "aviso_list_event_types", json!({}))
+        .await
+        .unwrap();
+    assert_eq!(
+        output.result["structuredContent"]["event_types"],
+        json!(["open"])
+    );
+}
+
+#[tokio::test]
+async fn unknown_tool_and_malformed_call_are_protocol_errors() {
+    let backend = seeded_backend().await;
+    let result = run(&backend, &[], "aviso_write", json!({})).await;
+    assert_eq!(
+        result.unwrap_err(),
+        ToolCallError::UnknownTool("aviso_write".to_string())
+    );
+    let caller = user(&[]);
+    let settings = settings();
+    let context = ToolContext {
+        user: &caller,
+        settings: &settings,
+        backend,
+    };
+    assert_eq!(
+        call(&context, Some(&json!({"arguments": {}})))
+            .await
+            .unwrap_err(),
+        ToolCallError::MalformedCall
+    );
+}
