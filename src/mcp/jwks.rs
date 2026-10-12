@@ -12,16 +12,18 @@
 //! refetched early only when a token names an unknown `kid`. Every fetch,
 //! scheduled or not, is spaced by a minimum interval so a flood of forged
 //! `kid` values cannot turn the server into a load generator against the
-//! issuer.
+//! issuer. Verification of tokens with known keys never waits for a
+//! fetch: a stale set keeps serving while one caller refreshes it.
 
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use jsonwebtoken::DecodingKey;
 use jsonwebtoken::jwk::{AlgorithmParameters, JwkSet, KeyAlgorithm, PublicKeyUse};
 use reqwest::{Client, StatusCode, redirect};
 use std::collections::HashMap;
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use thiserror::Error;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, RwLock};
 use tracing::{info, warn};
 
 /// Largest key set document accepted from the issuer.
@@ -67,20 +69,51 @@ impl JwksTiming {
     }
 }
 
+/// One fetched key set. Replaced as a whole, never mutated.
 #[derive(Default)]
-struct CacheState {
+struct Snapshot {
     keys: HashMap<String, DecodingKey>,
     fetched_at: Option<Instant>,
+}
+
+impl Snapshot {
+    fn age(&self, now: Instant) -> Option<Duration> {
+        self.fetched_at.map(|at| now.duration_since(at))
+    }
+
+    fn lookup(&self, kid: &str) -> Result<DecodingKey, JwksError> {
+        if let Some(key) = self.keys.get(kid) {
+            return Ok(key.clone());
+        }
+        if self.fetched_at.is_none() {
+            return Err(JwksError::Unavailable("no key set fetched yet".to_string()));
+        }
+        Err(JwksError::UnknownKey)
+    }
+}
+
+/// Bookkeeping guarded by the single-flight fetch lock.
+#[derive(Default)]
+struct FetchState {
     last_attempt: Option<Instant>,
 }
 
-/// Shared key cache. One fetch runs at a time; concurrent callers wait for
-/// it and then read its result.
+/// Shared key cache.
+///
+/// Readers clone the current [`Snapshot`] under a short read lock and
+/// never wait for the network. At most one fetch runs at a time, guarded
+/// by a separate lock:
+/// - a known `kid` in a fresh set is served at once;
+/// - a known `kid` in a stale set is served from the cached copy, while
+///   the first caller to find the fetch lock free refreshes the set;
+/// - an unknown `kid`, or no set at all, waits for the fetch lock, then
+///   uses the set the previous holder fetched or fetches one itself.
 pub struct JwksCache {
     client: Client,
     uri: String,
     timing: JwksTiming,
-    state: Mutex<CacheState>,
+    snapshot: RwLock<Arc<Snapshot>>,
+    fetch_state: Mutex<FetchState>,
 }
 
 impl JwksCache {
@@ -96,60 +129,76 @@ impl JwksCache {
             client,
             uri: uri.to_string(),
             timing,
-            state: Mutex::new(CacheState::default()),
+            snapshot: RwLock::new(Arc::new(Snapshot::default())),
+            fetch_state: Mutex::new(FetchState::default()),
         })
     }
 
     /// Return the key for `kid`, fetching the set when it is stale or
     /// missing the id and the refetch interval allows it.
     pub async fn key(&self, kid: &str) -> Result<DecodingKey, JwksError> {
-        let mut state = self.state.lock().await;
+        let snapshot = self.snapshot().await;
+        if snapshot.keys.contains_key(kid) {
+            let fresh = snapshot
+                .age(Instant::now())
+                .is_some_and(|age| age < self.timing.ttl);
+            if !fresh && let Ok(mut fetch_state) = self.fetch_state.try_lock() {
+                self.refresh(&mut fetch_state).await;
+                return self.snapshot().await.lookup(kid);
+            }
+            return snapshot.lookup(kid);
+        }
+
+        let mut fetch_state = self.fetch_state.lock().await;
+        let snapshot = self.snapshot().await;
+        if !snapshot.keys.contains_key(kid) {
+            self.refresh(&mut fetch_state).await;
+            return self.snapshot().await.lookup(kid);
+        }
+        snapshot.lookup(kid)
+    }
+
+    async fn snapshot(&self) -> Arc<Snapshot> {
+        Arc::clone(&*self.snapshot.read().await)
+    }
+
+    /// Fetch and publish a new set unless the last attempt is too recent.
+    /// A failed fetch keeps the cached set.
+    async fn refresh(&self, fetch_state: &mut FetchState) {
         let now = Instant::now();
-        let stale = state
-            .fetched_at
-            .is_none_or(|at| now.duration_since(at) >= self.timing.ttl);
-        let known = state.keys.contains_key(kid);
-        let may_fetch = state
+        let may_fetch = fetch_state
             .last_attempt
             .is_none_or(|at| now.duration_since(at) >= self.timing.min_refetch_interval);
-
-        if (stale || !known) && may_fetch {
-            state.last_attempt = Some(now);
-            match self.fetch().await {
-                Ok(keys) => {
-                    info!(
-                        service_name = SERVICE_NAME,
-                        service_version = SERVICE_VERSION,
-                        event_name = "mcp.jwks.fetch.succeeded",
-                        key_count = keys.len(),
-                        "Fetched MCP token signing keys"
-                    );
-                    state.keys = keys;
-                    state.fetched_at = Some(now);
-                }
-                Err(error) => {
-                    warn!(
-                        service_name = SERVICE_NAME,
-                        service_version = SERVICE_VERSION,
-                        event_name = "mcp.jwks.fetch.failed",
-                        error = %error,
-                        cached_keys = state.keys.len(),
-                        "Fetching MCP token signing keys failed"
-                    );
-                    if state.keys.is_empty() {
-                        return Err(JwksError::Unavailable(error));
-                    }
-                }
+        if !may_fetch {
+            return;
+        }
+        fetch_state.last_attempt = Some(now);
+        match self.fetch().await {
+            Ok(keys) => {
+                info!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_name = "mcp.jwks.fetch.succeeded",
+                    key_count = keys.len(),
+                    "Fetched MCP token signing keys"
+                );
+                *self.snapshot.write().await = Arc::new(Snapshot {
+                    keys,
+                    fetched_at: Some(now),
+                });
+            }
+            Err(error) => {
+                let cached_keys = self.snapshot().await.keys.len();
+                warn!(
+                    service_name = SERVICE_NAME,
+                    service_version = SERVICE_VERSION,
+                    event_name = "mcp.jwks.fetch.failed",
+                    error = %error,
+                    cached_keys,
+                    "Fetching MCP token signing keys failed"
+                );
             }
         }
-
-        if let Some(key) = state.keys.get(kid) {
-            return Ok(key.clone());
-        }
-        if state.fetched_at.is_none() {
-            return Err(JwksError::Unavailable("no key set fetched yet".to_string()));
-        }
-        Err(JwksError::UnknownKey)
     }
 
     async fn fetch(&self) -> Result<HashMap<String, DecodingKey>, String> {

@@ -13,10 +13,12 @@ mod mcp_issuer;
 
 use aviso_server::mcp::auth::{TokenError, TokenVerifier};
 use aviso_server::mcp::jwks::{JwksCache, JwksTiming};
+use futures_util::future::join_all;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use mcp_issuer::*;
 use serde_json::json;
-use std::time::Duration;
+use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 fn verifier(server: &JwksServer, min_refetch: Duration) -> TokenVerifier {
     let timing = JwksTiming {
@@ -206,4 +208,59 @@ async fn unreachable_key_set_is_a_server_side_failure() {
     let error = verifier.verify(&good_token()).await.unwrap_err();
     assert!(matches!(error, TokenError::KeysUnavailable));
     assert_eq!(error.oauth_error(), None);
+}
+
+fn shared_verifier(server: &JwksServer, ttl: Duration) -> Arc<TokenVerifier> {
+    let timing = JwksTiming {
+        ttl,
+        min_refetch_interval: Duration::ZERO,
+        fetch_timeout: Duration::from_secs(5),
+    };
+    let jwks = JwksCache::new(&server.uri, timing).unwrap();
+    Arc::new(TokenVerifier::new(jwks, &settings(&server.uri)))
+}
+
+#[tokio::test]
+async fn slow_refresh_does_not_block_tokens_with_known_keys() {
+    let server =
+        JwksServer::start_with_delay(vec![jwk(&key_a(), KID_A)], Duration::from_millis(800));
+    let verifier = shared_verifier(&server, Duration::from_millis(100));
+    verifier.verify(&good_token()).await.unwrap();
+    assert_eq!(server.hits(), 1);
+    tokio::time::sleep(Duration::from_millis(150)).await;
+
+    let refresher = tokio::spawn({
+        let verifier = Arc::clone(&verifier);
+        async move { verifier.verify(&good_token()).await.map(|_| ()) }
+    });
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while server.hits() < 2 {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    })
+    .await
+    .unwrap();
+    for _ in 0..5 {
+        let started = Instant::now();
+        verifier.verify(&good_token()).await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(400),
+            "a known key must not wait for the refresh"
+        );
+    }
+    refresher.await.unwrap().unwrap();
+    assert_eq!(server.hits(), 2, "only one caller refreshes a stale set");
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn concurrent_lookups_without_a_key_set_share_one_fetch() {
+    let server =
+        JwksServer::start_with_delay(vec![jwk(&key_a(), KID_A)], Duration::from_millis(300));
+    let verifier = shared_verifier(&server, Duration::from_secs(300));
+    let token = good_token();
+    let results = join_all((0..8).map(|_| verifier.verify(&token))).await;
+    assert!(results.iter().all(Result::is_ok));
+    assert_eq!(server.hits(), 1);
+    server.stop().await;
 }

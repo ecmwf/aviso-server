@@ -8,6 +8,7 @@
 
 //! Test issuer for MCP tokens: fixed RSA keys, a token minter, and a local
 //! JWKS server whose key set can be swapped and whose hits are counted.
+//! The server can answer after a fixed delay to model a slow issuer.
 //!
 //! The PKCS#1 DER files under `tests/fixtures/mcp/` are throwaway keys generated
 //! for these tests only.
@@ -20,6 +21,7 @@ use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
 use serde_json::{Value, json};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 pub const ISSUER: &str = "https://auth.example.int/";
 pub const RESOURCE: &str = "https://aviso.example.int/mcp";
@@ -92,6 +94,11 @@ pub struct JwksServer {
 
 impl JwksServer {
     pub fn start(keys: Vec<Jwk>) -> Self {
+        Self::start_with_delay(keys, Duration::ZERO)
+    }
+
+    /// Like [`JwksServer::start`], but every response waits `delay`.
+    pub fn start_with_delay(keys: Vec<Jwk>, delay: Duration) -> Self {
         let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let uri = format!("http://{}/jwks", listener.local_addr().unwrap());
         let keys = Arc::new(Mutex::new(JwkSet { keys }));
@@ -105,6 +112,7 @@ impl JwksServer {
                     counted.fetch_add(1, Ordering::SeqCst);
                     let body = serde_json::to_string(&*served.lock().unwrap()).unwrap();
                     async move {
+                        tokio::time::sleep(delay).await;
                         HttpResponse::Ok()
                             .content_type("application/json")
                             .body(body)
