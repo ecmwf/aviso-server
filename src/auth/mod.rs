@@ -61,8 +61,11 @@ impl User {
     }
 
     /// Returns true if the user has any of the admin roles.
+    ///
+    /// Unlike [`User::has_any_role`], an empty map grants admin to nobody:
+    /// no configured admin roles means no admins.
     pub fn is_admin(&self, admin_roles: &HashMap<String, Vec<String>>) -> bool {
-        self.has_any_role(admin_roles)
+        !admin_roles.is_empty() && self.has_any_role(admin_roles)
     }
 }
 
@@ -188,6 +191,14 @@ mod tests {
             &EncodingKey::from_secret(secret.as_bytes()),
         )
         .expect("token must encode")
+    }
+
+    #[test]
+    fn empty_admin_role_map_grants_no_admins() {
+        let user = User::try_from(claims(Some("alice"), None)).expect("user");
+        assert!(user.has_any_role(&HashMap::new()));
+        assert!(!user.is_admin(&HashMap::new()));
+        assert!(user.is_admin(&realm_roles(&[("testrealm", &["admin"])])));
     }
 
     #[test]
