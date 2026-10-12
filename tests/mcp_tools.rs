@@ -118,6 +118,21 @@ async fn ok(backend: &Arc<dyn NotificationBackend>, name: &str, arguments: Value
     structured
 }
 
+async fn tool_error(
+    backend: &Arc<dyn NotificationBackend>,
+    roles: &[&str],
+    name: &str,
+    arguments: Value,
+) -> String {
+    let output = run(backend, roles, name, arguments).await.unwrap();
+    assert!(output.is_error, "{}", output.result);
+    assert_eq!(output.result["isError"], true);
+    output.result["content"][0]["text"]
+        .as_str()
+        .unwrap()
+        .to_string()
+}
+
 #[test]
 fn list_names_all_tools() {
     let names: Vec<String> = list()["tools"]
@@ -158,6 +173,28 @@ async fn event_types_are_filtered_by_read_access() {
         output.result["structuredContent"]["event_types"],
         json!(["open"])
     );
+}
+
+#[tokio::test]
+async fn describe_matches_the_rest_schema_document() {
+    let backend = seeded_backend().await;
+    let result = ok(
+        &backend,
+        "aviso_describe_event_type",
+        json!({"event_type": "open"}),
+    )
+    .await;
+    let schema = aviso_server::routes::schema::lookup_event_schema("open").unwrap();
+    let expected = aviso_server::routes::schema::event_schema_body("open", &schema);
+    assert_eq!(result, expected);
+    let message = tool_error(
+        &backend,
+        &["aviso-mcp"],
+        "aviso_describe_event_type",
+        json!({"event_type": "nope"}),
+    )
+    .await;
+    assert!(message.contains("not found"), "{message}");
 }
 
 #[tokio::test]

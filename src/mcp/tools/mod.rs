@@ -19,8 +19,10 @@ use crate::auth::User;
 use crate::auth::stream_access::{StreamOperation, check_stream_access};
 use crate::configuration::{McpSettings, Settings};
 use crate::notification_backend::NotificationBackend;
+use crate::routes::schema::{event_schema_body, lookup_event_schema};
 use crate::telemetry::SERVICE_VERSION;
-use definitions::{HEALTH, LIST_EVENT_TYPES};
+use definitions::{DESCRIBE_EVENT_TYPE, HEALTH, LIST_EVENT_TYPES};
+use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -83,6 +85,7 @@ pub async fn call(
     let outcome = match name {
         HEALTH => no_arguments(arguments).map(|()| health(context)),
         LIST_EVENT_TYPES => no_arguments(arguments).map(|()| list_event_types(context)),
+        DESCRIBE_EVENT_TYPE => describe_event_type(arguments),
         other => return Err(ToolCallError::UnknownTool(other.to_string())),
     };
     let (result, is_error) = match outcome {
@@ -116,6 +119,10 @@ fn no_arguments(arguments: Value) -> Result<(), String> {
         Value::Object(map) if map.is_empty() => Ok(()),
         _ => Err("This tool takes no arguments".to_string()),
     }
+}
+
+fn parse_arguments<T: for<'de> Deserialize<'de>>(arguments: Value) -> Result<T, String> {
+    serde_json::from_value(arguments).map_err(|error| format!("Invalid arguments: {error}"))
 }
 
 /// MCP users are never admins, so access checks use an empty admin map.
@@ -164,6 +171,18 @@ fn list_event_types(context: &ToolContext<'_>) -> Value {
         .unwrap_or_default();
     event_types.sort();
     json!({"event_types": event_types})
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct DescribeArguments {
+    event_type: String,
+}
+
+fn describe_event_type(arguments: Value) -> Result<Value, String> {
+    let arguments: DescribeArguments = parse_arguments(arguments)?;
+    let schema = lookup_event_schema(&arguments.event_type).map_err(|error| error.to_string())?;
+    Ok(event_schema_body(&arguments.event_type, &schema))
 }
 
 #[cfg(test)]
