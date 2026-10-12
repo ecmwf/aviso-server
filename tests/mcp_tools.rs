@@ -133,6 +133,15 @@ async fn tool_error(
         .to_string()
 }
 
+fn numbers(result: &Value) -> Vec<u64> {
+    result["notifications"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|event| event["data"]["payload"]["number"].as_u64().unwrap())
+        .collect()
+}
+
 #[test]
 fn list_names_all_tools() {
     let names: Vec<String> = list()["tools"]
@@ -198,6 +207,99 @@ async fn describe_matches_the_rest_schema_document() {
 }
 
 #[tokio::test]
+async fn replay_defaults_to_recent_history_and_caps_results() {
+    let backend = seeded_backend().await;
+    let arguments = json!({
+        "event_type": "open",
+        "identifier": {"class": "od", "number": {"gte": 0}}
+    });
+    let result = ok(&backend, "aviso_replay_notifications", arguments).await;
+    assert_eq!(numbers(&result), vec![2, 4, 6, 8]);
+    assert_eq!(result["truncated"], false);
+    assert_eq!(result["count"], 4);
+
+    let capped = json!({
+        "event_type": "open",
+        "identifier": {"class": "*", "number": {"gte": 0}},
+        "from_id": "1",
+        "max_results": 50
+    });
+    let result = ok(&backend, "aviso_replay_notifications", capped).await;
+    assert_eq!(numbers(&result), vec![1, 2, 3, 4, 5], "server cap is 5");
+    assert_eq!(result["truncated"], true);
+}
+
+#[tokio::test]
+async fn replay_of_old_window_is_empty() {
+    let backend = seeded_backend().await;
+    let arguments = json!({
+        "event_type": "open",
+        "identifier": {"class": "od", "number": {"gte": 0}},
+        "from_date": "2001-01-01T00:00:00Z",
+        "to_date": "2001-01-02T00:00:00Z"
+    });
+    let result = ok(&backend, "aviso_replay_notifications", arguments).await;
+    assert_eq!(result["count"], 0);
+}
+
+#[tokio::test]
+async fn replay_respects_stream_read_roles() {
+    let backend = seeded_backend().await;
+    let arguments = |event_type: &str| {
+        json!({
+            "event_type": event_type,
+            "identifier": {"class": "od", "number": {"gte": 0}},
+            "from_id": "1"
+        })
+    };
+    let result = ok(&backend, "aviso_replay_notifications", arguments("guarded")).await;
+    assert_eq!(numbers(&result), vec![2, 4, 6, 8]);
+    for (roles, event_type) in [(&[][..], "guarded"), (&["aviso-mcp"][..], "denied")] {
+        let message = tool_error(
+            &backend,
+            roles,
+            "aviso_replay_notifications",
+            arguments(event_type),
+        )
+        .await;
+        assert!(message.contains("read role"), "{message}");
+    }
+    let message = tool_error(
+        &backend,
+        &["aviso-mcp"],
+        "aviso_replay_notifications",
+        arguments("plugged"),
+    )
+    .await;
+    assert!(message.contains("plugin"), "{message}");
+}
+
+#[tokio::test]
+async fn bad_arguments_are_tool_errors() {
+    let backend = seeded_backend().await;
+    let cases = [
+        ("aviso_replay_notifications", json!({"event_type": "open"})),
+        (
+            "aviso_replay_notifications",
+            json!({"event_type": "open", "identifier": {}, "extra": 1}),
+        ),
+        (
+            "aviso_replay_notifications",
+            json!({"event_type": "missing", "identifier": {"class": "od"}}),
+        ),
+        (
+            "aviso_replay_notifications",
+            json!({"event_type": "open", "identifier": {"class": "od", "number": 1},
+                   "max_results": 0}),
+        ),
+        ("aviso_health", json!({"verbose": true})),
+    ];
+    for (name, arguments) in cases {
+        tool_error(&backend, &["aviso-mcp"], name, arguments).await;
+    }
+}
+
+#[tokio::test]
 async fn unknown_tool_and_malformed_call_are_protocol_errors() {
     let backend = seeded_backend().await;
     let result = run(&backend, &[], "aviso_write", json!({})).await;
@@ -217,5 +319,30 @@ async fn unknown_tool_and_malformed_call_are_protocol_errors() {
             .await
             .unwrap_err(),
         ToolCallError::MalformedCall
+    );
+}
+
+#[tokio::test]
+async fn data_availability_returns_the_oldest_match() {
+    let backend = seeded_backend().await;
+    let found = ok(
+        &backend,
+        "aviso_check_data_available",
+        json!({"event_type": "open", "identifier": {"class": "od", "number": 6}}),
+    )
+    .await;
+    assert_eq!(found["available"], true);
+    assert_eq!(found["notification"]["data"]["payload"]["number"], 6);
+    assert_eq!(found["first_seen"], found["notification"]["time"]);
+
+    let missing = ok(
+        &backend,
+        "aviso_check_data_available",
+        json!({"event_type": "open", "identifier": {"class": "od", "number": 7}}),
+    )
+    .await;
+    assert_eq!(
+        missing,
+        json!({"available": false, "first_seen": null, "notification": null})
     );
 }

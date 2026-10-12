@@ -20,13 +20,22 @@ use crate::auth::stream_access::{StreamOperation, check_stream_access};
 use crate::configuration::{McpSettings, Settings};
 use crate::notification_backend::NotificationBackend;
 use crate::routes::schema::{event_schema_body, lookup_event_schema};
+use crate::sse::collect::{CollectLimits, ReplayAccess, collect_replay};
 use crate::telemetry::SERVICE_VERSION;
-use definitions::{DESCRIBE_EVENT_TYPE, HEALTH, LIST_EVENT_TYPES};
+use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
+use definitions::{
+    CHECK_DATA_AVAILABLE, DESCRIBE_EVENT_TYPE, HEALTH, LIST_EVENT_TYPES, REPLAY_NOTIFICATIONS,
+};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
 use std::collections::HashMap;
+use std::num::NonZeroUsize;
 use std::sync::Arc;
+use std::time::Duration;
 use thiserror::Error;
+
+/// Default look-back of a replay without a start point.
+const DEFAULT_REPLAY_WINDOW_HOURS: i64 = 24;
 
 /// Caller and server context for one tool call.
 pub struct ToolContext<'a> {
@@ -86,6 +95,8 @@ pub async fn call(
         HEALTH => no_arguments(arguments).map(|()| health(context)),
         LIST_EVENT_TYPES => no_arguments(arguments).map(|()| list_event_types(context)),
         DESCRIBE_EVENT_TYPE => describe_event_type(arguments),
+        REPLAY_NOTIFICATIONS => replay_notifications(context, arguments).await,
+        CHECK_DATA_AVAILABLE => check_data_available(context, arguments).await,
         other => return Err(ToolCallError::UnknownTool(other.to_string())),
     };
     let (result, is_error) = match outcome {
@@ -183,6 +194,123 @@ fn describe_event_type(arguments: Value) -> Result<Value, String> {
     let arguments: DescribeArguments = parse_arguments(arguments)?;
     let schema = lookup_event_schema(&arguments.event_type).map_err(|error| error.to_string())?;
     Ok(event_schema_body(&arguments.event_type, &schema))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct ReplayArguments {
+    event_type: String,
+    identifier: Map<String, Value>,
+    #[serde(default)]
+    from_date: Option<String>,
+    #[serde(default)]
+    from_id: Option<String>,
+    #[serde(default)]
+    to_date: Option<String>,
+    #[serde(default)]
+    to_id: Option<String>,
+    #[serde(default)]
+    max_results: Option<usize>,
+}
+
+async fn replay_notifications(
+    context: &ToolContext<'_>,
+    arguments: Value,
+) -> Result<Value, String> {
+    let arguments: ReplayArguments = parse_arguments(arguments)?;
+    let from_date = match (&arguments.from_date, &arguments.from_id) {
+        (None, None) => Some(default_from_date()),
+        _ => arguments.from_date,
+    };
+    let body = json!({
+        "event_type": arguments.event_type,
+        "identifier": arguments.identifier,
+        "from_date": from_date,
+        "from_id": arguments.from_id,
+        "to_date": arguments.to_date,
+        "to_id": arguments.to_id,
+    });
+    let max_results = arguments
+        .max_results
+        .unwrap_or(context.settings.max_results)
+        .min(context.settings.max_results);
+    let collected = run_replay(context, &body, max_results).await?;
+    Ok(json!({
+        "event_type": collected.event_type,
+        "count": collected.events.len(),
+        "truncated": collected.truncated,
+        "notifications": collected.events
+    }))
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct AvailabilityArguments {
+    event_type: String,
+    identifier: Map<String, Value>,
+    #[serde(default)]
+    from_date: Option<String>,
+}
+
+async fn check_data_available(
+    context: &ToolContext<'_>,
+    arguments: Value,
+) -> Result<Value, String> {
+    let arguments: AvailabilityArguments = parse_arguments(arguments)?;
+    // Without a start time, sequence 1 covers the whole retained history.
+    let from_id = arguments.from_date.is_none().then_some("1");
+    let body = json!({
+        "event_type": arguments.event_type,
+        "identifier": arguments.identifier,
+        "from_date": arguments.from_date,
+        "from_id": from_id,
+    });
+    let collected = run_replay(context, &body, 1).await?;
+    let notification = collected.events.into_iter().next();
+    let first_seen = notification
+        .as_ref()
+        .and_then(|event| event.get("time"))
+        .cloned()
+        .unwrap_or(Value::Null);
+    Ok(json!({
+        "available": notification.is_some(),
+        "first_seen": first_seen,
+        "notification": notification
+    }))
+}
+
+async fn run_replay(
+    context: &ToolContext<'_>,
+    body: &Value,
+    max_results: usize,
+) -> Result<crate::sse::collect::CollectedReplay, String> {
+    let max_results = NonZeroUsize::new(max_results)
+        .ok_or_else(|| "max_results must be at least 1".to_string())?;
+    let admin_roles = no_admin_roles();
+    let access = ReplayAccess {
+        auth_enabled: true,
+        user: Some(context.user),
+        admin_roles: Some(&admin_roles),
+    };
+    let limits = CollectLimits {
+        max_results,
+        timeout: Duration::from_millis(context.settings.request_timeout_ms),
+    };
+    let request_id = uuid::Uuid::new_v4().to_string();
+    collect_replay(
+        body.to_string().as_bytes(),
+        context.backend.clone(),
+        access,
+        limits,
+        &request_id,
+    )
+    .await
+    .map_err(|error| error.to_string())
+}
+
+fn default_from_date() -> String {
+    (Utc::now() - ChronoDuration::hours(DEFAULT_REPLAY_WINDOW_HOURS))
+        .to_rfc3339_opts(SecondsFormat::Secs, true)
 }
 
 #[cfg(test)]
