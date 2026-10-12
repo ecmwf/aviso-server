@@ -112,6 +112,13 @@ When `enabled` is `true`, startup fails unless:
 their audience, byte for byte. `oauth.issuer` is also compared byte for
 byte, so keep any trailing slash the issuer uses.
 
+The server mounts the endpoint at `/mcp` and its metadata at
+`/.well-known/oauth-protected-resource/mcp`, at the root of the host. That is
+why the path of `resource_url` must be `/mcp`: clients derive the metadata
+URL from it as RFC 9728 describes. A reverse proxy must forward both paths
+unchanged. Publishing the endpoint under a prefix such as
+`https://example.int/aviso/mcp` is not supported.
+
 Every field can be set from the environment, for example:
 
 ```bash
