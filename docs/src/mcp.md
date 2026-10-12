@@ -51,7 +51,8 @@ CloudEvent `time` as `first_seen`.
 MCP callers authenticate with OAuth access tokens, not with Aviso's REST
 credentials. A verified token becomes an Aviso user:
 
-- `username` is the token `sub`.
+- `username` is a short hash of the token `sub`, the same value the debug
+  logs show as the subject. The raw `sub` is never kept.
 - `realm` is `mcp.identity.realm` (default `mcp`).
 - `roles` are the token's `roles` claim (at most 64).
 

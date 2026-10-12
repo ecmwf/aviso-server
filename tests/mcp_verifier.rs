@@ -54,7 +54,7 @@ async fn valid_token_maps_to_a_non_admin_mcp_user() {
         .verify(&good_token())
         .await
         .unwrap();
-    assert_eq!(verified.user.username, "f00dbabe");
+    assert_eq!(verified.user.username, verified.subject_hash);
     assert_eq!(verified.user.realm.as_deref(), Some("mcp"));
     assert_eq!(verified.user.roles, vec!["aviso-mcp"]);
     assert!(!verified.subject_hash.contains("f00dbabe"));

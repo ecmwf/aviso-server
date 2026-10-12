@@ -80,10 +80,12 @@ impl TokenError {
 /// A verified token mapped onto an Aviso user.
 #[derive(Debug, Clone)]
 pub struct VerifiedToken {
-    /// User for stream access checks; never an admin.
+    /// User for stream access checks; never an admin. Its username is
+    /// [`VerifiedToken::subject_hash`], not the raw `sub`, so anything that
+    /// logs or echoes the username shows the same pseudonym as the logs.
     pub user: User,
-    /// Short pseudonym of the subject, for debug logs only. See
-    /// [`subject_hash`] for how long it stays the same.
+    /// Short pseudonym of the subject, for logs. See [`subject_hash`] for
+    /// how long it stays the same.
     pub subject_hash: String,
 }
 
@@ -194,14 +196,15 @@ impl TokenVerifier {
         {
             return Err(TokenError::InsufficientScope);
         }
+        let subject_hash = subject_hash(&claims.sub);
         Ok(VerifiedToken {
-            subject_hash: subject_hash(&claims.sub),
             user: User {
-                username: claims.sub,
+                username: subject_hash.clone(),
                 realm: Some(self.realm.clone()),
                 roles,
                 attributes: HashMap::new(),
             },
+            subject_hash,
         })
     }
 }
