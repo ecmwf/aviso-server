@@ -253,6 +253,12 @@ Tokens, claims, and tool arguments are never logged. At debug level,
 `mcp.request.subject` adds a short hash of the token subject so one client's
 requests can be correlated.
 
+Two warnings come from the replay tools. `mcp.tool.replay.failed` carries the
+backend error behind a failed replay; the model only sees a generic message.
+`mcp.tool.replay.render_failed` counts notifications a replay had to skip,
+with the event type. It is logged only for configured event types the caller
+could read.
+
 ## Limitations
 
 - Tools are read-only. There is no publish tool and no live watch.
