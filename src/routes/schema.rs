@@ -16,8 +16,9 @@
 use crate::configuration::{ApiEventSchema, Settings};
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use actix_web::{HttpResponse, web};
-use serde_json::json;
+use serde_json::{Value, json};
 use std::collections::HashMap;
+use thiserror::Error;
 use tracing::info;
 use tracing_actix_web::RequestId;
 
@@ -112,41 +113,67 @@ pub async fn get_notification_schema() -> HttpResponse {
 #[tracing::instrument(skip(request_id), fields(request_id = %request_id))]
 pub async fn get_event_schema(path: web::Path<String>, request_id: RequestId) -> HttpResponse {
     let event_type = path.into_inner();
-    let schema = Settings::get_global_notification_schema();
-
-    match schema {
-        Some(schema_map) => {
-            if let Some(event_schema) = schema_map.get(&event_type) {
-                // Convert to API-friendly format
-                let api_schema = ApiEventSchema::from(event_schema);
-
-                info!(
-                    service_name = SERVICE_NAME,
-                    service_version = SERVICE_VERSION,
-                    event_name = "api.schema.get.succeeded",
-                    event_type = %event_type,
-                    field_count = api_schema.identifier.len(),
-                    "Returning filtered schema for specific event type"
-                );
-
-                HttpResponse::Ok().json(json!({
-                    "status": "success",
-                    "event_type": event_type,
-                    "schema": api_schema
-                }))
-            } else {
-                HttpResponse::NotFound().json(json!({
-                    "status": "error",
-                    "message": format!("Event type '{}' not found", event_type),
-                    "available_types": schema_map.keys().collect::<Vec<_>>(),
-                    "request_id": request_id.to_string(),
-                }))
-            }
+    match lookup_event_schema(&event_type) {
+        Ok(api_schema) => {
+            info!(
+                service_name = SERVICE_NAME,
+                service_version = SERVICE_VERSION,
+                event_name = "api.schema.get.succeeded",
+                event_type = %event_type,
+                field_count = api_schema.identifier.len(),
+                "Returning filtered schema for specific event type"
+            );
+            HttpResponse::Ok().json(event_schema_body(&event_type, &api_schema))
         }
-        None => HttpResponse::NotFound().json(json!({
-            "status": "error",
-            "message": "No notification schema configured",
-            "request_id": request_id.to_string(),
-        })),
+        Err(error) => {
+            let mut body = json!({
+                "status": "error",
+                "message": error.to_string(),
+                "request_id": request_id.to_string(),
+            });
+            if let EventSchemaError::NotFound { available, .. } = &error {
+                body["available_types"] = json!(available);
+            }
+            HttpResponse::NotFound().json(body)
+        }
     }
+}
+
+/// Why no public schema exists for an event type.
+#[derive(Debug, Clone, PartialEq, Eq, Error)]
+pub enum EventSchemaError {
+    /// The schema map has no entry for the event type.
+    #[error("Event type '{event_type}' not found")]
+    NotFound {
+        event_type: String,
+        /// Configured event types, in map order.
+        available: Vec<String>,
+    },
+    /// No notification schema is configured at all.
+    #[error("No notification schema configured")]
+    NoSchema,
+}
+
+/// The client-facing schema of one event type, without topic or endpoint
+/// details.
+pub fn lookup_event_schema(event_type: &str) -> Result<ApiEventSchema, EventSchemaError> {
+    let schema_map = Settings::get_global_notification_schema()
+        .as_ref()
+        .ok_or(EventSchemaError::NoSchema)?;
+    schema_map
+        .get(event_type)
+        .map(ApiEventSchema::from)
+        .ok_or_else(|| EventSchemaError::NotFound {
+            event_type: event_type.to_string(),
+            available: schema_map.keys().cloned().collect(),
+        })
+}
+
+/// Success body of `GET /api/v1/schema/{event_type}`.
+pub fn event_schema_body(event_type: &str, schema: &ApiEventSchema) -> Value {
+    json!({
+        "status": "success",
+        "event_type": event_type,
+        "schema": schema
+    })
 }
