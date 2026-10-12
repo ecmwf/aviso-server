@@ -10,12 +10,13 @@
 
 use serde_json::{Map, Value, json};
 
+/// Every revision accepted in the `MCP-Protocol-Version` header, newest
+/// first.
+pub const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 /// Newest protocol revision this server speaks.
-pub const LATEST_PROTOCOL_VERSION: &str = "2025-11-25";
+pub const LATEST_PROTOCOL_VERSION: &str = SUPPORTED_PROTOCOL_VERSIONS[0];
 /// Revision assumed when a request has no `MCP-Protocol-Version` header.
 pub const DEFAULT_PROTOCOL_VERSION: &str = "2025-03-26";
-/// Every revision accepted in the `MCP-Protocol-Version` header.
-pub const SUPPORTED_PROTOCOL_VERSIONS: [&str; 3] = ["2025-11-25", "2025-06-18", "2025-03-26"];
 
 /// JSON-RPC error codes used by this server.
 pub mod codes {
