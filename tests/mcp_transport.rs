@@ -7,13 +7,21 @@
 // does it submit to any jurisdiction.
 
 //! Streamable HTTP rules of `/mcp` and the protected resource metadata.
+//!
+//! The ignored interop test drives a real server with the official MCP
+//! Python SDK. It needs Python with the `mcp` package:
+//!
+//! ```text
+//! MCP_INTEROP_PYTHON=/path/to/venv/bin/python \
+//!   cargo test --test mcp_transport -- --ignored
+//! ```
 
 #[path = "common/mcp_issuer.rs"]
 mod mcp_issuer;
 
 use actix_web::dev::ServiceResponse;
 use actix_web::http::{Method, StatusCode, header};
-use actix_web::{App, test, web};
+use actix_web::{App, HttpServer, test, web};
 use aviso_server::configuration::Settings;
 use aviso_server::mcp::auth::TokenVerifier;
 use aviso_server::mcp::jwks::{JwksCache, JwksTiming};
@@ -21,6 +29,7 @@ use aviso_server::mcp::state::McpState;
 use aviso_server::notification_backend::{NotificationBackend, build_backend};
 use mcp_issuer::*;
 use serde_json::{Value, json};
+use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
@@ -36,6 +45,14 @@ fn init_config() {
                 "open": {
                     "topic": {"base": "McpTransport", "key_order": ["class"]},
                     "identifier": {"class": {"type": "StringHandler", "required": true}},
+                    "payload": {"required": false}
+                },
+                "interop": {
+                    "topic": {"base": "McpInterop", "key_order": ["class", "number"]},
+                    "identifier": {
+                        "class": {"type": "StringHandler", "required": true},
+                        "number": {"type": "IntHandler", "required": true}
+                    },
                     "payload": {"required": false}
                 }
             }
@@ -349,7 +366,7 @@ async fn tools_are_listed_and_callable() {
     assert_eq!(body["result"]["isError"], false);
     assert_eq!(
         body["result"]["structuredContent"]["event_types"],
-        json!(["open"])
+        json!(["interop", "open"])
     );
 }
 
@@ -389,4 +406,63 @@ async fn key_rotation_is_picked_up_and_unknown_keys_are_refused() {
         StatusCode::OK
     );
     jwks.stop().await;
+}
+
+#[tokio::test]
+#[ignore = "needs Python with the mcp package; see the module docs"]
+async fn python_sdk_client_completes_a_session() {
+    let (jwks, state, backend) = state().await;
+    for (class, number) in [("od", 1), ("rd", 2), ("od", 3)] {
+        backend
+            .put_messages(
+                &format!("McpInterop.{class}.{number}"),
+                json!({"number": number}).to_string(),
+            )
+            .await
+            .unwrap();
+    }
+
+    let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+    let url = format!("http://{}/mcp", listener.local_addr().unwrap());
+    let server = HttpServer::new(move || {
+        let state = state.clone();
+        App::new()
+            .app_data(web::Data::new(backend.clone()))
+            .configure(move |cfg| aviso_server::mcp::configure(cfg, state))
+    })
+    .workers(1)
+    .listen(listener)
+    .unwrap()
+    .run();
+    let handle = server.handle();
+    tokio::spawn(server);
+
+    let python = std::env::var("MCP_INTEROP_PYTHON").unwrap_or_else(|_| "python3".to_string());
+    let script = concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/interop/mcp_python_client.py"
+    );
+    let token = good_token();
+    let output = tokio::task::spawn_blocking(move || {
+        Command::new(python)
+            .arg(script)
+            .env("MCP_URL", url)
+            .env("MCP_TOKEN", token)
+            .env("MCP_RESOURCE", RESOURCE)
+            .output()
+            .unwrap()
+    })
+    .await
+    .unwrap();
+
+    handle.stop(true).await;
+    assert_eq!(jwks.hits(), 1, "keys are fetched once and cached");
+    jwks.stop().await;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        output.status.success(),
+        "stdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    assert!(stdout.contains("interop ok"), "{stdout}");
 }
