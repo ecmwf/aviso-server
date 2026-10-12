@@ -14,6 +14,7 @@ use thiserror::Error;
 
 pub mod client;
 pub mod middleware;
+pub mod stream_access;
 
 /// Authenticated user extracted from JWT claims.
 ///

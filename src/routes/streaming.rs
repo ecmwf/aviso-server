@@ -7,18 +7,13 @@
 // does it submit to any jurisdiction.
 
 use crate::auth::middleware::{auth_mode, get_user, is_auth_enabled, unauthorized_response};
+use crate::auth::stream_access::{StreamAccessError, StreamOperation, check_stream_access};
 use crate::configuration::{AuthMode, AuthSettings, EventSchema, Settings};
 use crate::notification_backend::replay::{EndAt, StartAt};
 use actix_web::{HttpRequest, HttpResponse, web};
 use serde_json::json;
 use std::collections::HashMap;
 use std::sync::Arc;
-
-/// Whether the request is a read (watch/replay) or write (notify) operation.
-pub enum StreamOperation {
-    Read,
-    Write,
-}
 
 /// Reject requests whose `event_type` is not in the configured `notification_schema`
 /// when strict mode is active.
@@ -149,85 +144,46 @@ pub fn record_start_at_span_fields(start_at: StartAt) {
 
 /// Enforce per-stream authentication and authorization.
 ///
-/// Role matching depends on the operation:
-/// - **Read**: if `read_roles` is set, user must match; otherwise any authenticated user.
-/// - **Write**: if `write_roles` is set, user must match or be admin; otherwise only admins.
+/// Delegates the decision to [`check_stream_access`] and maps a denial onto
+/// the REST response: 401 when no user is present, 500 when the auth
+/// settings are missing, 403 when the user lacks the required role.
 pub fn enforce_stream_auth(
     req: &HttpRequest,
     event_type: &str,
     operation: StreamOperation,
 ) -> Result<(), Box<HttpResponse>> {
-    if !is_auth_enabled(req) {
-        return Ok(());
-    }
-
-    let stream_auth = Settings::get_global_notification_schema()
-        .as_ref()
-        .and_then(|schema_map| schema_map.get(event_type))
-        .and_then(|schema| schema.auth.as_ref());
-
-    let Some(stream_auth) = stream_auth else {
-        return Ok(());
+    let user = get_user(req);
+    let auth_settings = req.app_data::<web::Data<Arc<AuthSettings>>>();
+    let error = match check_stream_access(
+        is_auth_enabled(req),
+        user.as_ref(),
+        auth_settings.map(|settings| &settings.admin_roles),
+        event_type,
+        operation,
+    ) {
+        Ok(()) => return Ok(()),
+        Err(error) => error,
     };
-
-    if !stream_auth.required {
-        return Ok(());
-    }
 
     let request_id = crate::middleware::request_id::request_id_from_request(req);
-
-    let Some(user) = get_user(req) else {
-        let auth_mode = auth_mode(req).unwrap_or(AuthMode::Direct);
-        return Err(Box::new(unauthorized_response(
-            auth_mode,
-            "Authentication is required for this stream",
-            &request_id,
-        )));
-    };
-
-    let Some(auth_settings) = req.app_data::<web::Data<Arc<AuthSettings>>>() else {
-        tracing::error!("AuthSettings not found in app_data — server misconfiguration");
-        return Err(Box::new(HttpResponse::InternalServerError().json(json!({
-            "code": "INTERNAL_ERROR",
-            "error": "internal_error",
-            "message": "Server configuration error",
-            "request_id": request_id,
-        }))));
-    };
-    let is_admin = user.is_admin(&auth_settings.admin_roles);
-
-    match operation {
-        StreamOperation::Read => {
-            if let Some(read_roles) = &stream_auth.read_roles
-                && !is_admin
-                && !user.has_any_role(read_roles)
-            {
-                return Err(Box::new(forbidden_response(
-                    "User does not have required read role for this stream",
-                    &request_id,
-                )));
-            }
-            // No read_roles → any authenticated user can read.
+    let message = error.to_string();
+    let response = match error {
+        StreamAccessError::Unauthenticated => {
+            let auth_mode = auth_mode(req).unwrap_or(AuthMode::Direct);
+            unauthorized_response(auth_mode, &message, &request_id)
         }
-        StreamOperation::Write => match &stream_auth.write_roles {
-            Some(write_roles) if !is_admin && !user.has_any_role(write_roles) => {
-                return Err(Box::new(forbidden_response(
-                    "User does not have required write role for this stream",
-                    &request_id,
-                )));
-            }
-            Some(_) => {}
-            None if !is_admin => {
-                return Err(Box::new(forbidden_response(
-                    "Only administrators can write to this stream",
-                    &request_id,
-                )));
-            }
-            None => {}
-        },
-    }
-
-    Ok(())
+        StreamAccessError::MissingAdminRoles => {
+            tracing::error!("AuthSettings not found in app_data, server misconfiguration");
+            HttpResponse::InternalServerError().json(json!({
+                "code": "INTERNAL_ERROR",
+                "error": "internal_error",
+                "message": message,
+                "request_id": request_id,
+            }))
+        }
+        _ => forbidden_response(&message, &request_id),
+    };
+    Err(Box::new(response))
 }
 
 fn forbidden_response(message: &str, request_id: &str) -> HttpResponse {

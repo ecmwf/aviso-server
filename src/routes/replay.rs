@@ -7,6 +7,7 @@
 // does it submit to any jurisdiction.
 
 use crate::auth::middleware::{get_username, log_actor};
+use crate::auth::stream_access::StreamOperation;
 use crate::error::{
     RequestKind, request_parse_error_response, request_validation_error_response,
     sse_error_response,
@@ -16,8 +17,8 @@ use crate::metrics::AppMetrics;
 use crate::notification::decode_subject_for_display;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::streaming::{
-    StreamOperation, bucket_event_type_for_observability, enforce_known_event_type,
-    enforce_stream_auth, record_end_at_span_fields, record_start_at_span_fields,
+    bucket_event_type_for_observability, enforce_known_event_type, enforce_stream_auth,
+    record_end_at_span_fields, record_start_at_span_fields,
 };
 use crate::sse::replay::create_replay_only_stream;
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
