@@ -108,6 +108,11 @@ When `enabled` is `true`, startup fails unless:
   token roles match rules written for them. Naming the realm in `read_roles`
   is fine; that is how streams are opened to MCP users.
 
+Every stream whose `read_roles` names the MCP realm is readable by MCP tokens
+that carry a matching role, or any role when the list is `["*"]`. Pick a
+dedicated realm name for MCP and use it for nothing else, so that no stream
+opens to MCP clients by accident.
+
 `resource_url` must be the public URL clients use. Tokens must name it as
 their audience, byte for byte. `oauth.issuer` is also compared byte for
 byte, so keep any trailing slash the issuer uses.

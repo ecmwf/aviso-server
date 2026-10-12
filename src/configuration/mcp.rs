@@ -89,7 +89,9 @@ impl Default for McpOAuthSettings {
 #[serde(default, deny_unknown_fields)]
 pub struct McpIdentitySettings {
     /// Realm assigned to every MCP user, matched against stream
-    /// `read_roles`.
+    /// `read_roles`. Every stream whose `read_roles` names this realm is
+    /// readable by MCP tokens with a matching role, so pick a realm name
+    /// used for nothing else.
     pub realm: String,
 }
 
@@ -181,7 +183,8 @@ impl McpSettings {
     /// callers, since MCP is read-only and never grants admin. Sharing it
     /// would let token roles match rules written for those callers.
     /// Stream `read_roles` may name the realm; that is how streams are
-    /// opened to MCP users. A disabled block always passes.
+    /// opened to MCP users, and every stream that names it is readable by
+    /// MCP tokens. A disabled block always passes.
     pub fn validate_realm_isolation(
         &self,
         admin_roles: &HashMap<String, Vec<String>>,
