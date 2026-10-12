@@ -10,6 +10,7 @@
 //! protected by OAuth access tokens from an external issuer.
 
 pub mod auth;
+pub mod dispatch;
 pub mod jwks;
 pub mod metadata;
 pub mod protocol;
