@@ -11,6 +11,7 @@ pub mod cloudevents;
 pub mod configuration;
 pub mod error;
 pub mod handlers;
+pub mod mcp;
 pub mod metrics;
 pub mod middleware;
 pub mod notification;
