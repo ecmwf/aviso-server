@@ -18,6 +18,7 @@ use crate::auth::middleware::AuthMiddleware;
 #[cfg(feature = "ecpds")]
 use crate::configuration::validate_ecpds_settings;
 use crate::configuration::{AuthSettings, validate_metrics_settings};
+use crate::mcp::state::McpState;
 use crate::metrics::AppMetrics;
 use crate::middleware::access_log::AvisoRootSpanBuilder;
 use crate::middleware::http_metrics::HttpMetrics;
@@ -179,6 +180,34 @@ impl Application {
             }
         };
 
+        let mcp = if configuration.mcp.enabled {
+            match McpState::from_settings(&configuration.mcp) {
+                Ok(state) => {
+                    info!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_name = "startup.mcp.enabled",
+                        resource_url = %configuration.mcp.resource_url,
+                        issuer = %configuration.mcp.oauth.issuer,
+                        "MCP endpoint enabled"
+                    );
+                    Some(web::Data::new(state))
+                }
+                Err(e) => {
+                    error!(
+                        service_name = SERVICE_NAME,
+                        service_version = SERVICE_VERSION,
+                        event_name = "startup.mcp.init.failed",
+                        error = %e,
+                        "MCP endpoint initialization failed"
+                    );
+                    return Err(std::io::Error::other(e));
+                }
+            }
+        } else {
+            None
+        };
+
         let address = format!(
             "{}:{}",
             configuration.application.host, configuration.application.port
@@ -247,8 +276,11 @@ impl Application {
             Arc::new(configuration.auth.clone()),
             app_metrics,
             configuration.application,
-            #[cfg(feature = "ecpds")]
-            ecpds_checker,
+            OptionalServices {
+                #[cfg(feature = "ecpds")]
+                ecpds_checker,
+                mcp,
+            },
         )?;
 
         // stop Actix when the cancellation token is triggered
@@ -381,6 +413,17 @@ fn configure_api_v1(cfg: &mut web::ServiceConfig, auth_settings: Arc<AuthSetting
     );
 }
 
+/// Services that exist only for some builds or configurations.
+#[derive(Default)]
+#[non_exhaustive]
+pub struct OptionalServices {
+    /// ECPDS destination checker, when a stream uses the plugin.
+    #[cfg(feature = "ecpds")]
+    pub ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>>,
+    /// MCP route state, when `mcp.enabled` is true.
+    pub mcp: Option<web::Data<McpState>>,
+}
+
 // Run the server
 pub fn run(
     listener: TcpListener,
@@ -389,12 +432,13 @@ pub fn run(
     auth_settings: Arc<AuthSettings>,
     app_metrics: Option<AppMetrics>,
     application_settings: crate::configuration::ApplicationSettings,
-    #[cfg(feature = "ecpds")] ecpds_checker: Option<Arc<aviso_ecpds::checker::EcpdsChecker>>,
+    optional: OptionalServices,
 ) -> Result<Server, std::io::Error> {
     let metrics_data = app_metrics.map(web::Data::new);
     let application_data = web::Data::new(application_settings);
     #[cfg(feature = "ecpds")]
-    let ecpds_data = ecpds_checker.map(web::Data::new);
+    let ecpds_data = optional.ecpds_checker.map(web::Data::new);
+    let mcp_data = optional.mcp;
     let server = HttpServer::new(move || {
         let mut app = App::new()
             .wrap(Condition::new(metrics_data.is_some(), HttpMetrics))
@@ -409,6 +453,11 @@ pub fn run(
             .configure({
                 let auth_settings = Arc::clone(&auth_settings);
                 move |cfg| configure_api_v1(cfg, Arc::clone(&auth_settings))
+            })
+            .configure(|cfg| {
+                if let Some(state) = &mcp_data {
+                    crate::mcp::configure(cfg, state.clone());
+                }
             })
             .app_data(web::Data::new(notification_backend.clone()))
             .app_data(web::Data::new(shutdown.clone()))

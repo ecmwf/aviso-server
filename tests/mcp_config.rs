@@ -97,3 +97,54 @@ async fn enabled_block_with_plain_http_issuer_fails_startup() {
     };
     assert!(error.to_string().contains("mcp.oauth.issuer"), "{error}");
 }
+
+async fn status(port: u16, method: reqwest::Method, path: &str) -> u16 {
+    reqwest::Client::new()
+        .request(method, format!("http://127.0.0.1:{port}{path}"))
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
+}
+
+async fn statuses(settings: Settings) -> [u16; 3] {
+    let shutdown = CancellationToken::new();
+    let application = Application::build(settings, shutdown.clone())
+        .await
+        .unwrap();
+    let port = application.port();
+    let server = tokio::spawn(application.run_until_stopped());
+    let result = [
+        status(port, reqwest::Method::POST, "/mcp").await,
+        status(port, reqwest::Method::GET, "/mcp").await,
+        status(
+            port,
+            reqwest::Method::GET,
+            "/.well-known/oauth-protected-resource/mcp",
+        )
+        .await,
+    ];
+    shutdown.cancel();
+    server.await.unwrap().unwrap();
+    result
+}
+
+#[tokio::test]
+async fn disabled_block_registers_no_routes() {
+    assert_eq!(statuses(load(base(), &[])).await, [404, 404, 404]);
+}
+
+#[tokio::test]
+async fn enabled_block_registers_mcp_and_metadata_routes() {
+    let mut file = base();
+    file["mcp"] = json!({
+        "enabled": true,
+        "resource_url": "https://aviso.example.int/mcp",
+        "oauth": {
+            "issuer": "https://auth.example.int/",
+            "jwks_uri": "https://auth.example.int/jwks"
+        }
+    });
+    assert_eq!(statuses(load(file, &[])).await, [401, 405, 200]);
+}
