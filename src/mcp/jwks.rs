@@ -12,8 +12,11 @@
 //! refetched early only when a token names an unknown `kid`. Every fetch,
 //! scheduled or not, is spaced by a minimum interval so a flood of forged
 //! `kid` values cannot turn the server into a load generator against the
-//! issuer. Verification of tokens with known keys never waits for a
-//! fetch: a stale set keeps serving while one caller refreshes it.
+//! issuer. Tokens whose key is in a usable set are served from the cache.
+//! When that set is stale, one of those requests refreshes it while the
+//! rest keep using the cached copy, so at most one of them waits for a
+//! fetch. Requests that need a key the cache cannot provide wait for the
+//! fetch in progress.
 
 use crate::telemetry::{SERVICE_NAME, SERVICE_VERSION};
 use jsonwebtoken::DecodingKey;
