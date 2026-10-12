@@ -287,7 +287,7 @@ async fn run_replay(
         timeout: Duration::from_millis(context.settings.request_timeout_ms),
     };
     let request_id = uuid::Uuid::new_v4().to_string();
-    collect_replay(
+    let collected = collect_replay(
         body.to_string().as_bytes(),
         context.backend.clone(),
         mcp_replay_access(context.user),
@@ -295,7 +295,18 @@ async fn run_replay(
         &request_id,
     )
     .await
-    .map_err(|error| replay_error(event_type, error))
+    .map_err(|error| replay_error(event_type, error))?;
+    if collected.render_failures > 0 {
+        warn!(
+            service_name = SERVICE_NAME,
+            service_version = SERVICE_VERSION,
+            event_name = "mcp.tool.replay.render_failed",
+            event_type = %event_type,
+            render_failures = collected.render_failures,
+            "MCP replay skipped notifications that could not be rendered"
+        );
+    }
+    Ok(collected)
 }
 
 /// Text the model sees for a failed replay. Request problems keep their
