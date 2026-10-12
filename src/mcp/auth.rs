@@ -82,7 +82,8 @@ impl TokenError {
 pub struct VerifiedToken {
     /// User for stream access checks; never an admin.
     pub user: User,
-    /// Stable short pseudonym of the subject, for debug logs only.
+    /// Short pseudonym of the subject, for debug logs only. See
+    /// [`subject_hash`] for how long it stays the same.
     pub subject_hash: String,
 }
 
@@ -219,8 +220,13 @@ fn bounded(value: &str) -> bool {
         && !value.chars().any(char::is_control)
 }
 
-/// Short, stable pseudonym of a subject for correlating debug logs.
-/// It is not a security boundary; subjects are already pseudonymous.
+/// Short pseudonym of a subject for correlating debug logs.
+///
+/// `DefaultHasher::new()` uses fixed keys, so a subject maps to the same
+/// value across requests and restarts of one server build. The standard
+/// library does not promise the algorithm, so the value may change with
+/// the Rust toolchain; do not store it or compare it across builds. It is
+/// not a security boundary; subjects are already pseudonymous.
 fn subject_hash(sub: &str) -> String {
     let mut hasher = DefaultHasher::new();
     sub.hash(&mut hasher);
@@ -265,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn subject_hash_is_stable_and_opaque() {
+    fn subject_hash_is_deterministic_and_opaque() {
         assert_eq!(subject_hash("alice"), subject_hash("alice"));
         assert_ne!(subject_hash("alice"), subject_hash("bob"));
         assert!(!subject_hash("alice").contains("alice"));
