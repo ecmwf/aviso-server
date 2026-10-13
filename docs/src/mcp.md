@@ -24,6 +24,10 @@ Every tool declares an input schema and an output schema. Results come back as
 `structuredContent` with a JSON text copy in `content`, so older clients that
 ignore structured output still see the data.
 
+A field that can be `null`, such as `first_seen`, is written as `anyOf` with a
+`{"type": "null"}` branch, not as a `type` array. Some clients accept only one
+`type` per schema and would reject the tool otherwise.
+
 Bad arguments, unknown event types, and denied streams come back as tool
 results with `isError: true`. The model sees the reason and can try again.
 Only an unknown tool name or a malformed call is a JSON-RPC error.
