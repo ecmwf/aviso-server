@@ -60,6 +60,16 @@ fn notification_schema() -> Value {
     })
 }
 
+/// `schema` or `null`. Nullable values use an `anyOf` branch instead of a
+/// `type` array, because some clients map tool schemas onto a dialect with
+/// a single `type` per schema.
+///
+/// Valid: `{"anyOf": [{"type": "string"}, {"type": "null"}]}`.
+/// Avoided: `{"type": ["string", "null"]}`.
+fn nullable(schema: Value) -> Value {
+    json!({"anyOf": [schema, {"type": "null"}]})
+}
+
 /// Descriptors for every tool, in a stable order.
 pub fn all() -> Vec<Value> {
     vec![
@@ -182,10 +192,8 @@ pub fn all() -> Vec<Value> {
                 "type": "object",
                 "properties": {
                     "available": {"type": "boolean"},
-                    "first_seen": {"type": ["string", "null"]},
-                    "notification": {
-                        "anyOf": [notification_schema(), {"type": "null"}]
-                    }
+                    "first_seen": nullable(json!({"type": "string"})),
+                    "notification": nullable(notification_schema())
                 },
                 "required": ["available", "first_seen", "notification"]
             },
@@ -196,7 +204,57 @@ pub fn all() -> Vec<Value> {
 
 #[cfg(test)]
 mod tests {
-    use super::all;
+    use super::{CHECK_DATA_AVAILABLE, all};
+    use serde_json::{Value, json};
+
+    /// Paths of every node under `value` whose `type` is an array.
+    fn type_arrays(value: &Value, path: &str, found: &mut Vec<String>) {
+        match value {
+            Value::Object(map) => {
+                if map.get("type").is_some_and(Value::is_array) {
+                    found.push(path.to_string());
+                }
+                for (key, child) in map {
+                    type_arrays(child, &format!("{path}.{key}"), found);
+                }
+            }
+            Value::Array(items) => {
+                for (index, child) in items.iter().enumerate() {
+                    type_arrays(child, &format!("{path}[{index}]"), found);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn no_schema_uses_a_type_array() {
+        let mut found = Vec::new();
+        for tool in all() {
+            let name = tool["name"].as_str().unwrap();
+            for key in ["inputSchema", "outputSchema"] {
+                type_arrays(&tool[key], &format!("{name}.{key}"), &mut found);
+            }
+        }
+        assert!(found.is_empty(), "type arrays at {found:?}");
+    }
+
+    #[test]
+    fn nullable_output_fields_use_any_of() {
+        let tool = all()
+            .into_iter()
+            .find(|tool| tool["name"] == CHECK_DATA_AVAILABLE)
+            .unwrap();
+        let properties = &tool["outputSchema"]["properties"];
+        assert_eq!(
+            properties["first_seen"],
+            json!({"anyOf": [{"type": "string"}, {"type": "null"}]})
+        );
+        assert_eq!(
+            properties["notification"]["anyOf"][1],
+            json!({"type": "null"})
+        );
+    }
 
     #[test]
     fn every_tool_has_object_input_and_output_schemas() {
