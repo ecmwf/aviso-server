@@ -85,7 +85,8 @@ fn environment_selects_the_token_claims_identity() {
         settings.mcp.identity,
         McpIdentitySettings::TokenClaims {
             realm_claim: "realm".to_string(),
-            roles_claim: "aviso_roles".to_string()
+            roles_claim: "aviso_roles".to_string(),
+            admin: false
         }
     );
 }
@@ -100,7 +101,8 @@ fn environment_switches_the_source_of_a_file_without_source_fields() {
         settings.mcp.identity,
         McpIdentitySettings::TokenClaims {
             realm_claim: "realm".to_string(),
-            roles_claim: "roles".to_string()
+            roles_claim: "roles".to_string(),
+            admin: false
         }
     );
 
@@ -111,6 +113,51 @@ fn environment_switches_the_source_of_a_file_without_source_fields() {
         error.to_string().contains("unknown field `realm`"),
         "{error}"
     );
+}
+
+#[test]
+fn environment_sets_every_token_claims_field() {
+    let settings = load(
+        base(),
+        &[
+            ("AVISOSERVER_MCP__IDENTITY__SOURCE", "token_claims"),
+            ("AVISOSERVER_MCP__IDENTITY__REALM_CLAIM", "aviso_realm"),
+            ("AVISOSERVER_MCP__IDENTITY__ROLES_CLAIM", "aviso_roles"),
+            ("AVISOSERVER_MCP__IDENTITY__ADMIN", "true"),
+        ],
+    );
+    assert_eq!(
+        settings.mcp.identity,
+        McpIdentitySettings::TokenClaims {
+            realm_claim: "aviso_realm".to_string(),
+            roles_claim: "aviso_roles".to_string(),
+            admin: true
+        }
+    );
+    let settings = load(
+        base(),
+        &[
+            ("AVISOSERVER_MCP__IDENTITY__SOURCE", "token_claims"),
+            ("AVISOSERVER_MCP__IDENTITY__ADMIN", "false"),
+        ],
+    );
+    assert!(!settings.mcp.identity.grants_admin());
+}
+
+#[test]
+fn admin_flag_accepts_only_true_or_false() {
+    for admin in ["yes", "1", "True", "on"] {
+        let mut file = base();
+        file["mcp"] = json!({"identity": {"source": "token_claims", "admin": admin}});
+        let error = try_load(file, &[]).unwrap_err();
+        assert!(error.to_string().contains("true or false"), "{error}");
+        let env = [
+            ("AVISOSERVER_MCP__IDENTITY__SOURCE", "token_claims"),
+            ("AVISOSERVER_MCP__IDENTITY__ADMIN", admin),
+        ];
+        let error = try_load(base(), &env).unwrap_err();
+        assert!(error.to_string().contains("true or false"), "{error}");
+    }
 }
 
 #[test]

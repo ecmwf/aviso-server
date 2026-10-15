@@ -29,6 +29,7 @@ use aviso_server::mcp::state::McpState;
 use aviso_server::notification_backend::{NotificationBackend, build_backend};
 use mcp_issuer::*;
 use serde_json::{Value, json};
+use std::collections::HashMap;
 use std::process::Command;
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
@@ -75,7 +76,8 @@ async fn state() -> (
         ..JwksTiming::with_ttl(Duration::from_secs(300))
     };
     let cache = JwksCache::new(&jwks.uri, timing).unwrap();
-    let state = McpState::new(&settings, TokenVerifier::new(cache, &settings)).unwrap();
+    let verifier = TokenVerifier::new(cache, &settings);
+    let state = McpState::new(&settings, verifier, &HashMap::new()).unwrap();
     let backend = build_backend(&serde_json::from_value(json!({"kind": "in_memory"})).unwrap())
         .await
         .unwrap();

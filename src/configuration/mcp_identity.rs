@@ -23,7 +23,9 @@
 //!   roles_claim: "roles"
 //! ```
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Unexpected, Visitor};
+use serde::{Deserialize, Deserializer, Serialize};
+use std::fmt;
 use thiserror::Error;
 
 /// Longest realm accepted, in characters, from configuration or a token.
@@ -71,6 +73,12 @@ pub enum McpIdentitySettings {
         /// Claim holding the roles, an array of strings.
         #[serde(default = "default_roles_claim")]
         roles_claim: String,
+        /// Match token realms and roles against the REST
+        /// `auth.admin_roles`, so a REST admin is an admin over MCP too.
+        /// Off by default: turning it on lets the issuer of MCP tokens
+        /// grant admin rights.
+        #[serde(default, deserialize_with = "strict_bool")]
+        admin: bool,
     },
 }
 
@@ -122,7 +130,45 @@ pub enum McpIdentityError {
     SameClaim,
 }
 
+/// Read a security flag strictly. Environment variables reach the
+/// fields of this internally tagged enum as text, so the strings `true`
+/// and `false` are accepted too, and nothing else.
+///
+/// - valid: `true`, `false`, `"true"`, `"false"`
+/// - invalid: `"yes"`, `"True"`, `"1"`, `1`, `null`
+fn strict_bool<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Error> {
+    struct StrictBool;
+
+    impl Visitor<'_> for StrictBool {
+        type Value = bool;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+            formatter.write_str("true or false")
+        }
+
+        fn visit_bool<E: de::Error>(self, value: bool) -> Result<bool, E> {
+            Ok(value)
+        }
+
+        fn visit_str<E: de::Error>(self, value: &str) -> Result<bool, E> {
+            match value {
+                "true" => Ok(true),
+                "false" => Ok(false),
+                other => Err(E::invalid_value(Unexpected::Str(other), &self)),
+            }
+        }
+    }
+
+    deserializer.deserialize_any(StrictBool)
+}
+
 impl McpIdentitySettings {
+    /// Whether the REST `auth.admin_roles` apply to MCP users. Only token
+    /// claim identities with `admin: true` opt in.
+    pub fn grants_admin(&self) -> bool {
+        matches!(self, Self::TokenClaims { admin: true, .. })
+    }
+
     /// Check the block. Called only while MCP is enabled.
     pub fn validate(&self) -> Result<(), McpIdentityError> {
         match self {
@@ -131,6 +177,7 @@ impl McpIdentitySettings {
             Self::TokenClaims {
                 realm_claim,
                 roles_claim,
+                ..
             } => {
                 check_claim_name("realm_claim", realm_claim)?;
                 check_claim_name("roles_claim", roles_claim)?;
@@ -189,6 +236,7 @@ mod tests {
         McpIdentitySettings::TokenClaims {
             realm_claim: realm_claim.to_string(),
             roles_claim: roles_claim.to_string(),
+            admin: false,
         }
     }
 
@@ -222,6 +270,33 @@ mod tests {
             parse(custom).unwrap(),
             token_claims("aviso_realm", "aviso_roles")
         );
+    }
+
+    #[test]
+    fn admin_rights_are_an_explicit_opt_in() {
+        let default = parse(json!({"source": "token_claims"})).unwrap();
+        assert!(!default.grants_admin());
+        assert!(!McpIdentitySettings::default().grants_admin());
+        for (admin, grants) in [
+            (json!(true), true),
+            (json!("true"), true),
+            (json!(false), false),
+            (json!("false"), false),
+        ] {
+            let settings = parse(json!({"source": "token_claims", "admin": admin})).unwrap();
+            assert_eq!(settings.grants_admin(), grants, "{admin}");
+        }
+        for admin in [
+            json!("yes"),
+            json!("True"),
+            json!("1"),
+            json!(1),
+            json!(null),
+        ] {
+            let value = json!({"source": "token_claims", "admin": admin});
+            assert!(parse(value).is_err(), "{admin}");
+        }
+        assert!(parse(json!({"source": "fixed", "admin": true})).is_err());
     }
 
     #[test]

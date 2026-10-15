@@ -97,6 +97,7 @@ pub fn resolve_identity(
         McpIdentitySettings::TokenClaims {
             realm_claim,
             roles_claim,
+            ..
         } => match (claim(claims, realm_claim), claim(claims, roles_claim)) {
             (None, None) => Err(IdentityClaimError::MissingClaims),
             (None, Some(_)) => Err(IdentityClaimError::MissingRealm),
@@ -179,6 +180,7 @@ mod tests {
         McpIdentitySettings::TokenClaims {
             realm_claim: "realm".to_string(),
             roles_claim: "roles".to_string(),
+            admin: false,
         }
     }
 
@@ -227,6 +229,7 @@ mod tests {
         let settings = McpIdentitySettings::TokenClaims {
             realm_claim: "aviso_realm".to_string(),
             roles_claim: "aviso_roles".to_string(),
+            admin: false,
         };
         let claims = json!({
             "realm": "other", "roles": ["other"],
@@ -248,6 +251,7 @@ mod tests {
         let settings = McpIdentitySettings::TokenClaims {
             realm_claim: "realm".to_string(),
             roles_claim: "realm_access.roles".to_string(),
+            admin: false,
         };
         let nested = json!({"realm": "ecmwf", "realm_access": {"roles": ["reader"]}});
         assert_eq!(

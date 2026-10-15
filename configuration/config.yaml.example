@@ -170,6 +170,9 @@ mcp:
     # source: token_claims
     # realm_claim: "realm"
     # roles_claim: "roles"
+    # Also apply auth.admin_roles to token identities. Only turn this on
+    # if the MCP issuer may grant REST admin rights.
+    # admin: false
     # Claim names are literal top-level keys of the token, not paths.
 
 metrics:

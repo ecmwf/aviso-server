@@ -187,7 +187,7 @@ impl Application {
         };
 
         let mcp = if configuration.mcp.enabled {
-            match McpState::from_settings(&configuration.mcp) {
+            match McpState::from_settings(&configuration.mcp, &configuration.auth.admin_roles) {
                 Ok(state) => {
                     info!(
                         service_name = SERVICE_NAME,

@@ -13,6 +13,7 @@ use crate::mcp::access::McpAccess;
 use crate::mcp::auth::TokenVerifier;
 use crate::mcp::jwks::JwksError;
 use reqwest::Url;
+use std::collections::HashMap;
 use thiserror::Error;
 
 /// Path prefix of RFC 9728 protected resource metadata.
@@ -43,16 +44,28 @@ pub struct McpState {
 }
 
 impl McpState {
-    /// Build state from validated settings. No network calls are made.
-    pub fn from_settings(settings: &McpSettings) -> Result<Self, McpInitError> {
-        Self::new(settings, TokenVerifier::from_settings(settings)?)
+    /// Build state from validated settings and the REST
+    /// `auth.admin_roles`. No network calls are made.
+    pub fn from_settings(
+        settings: &McpSettings,
+        admin_roles: &HashMap<String, Vec<String>>,
+    ) -> Result<Self, McpInitError> {
+        Self::new(
+            settings,
+            TokenVerifier::from_settings(settings)?,
+            admin_roles,
+        )
     }
 
     /// Build state around an existing verifier.
-    pub fn new(settings: &McpSettings, verifier: TokenVerifier) -> Result<Self, McpInitError> {
+    pub fn new(
+        settings: &McpSettings,
+        verifier: TokenVerifier,
+        admin_roles: &HashMap<String, Vec<String>>,
+    ) -> Result<Self, McpInitError> {
         Ok(Self {
             metadata_url: metadata_url(&settings.resource_url)?,
-            access: McpAccess::default(),
+            access: McpAccess::new(&settings.identity, admin_roles),
             settings: settings.clone(),
             verifier,
         })
