@@ -137,7 +137,7 @@ impl Application {
         }
 
         let mcp_validation = configuration.mcp.validate().and_then(|()| {
-            configuration.mcp.validate_realm_isolation(
+            configuration.mcp.validate_rest_realms(
                 &configuration.auth.admin_roles,
                 configuration.notification_schema.as_ref(),
             )

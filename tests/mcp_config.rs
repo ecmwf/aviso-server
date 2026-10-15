@@ -247,3 +247,25 @@ async fn token_claims_identity_with_a_verifier_claim_fails_startup() {
         "{error}"
     );
 }
+
+#[tokio::test]
+async fn token_claims_with_a_rest_realm_no_token_can_carry_fails_startup() {
+    let mut file = base();
+    file["auth"] = json!({"admin_roles": {"ECMWF staff": ["admin"]}});
+    file["mcp"] = json!({
+        "enabled": true,
+        "resource_url": "https://aviso.example.int/mcp",
+        "oauth": {
+            "issuer": "https://auth.example.int/",
+            "jwks_uri": "https://auth.example.int/jwks"
+        },
+        "identity": {"source": "token_claims"}
+    });
+    let result = Application::build(load(file, &[]), CancellationToken::new()).await;
+    let Err(error) = result else {
+        panic!("startup must fail");
+    };
+    let message = error.to_string();
+    assert!(message.contains("'ECMWF staff'"), "{message}");
+    assert!(message.contains("auth.admin_roles"), "{message}");
+}

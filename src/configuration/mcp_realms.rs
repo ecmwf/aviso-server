@@ -10,22 +10,53 @@
 //! uses. They need `auth.admin_roles` and the stream schemas, so they run
 //! at startup next to [`McpSettings::validate`].
 
-use crate::configuration::{EventSchema, McpConfigError, McpIdentitySettings, McpSettings};
+use crate::configuration::{
+    EventSchema, McpConfigError, McpIdentitySettings, McpSettings, is_valid_realm,
+};
 use std::collections::HashMap;
+use std::fmt;
+
+/// Where a realm key appears in the REST configuration.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum RealmUse<'a> {
+    /// A key of `auth.admin_roles`.
+    Admin,
+    /// A key of the `read_roles` of this event type.
+    Read(&'a str),
+    /// A key of the `write_roles` of this event type.
+    Write(&'a str),
+}
+
+impl fmt::Display for RealmUse<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Admin => write!(f, "auth.admin_roles"),
+            Self::Read(event_type) => {
+                write!(f, "notification_schema.{event_type}.auth.read_roles")
+            }
+            Self::Write(event_type) => {
+                write!(f, "notification_schema.{event_type}.auth.write_roles")
+            }
+        }
+    }
+}
 
 impl McpSettings {
-    /// Check that users of the fixed MCP realm cannot pass for REST
-    /// users. A realm that keys `auth.admin_roles` or any stream's
-    /// `write_roles` belongs to REST callers, since MCP is read-only and
-    /// a fixed realm never grants admin. Sharing it would let token roles
-    /// match rules written for those callers. Stream `read_roles` may
-    /// name the realm; that is how streams are opened to MCP users, and
-    /// every stream that names it is readable by MCP tokens.
+    /// Check the MCP identity against every realm key of
+    /// `auth.admin_roles` and of the stream `read_roles` and
+    /// `write_roles`. A disabled block always passes.
     ///
-    /// Realms from token claims are the issuer's own realms, shared with
-    /// REST on purpose, so they are not checked. A disabled block always
-    /// passes.
-    pub fn validate_realm_isolation(
+    /// With the fixed source, the MCP realm must not key `auth.admin_roles`
+    /// or any `write_roles`. Those realms belong to REST callers, since
+    /// MCP is read-only and a fixed realm never grants admin; sharing one
+    /// would let token roles match rules written for those callers.
+    /// `read_roles` may name it; that is how streams are opened to MCP
+    /// users, and every stream that names it is readable by MCP tokens.
+    ///
+    /// With token claims, every REST realm must be a realm a token can
+    /// carry. A rule keyed by any other realm would hold for REST users
+    /// and silently never for MCP users.
+    pub fn validate_rest_realms(
         &self,
         admin_roles: &HashMap<String, Vec<String>>,
         schemas: Option<&HashMap<String, EventSchema>>,
@@ -33,36 +64,59 @@ impl McpSettings {
         if !self.enabled {
             return Ok(());
         }
-        let McpIdentitySettings::Fixed { realm } = &self.identity else {
-            return Ok(());
-        };
-        let in_use = |location: String| McpConfigError::RealmInUse {
-            realm: realm.clone(),
-            location,
-        };
-        if admin_roles.contains_key(realm) {
-            return Err(in_use("auth.admin_roles".to_string()));
-        }
-        let mut event_types: Vec<&String> = schemas
-            .into_iter()
-            .flatten()
-            .filter(|(_, schema)| {
-                schema
-                    .auth
-                    .as_ref()
-                    .and_then(|auth| auth.write_roles.as_ref())
-                    .is_some_and(|roles| roles.contains_key(realm))
-            })
-            .map(|(event_type, _)| event_type)
-            .collect();
-        event_types.sort();
-        match event_types.first() {
-            Some(event_type) => Err(in_use(format!(
-                "notification_schema.{event_type}.auth.write_roles"
-            ))),
-            None => Ok(()),
+        let realms = rest_realms(admin_roles, schemas);
+        match &self.identity {
+            McpIdentitySettings::Fixed { realm } => realms
+                .iter()
+                .find(|(key, place)| key == realm && !matches!(place, RealmUse::Read(_)))
+                .map_or(Ok(()), |(_, place)| {
+                    Err(McpConfigError::RealmInUse {
+                        realm: realm.clone(),
+                        location: place.to_string(),
+                    })
+                }),
+            McpIdentitySettings::TokenClaims { .. } => realms
+                .iter()
+                .find(|(key, _)| !is_valid_realm(key))
+                .map_or(Ok(()), |(key, place)| {
+                    Err(McpConfigError::RealmNotCarried {
+                        realm: (*key).to_string(),
+                        location: place.to_string(),
+                    })
+                }),
         }
     }
+}
+
+/// Every realm key of the REST role maps with where it appears, sorted so
+/// the first problem reported does not depend on map order.
+fn rest_realms<'a>(
+    admin_roles: &'a HashMap<String, Vec<String>>,
+    schemas: Option<&'a HashMap<String, EventSchema>>,
+) -> Vec<(&'a str, RealmUse<'a>)> {
+    let mut realms: Vec<(&str, RealmUse<'_>)> = admin_roles
+        .keys()
+        .map(|realm| (realm.as_str(), RealmUse::Admin))
+        .collect();
+    for (event_type, schema) in schemas.into_iter().flatten() {
+        let Some(auth) = &schema.auth else {
+            continue;
+        };
+        let maps = [
+            (&auth.read_roles, RealmUse::Read(event_type.as_str())),
+            (&auth.write_roles, RealmUse::Write(event_type.as_str())),
+        ];
+        for (roles, place) in maps {
+            realms.extend(
+                roles
+                    .iter()
+                    .flat_map(HashMap::keys)
+                    .map(|realm| (realm.as_str(), place)),
+            );
+        }
+    }
+    realms.sort();
+    realms
 }
 
 #[cfg(test)]
@@ -82,22 +136,31 @@ mod tests {
         .unwrap()
     }
 
+    fn token_claims() -> McpSettings {
+        let mut settings = enabled();
+        settings.identity = serde_json::from_value(json!({"source": "token_claims"})).unwrap();
+        settings
+    }
+
     fn schemas(auth: serde_json::Value) -> HashMap<String, EventSchema> {
         let schema = json!({"identifier": {}, "auth": auth});
         HashMap::from([("ops".to_string(), serde_json::from_value(schema).unwrap())])
     }
 
+    fn admins(realm: &str) -> HashMap<String, Vec<String>> {
+        HashMap::from([(realm.to_string(), vec!["admin".to_string()])])
+    }
+
     #[test]
     fn realm_must_not_be_a_rest_realm() {
         let settings = enabled();
-        let admins = HashMap::from([("mcp".to_string(), vec!["admin".to_string()])]);
         assert!(matches!(
-            settings.validate_realm_isolation(&admins, None),
+            settings.validate_rest_realms(&admins("mcp"), None),
             Err(McpConfigError::RealmInUse { .. })
         ));
         let writers = schemas(json!({"required": true, "write_roles": {"mcp": ["w"]}}));
         let error = settings
-            .validate_realm_isolation(&HashMap::new(), Some(&writers))
+            .validate_rest_realms(&HashMap::new(), Some(&writers))
             .unwrap_err();
         assert!(
             error.to_string().contains("ops.auth.write_roles"),
@@ -105,23 +168,67 @@ mod tests {
         );
         let readers = schemas(json!({"required": true, "read_roles": {"mcp": ["r"]}}));
         assert_eq!(
-            settings.validate_realm_isolation(&HashMap::new(), Some(&readers)),
+            settings.validate_rest_realms(&HashMap::new(), Some(&readers)),
             Ok(())
         );
         let mut disabled = enabled();
         disabled.enabled = false;
-        assert_eq!(disabled.validate_realm_isolation(&admins, None), Ok(()));
+        assert_eq!(disabled.validate_rest_realms(&admins("mcp"), None), Ok(()));
     }
 
     #[test]
     fn token_claim_realms_may_be_rest_realms() {
-        let mut settings = enabled();
-        settings.identity = serde_json::from_value(json!({"source": "token_claims"})).unwrap();
-        let admins = HashMap::from([("ecmwf".to_string(), vec!["admin".to_string()])]);
         let writers = schemas(json!({"required": true, "write_roles": {"ecmwf": ["w"]}}));
         assert_eq!(
-            settings.validate_realm_isolation(&admins, Some(&writers)),
+            token_claims().validate_rest_realms(&admins("ecmwf"), Some(&writers)),
             Ok(())
         );
+    }
+
+    #[test]
+    fn token_claims_refuse_rest_realms_no_token_can_carry() {
+        let settings = token_claims();
+        let error = settings
+            .validate_rest_realms(&admins("ECMWF staff"), None)
+            .unwrap_err();
+        assert_eq!(
+            error,
+            McpConfigError::RealmNotCarried {
+                realm: "ECMWF staff".to_string(),
+                location: "auth.admin_roles".to_string()
+            }
+        );
+        for (field, realm) in [("read_roles", "réalm"), ("write_roles", "a/b")] {
+            let auth = json!({"required": true, field: {"ecmwf": ["r"], realm: ["r"]}});
+            let error = settings
+                .validate_rest_realms(&admins("ecmwf"), Some(&schemas(auth)))
+                .unwrap_err();
+            let message = error.to_string();
+            assert!(message.contains(&format!("'{realm}'")), "{message}");
+            assert!(
+                message.contains(&format!("notification_schema.ops.auth.{field}")),
+                "{message}"
+            );
+        }
+        let long = "r".repeat(65);
+        let readers = schemas(json!({"required": true, "read_roles": {long: ["r"]}}));
+        assert!(matches!(
+            settings.validate_rest_realms(&HashMap::new(), Some(&readers)),
+            Err(McpConfigError::RealmNotCarried { .. })
+        ));
+    }
+
+    #[test]
+    fn the_first_problem_is_reported_in_a_stable_order() {
+        let admins = HashMap::from([
+            ("z z".to_string(), vec!["admin".to_string()]),
+            ("a a".to_string(), vec!["admin".to_string()]),
+        ]);
+        for _ in 0..8 {
+            let error = token_claims()
+                .validate_rest_realms(&admins, None)
+                .unwrap_err();
+            assert!(error.to_string().contains("'a a'"), "{error}");
+        }
     }
 }

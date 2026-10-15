@@ -12,7 +12,7 @@
 //! checked; [`McpSettings::validate`] enforces every other rule once
 //! `enabled` is true.
 
-use crate::configuration::{McpIdentityError, McpIdentitySettings};
+use crate::configuration::{MCP_REALM_MAX_CHARS, McpIdentityError, McpIdentitySettings};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -115,6 +115,13 @@ pub enum McpConfigError {
          pick a realm that no REST user can have"
     )]
     RealmInUse { realm: String, location: String },
+    /// With token claims, a REST realm is not a realm a token can carry.
+    #[error(
+        "mcp.identity.source is token_claims, but realm '{realm}' in {location} \
+         cannot appear in a token: token realms are 1 to {MCP_REALM_MAX_CHARS} \
+         characters of A-Z, a-z, 0-9, '.', '_' or '-'"
+    )]
+    RealmNotCarried { realm: String, location: String },
 }
 
 impl McpSettings {
