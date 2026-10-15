@@ -12,7 +12,9 @@
 //! checked; [`McpSettings::validate`] enforces every other rule once
 //! `enabled` is true.
 
-use crate::configuration::{MCP_REALM_MAX_CHARS, McpIdentityError, McpIdentitySettings};
+use crate::configuration::{
+    MCP_REALM_MAX_CHARS, MCP_ROLE_MAX_CHARS, McpIdentityError, McpIdentitySettings,
+};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -122,6 +124,14 @@ pub enum McpConfigError {
          characters of A-Z, a-z, 0-9, '.', '_' or '-'"
     )]
     RealmNotCarried { realm: String, location: String },
+    /// With token claims, a configured REST role is not a role a token
+    /// can carry.
+    #[error(
+        "mcp.identity.source is token_claims, but role {role:?} in {location} \
+         cannot appear in a token: token roles are 1 to {MCP_ROLE_MAX_CHARS} \
+         characters without surrounding whitespace or control characters"
+    )]
+    RoleNotCarried { role: String, location: String },
 }
 
 impl McpSettings {
