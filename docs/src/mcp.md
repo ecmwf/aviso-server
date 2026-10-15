@@ -137,20 +137,29 @@ There is no fallback realm. A token that lacks either claim, sets one to
 `null`, or has a claim of the wrong type or outside the limits above, is
 refused with `401` and `error="invalid_token"`. The `error_description`
 names the configured claim and the problem, without repeating the claim's
-value, for example:
+value. An Auth-O-Tron token for a resource without `identity_claims` (see
+below) has a `roles` claim but no `realm` claim, so it gets:
 
 ```text
-token identity claims are invalid: realm claim 'realm' and roles claim 'roles' are missing
+token identity claims are invalid: realm claim 'realm' is missing
 ```
 
 Auth-O-Tron writes these claims only for OAuth resources that enable
 `identity_claims` in their `oauth.resources[]` entry. With it, the token
 carries `realm`, and `roles` holds the user's roles filtered by the resource's
-exposed-role list, so `read_roles` can only match roles on that list. See the
-Auth-O-Tron OAuth documentation for the role list. Without `identity_claims`,
-Auth-O-Tron tokens carry no `realm` claim, and their `roles` claim holds only
-the roles the granted scopes require, so `token_claims` refuses them. Enable it
-for the Aviso resource before switching to `token_claims`.
+exposed roles (`identity_claims.roles`), so `read_roles` can only match roles
+on that list. See the Auth-O-Tron OAuth documentation for the role list.
+Without `identity_claims`, Auth-O-Tron tokens carry no `realm` claim, and
+their `roles` claim holds only the roles the granted scopes require, so
+`token_claims` refuses them.
+
+Switch both sides in one rollout. Turning on `identity_claims` changes what
+the `roles` claim holds, from the roles the granted scopes require to the
+user's exposed roles. A server still on `source: fixed` would then match its
+MCP realm's `read_roles` against different roles, which can open or close
+streams. A server on `token_claims` without `identity_claims` at the issuer
+refuses every token. Tokens issued before the switch lack the `realm` claim
+and are refused until clients fetch new ones.
 
 Before switching, also check the REST role maps that MCP users are matched
 against: every stream's `read_roles`, and `auth.admin_roles` when `admin` is
@@ -249,6 +258,15 @@ With `token_claims`, MCP and REST answer the same user the same way, except:
   stream without credentials. MCP still needs a valid token and still checks
   the stream rules. Startup refuses stream `auth` rules while REST
   authentication is off, so in practice the difference is the token.
+- MCP users carry only the roles the Aviso resource exposes in Auth-O-Tron
+  (`identity_claims.roles`), while a REST token may carry all of a user's
+  roles. A `read_roles` rule that names a role outside that list holds over
+  REST and never over MCP.
+- Roles in an MCP token can lag behind the identity provider. When Auth-O-Tron
+  refreshes a token, it applies its role augmentation again, but it rereads
+  the provider's roles only for refresh families coupled to a provider offline
+  session. Other refresh families keep the roles from sign-in until they end,
+  so a role removed at the provider can keep granting MCP reads until then.
 
 ## Configuration
 
