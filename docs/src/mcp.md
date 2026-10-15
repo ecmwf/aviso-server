@@ -53,17 +53,23 @@ CloudEvent `time` as `first_seen`.
 ## Who Can Read What
 
 MCP callers authenticate with OAuth access tokens, not with Aviso's REST
-credentials. A verified token becomes an Aviso user:
+credentials. A verified token becomes an Aviso user with a username, a realm,
+and roles. The username is always a short hash of the token `sub`, the same
+value the debug logs show as the subject. The raw `sub` is never kept.
 
-- `username` is a short hash of the token `sub`, the same value the debug
-  logs show as the subject. The raw `sub` is never kept.
-- `realm` is `mcp.identity.realm` (default `mcp`).
-- `roles` are the token's `roles` claim: at most 256 entries, each 1 to 128
-  characters without surrounding whitespace or control characters.
+Where the realm and roles come from is set by `mcp.identity.source`:
 
-The user is never an admin, whatever its roles. Stream access then follows
-the normal `read_roles` rules. To open a stream to MCP users who hold the
-`aviso-mcp` role:
+| Source | Realm | Roles | Admins |
+| --- | --- | --- | --- |
+| `fixed` (default) | `identity.realm`, the same for every user | optional `roles` claim | nobody |
+| `token_claims` | the token's realm claim | the token's roles claim | as in `auth.admin_roles` with `admin: true`, else nobody |
+
+### Fixed realm
+
+With `source: fixed`, every MCP user gets the same realm, `mcp` unless
+`identity.realm` says otherwise. Roles come from the token's `roles` claim when
+it has one; a missing or `null` claim means no roles. Nobody is an admin. To
+open a stream to MCP users who hold the `aviso-mcp` role:
 
 ```yaml
 notification_schema:
@@ -74,9 +80,143 @@ notification_schema:
         mcp: ["aviso-mcp"]
 ```
 
-Streams with no `auth` block stay readable by any MCP user. Streams that need
-an auth plugin (for example `ecpds`) are not readable over MCP and do not
-appear in `aviso_list_event_types`.
+This source cannot tell users apart: any token with the role reads the
+stream, whoever its user is.
+
+### Realm and roles from token claims
+
+With `source: token_claims`, the issuer writes the user's own realm and roles
+into each access token. An MCP user then reads the streams the same user could
+read through the REST API, with the exceptions listed under
+[Differences from REST](#differences-from-rest).
+
+```yaml
+mcp:
+  identity:
+    source: token_claims
+    realm_claim: "realm"   # default
+    roles_claim: "roles"   # default
+    admin: false           # default
+```
+
+Every token must carry both claims:
+
+- `realm`: a string, the issuer realm the user signed in through, such as
+  `ecmwf` or `browser-demo`. It is 1 to 64 characters of `A-Z`, `a-z`, `0-9`,
+  `.`, `_`, or `-`. Realms are compared exactly, so `ECMWF` is not `ecmwf`.
+- `roles`: an array of strings, possibly empty. It has at most 256 entries;
+  each is 1 to 128 characters without surrounding whitespace or control
+  characters.
+
+A token payload then looks like this:
+
+```json
+{
+  "iss": "https://auth.example.int/",
+  "sub": "c0ffee42",
+  "aud": "https://aviso.example.int/mcp",
+  "iat": 1760000000,
+  "exp": 1760003600,
+  "jti": "5f1d6a",
+  "client_id": "claude-code",
+  "scope": "aviso:read",
+  "realm": "ecmwf",
+  "roles": ["reader", "analyst"]
+}
+```
+
+`realm_claim` and `roles_claim` name top-level keys of the token payload,
+taken literally. A dot is part of the name, not a path:
+`roles_claim: "realm_access.roles"` looks for a key with that exact name and
+does not read the `roles` field inside a `realm_access` object. An issuer
+that nests roles, as Keycloak does, needs a mapper that copies them into a
+top-level claim.
+
+There is no fallback realm. A token that lacks either claim, sets one to
+`null`, or has a claim of the wrong type or outside the limits above, is
+refused with `401` and `error="invalid_token"`. The `error_description`
+names the configured claim and the problem, without repeating the claim's
+value, for example:
+
+```text
+token identity claims are invalid: realm claim 'realm' and roles claim 'roles' are missing
+```
+
+Auth-O-Tron writes these claims only for OAuth resources that enable
+`identity_claims` in their `oauth.resources[]` entry. With it, the token
+carries `realm`, and `roles` holds the user's roles filtered by the resource's
+exposed-role list, so `read_roles` can only match roles on that list. See the
+Auth-O-Tron OAuth documentation for the role list. Without `identity_claims`,
+Auth-O-Tron tokens carry no `realm` claim, and their `roles` claim holds only
+the roles the granted scopes require, so `token_claims` refuses them. Enable it
+for the Aviso resource before switching to `token_claims`.
+
+Before switching, also check the REST role maps. With `token_claims`, startup
+fails if a key of `auth.admin_roles`, or of any stream's `read_roles` or
+`write_roles`, is a realm no token can carry, such as `ECMWF staff`. It also
+fails if a role in `read_roles` or `write_roles`, or in `auth.admin_roles` when
+`admin` is `true`, is a role no token can carry, such as one longer than 128
+characters. A rule written with such a realm or role would hold over REST and
+never over MCP. The error names the first such realm or role and where it is
+configured.
+
+### Security
+
+With `token_claims`, Aviso trusts the MCP issuer to name the realm and roles
+of every user, for every realm the REST configuration knows. With
+`admin: true` that trust extends to the admin realms in `auth.admin_roles`:
+a token that names an admin realm and role reads every stream.
+
+- The MCP issuer must be the authority the REST API already trusts for those
+  realms and roles, normally the same Auth-O-Tron.
+- Users must not be able to change their own realm or roles claims, for
+  example through a profile attribute that a claim mapper copies into the
+  token.
+- Leave `admin` off unless MCP users really need admin reads. Admins skip
+  every read rule.
+
+### How read rules apply
+
+Stream access follows the same rules as REST `watch` and `replay`, with the
+user's realm and roles:
+
+- A stream with no `auth` block, or with `required: false`, is readable by
+  every MCP user.
+- A stream with `required: true` and no `read_roles` is readable by every MCP
+  user.
+- With `read_roles`, the user's realm must be a key of the map, and the user
+  must hold one of the roles listed for it. `["*"]` admits every user of that
+  realm, even with no roles. A role named `*` in a token has no special
+  meaning.
+- With `token_claims` and `admin: true`, users that match `auth.admin_roles`
+  read every stream. An empty `auth.admin_roles` makes nobody an admin. With
+  `admin: false` or `source: fixed`, nobody is an admin over MCP.
+- Streams that need an auth plugin (for example `ecpds`) are readable only by
+  admins. The plugin check needs a REST request, so MCP cannot run it; REST
+  admins skip it too.
+- Only event types in the notification schema are readable over MCP, even
+  when `notification_schema_strict` is `false` and the REST API accepts
+  others.
+
+For example, with `token_claims` and this stream:
+
+```yaml
+notification_schema:
+  ops_data:
+    auth:
+      required: true
+      read_roles:
+        ecmwf: ["reader"]
+        browser-demo: ["*"]
+```
+
+a user of realm `ecmwf` with role `reader` may read `ops_data`, and one with
+only `viewer` may not. Every user of `browser-demo` may read it. A user of
+any other realm may not, unless they are an admin. REST gives these users the
+same answers.
+
+`aviso_list_event_types` lists only the streams the caller may read; the
+others do not appear.
 
 An event type the caller may not read gets the same tool error as one that
 does not exist, from every tool:
@@ -88,6 +228,25 @@ aviso_list_event_types lists the readable ones
 
 The message is one line. The tools never reveal which event types exist
 beyond the ones the caller can read.
+
+### Differences from REST
+
+With `token_claims`, MCP and REST answer the same user the same way, except:
+
+- Realms are limited to 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`,
+  or `-`. Startup refuses REST realms outside that set, as described above.
+- A token with more than 256 roles, or with a role longer than 128 characters,
+  padded with whitespace, or holding control characters, is refused as a
+  whole. Roles are never dropped or shortened. REST has no such limits.
+- REST admins are MCP admins only with `admin: true`.
+- Streams with auth plugins are readable by admins only. REST runs the plugin
+  check for other users instead.
+- With `notification_schema_strict: false`, REST accepts event types that the
+  schema does not list. MCP answers them as not found or not readable.
+- With REST authentication off (`auth.enabled: false`), REST serves every
+  stream without credentials. MCP still needs a valid token and still checks
+  the stream rules. Startup refuses stream `auth` rules while REST
+  authentication is off, so in practice the difference is the token.
 
 ## Configuration
 
@@ -116,19 +275,35 @@ When `enabled` is `true`, startup fails unless:
 - Each `allowed_origins` entry is a bare origin such as
   `https://app.example.int` (no trailing slash, no path).
 - `max_results` is between 1 and 200, and the timeouts are above zero.
-- An `identity` block names its `source`. Leaving out the whole block means
+- An `identity` block names its `source`, `fixed` or `token_claims`, and holds
+  only the fields of that source. Leaving out the whole block means
   `source: fixed` with realm `mcp`.
-- `identity.realm` is 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, or
-  `-`.
-- `identity.realm` is not a key of `auth.admin_roles` or of any stream's
-  `write_roles`. Those realms belong to REST users, and sharing one would let
-  token roles match rules written for them. Naming the realm in `read_roles`
-  is fine; that is how streams are opened to MCP users.
+- With `fixed`, `identity.realm` is 1 to 64 characters of `A-Z`, `a-z`, `0-9`,
+  `.`, `_`, or `-`.
+- With `fixed`, `identity.realm` is not a key of `auth.admin_roles` or of any
+  stream's `write_roles`. Those realms belong to REST users, and sharing one
+  would let token roles match rules written for them. Naming the realm in
+  `read_roles` is fine; that is how streams are opened to MCP users.
+- With `token_claims`, `realm_claim` and `roles_claim` are 1 to 128
+  characters without whitespace or control characters, and they differ. Neither
+  may be a claim the verifier already checks: `iss`, `sub`, `aud`, `exp`,
+  `nbf`, `iat`, `jti`, `client_id`, or `scope`. `admin` is `true` or `false`,
+  written as a boolean or as the string `"true"` or `"false"`; values such as
+  `yes` or `1` are refused.
+- With `token_claims`, every key of `auth.admin_roles` and of each stream's
+  `read_roles` and `write_roles` is a realm a token can carry: 1 to 64
+  characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Every role of
+  `read_roles` and `write_roles`, and of `auth.admin_roles` when `admin` is
+  `true`, is a role a token can carry: 1 to 128 characters without surrounding
+  whitespace or control characters. The error names the first realm or role
+  that is not, and where it is configured.
 
-Every stream whose `read_roles` names the MCP realm is readable by MCP tokens
-that carry a matching role, or any role when the list is `["*"]`. Pick a
-dedicated realm name for MCP and use it for nothing else, so that no stream
-opens to MCP clients by accident.
+With `fixed`, every stream whose `read_roles` names the MCP realm is readable
+by MCP tokens that carry a matching role, or any role when the list is
+`["*"]`. Pick a dedicated realm name for MCP and use it for nothing else, so
+that no stream opens to MCP clients by accident. With `token_claims` the
+realms are the issuer's own, shared with REST on purpose, so this does not
+apply.
 
 `resource_url` must be the public URL clients use. Tokens must name it as
 their audience, byte for byte. `oauth.issuer` is also compared byte for
@@ -148,7 +323,16 @@ AVISOSERVER_MCP__ENABLED=true
 AVISOSERVER_MCP__RESOURCE_URL=https://aviso.example.int/mcp
 AVISOSERVER_MCP__OAUTH__ISSUER=https://auth.example.int/
 AVISOSERVER_MCP__OAUTH__JWKS_URI=https://auth.example.int/.well-known/jwks.json
+AVISOSERVER_MCP__IDENTITY__SOURCE=token_claims
+AVISOSERVER_MCP__IDENTITY__ADMIN=false
 ```
+
+The environment is merged into the configuration file field by field. To
+switch the source from the environment, the file must not hold fields of the
+other source. A file with `source: fixed` and `realm: "mcp"` plus
+`AVISOSERVER_MCP__IDENTITY__SOURCE=token_claims` fails with
+`` unknown field `realm` ``; leave `realm` out of the file, since `mcp` is its
+default.
 
 See the [configuration reference](./configuration-reference.md#mcp) for every
 field.
@@ -185,6 +369,13 @@ A token is accepted only when all of these hold:
 - `sub`, `jti`, and `client_id` are present and not empty, as RFC 9068
   requires.
 - `scope` contains every entry of `mcp.oauth.required_scopes`.
+- The identity claims are valid: with `token_claims`, both claims are present
+  and within bounds; with `fixed`, a `roles` claim, if present, is.
+
+The checks run in this order. Identity claims are read last, only once the
+signature, the other claims, and the scope have passed. A token without the
+required scope therefore gets `403` even when its identity claims are also
+unusable, so the client asks for the scope rather than for a new token.
 
 A missing token gets `401` with a challenge like this:
 
@@ -192,9 +383,17 @@ A missing token gets `401` with a challenge like this:
 WWW-Authenticate: Bearer resource_metadata="https://aviso.example.int/.well-known/oauth-protected-resource/mcp", scope="aviso:read"
 ```
 
-An invalid token adds `error="invalid_token"`. A valid token without the
-required scope gets `403` with `error="insufficient_scope"`. If the key set
-cannot be fetched at all, the answer is `503`.
+An invalid token adds `error="invalid_token"` and an `error_description` that
+names the failed check:
+
+```text
+WWW-Authenticate: Bearer error="invalid_token", error_description="token is invalid: wrong audience", resource_metadata="https://aviso.example.int/.well-known/oauth-protected-resource/mcp", scope="aviso:read"
+```
+
+The JSON body repeats both, as `error` and `error_description`. The
+description never contains token content. A valid token without the required
+scope gets `403` with `error="insufficient_scope"`. If the key set cannot be
+fetched at all, the answer is `503`.
 
 The key set is cached for `jwks_cache_ttl_seconds`. A token with an unknown
 `kid` triggers an early refetch, at most once per minute, so key rotation is
@@ -269,6 +468,10 @@ also need their origin in `allowed_origins`.
 
 ## Logs
 
+At startup, `startup.mcp.enabled` records the resource URL, the issuer, the
+identity source (`identity_source`), and whether REST admin roles apply to MCP
+users (`identity_admin`).
+
 Each request logs `mcp.request.completed` at info level with the JSON-RPC
 method, the tool name, an outcome label, the HTTP status, and the duration.
 Tokens, claims, and tool arguments are never logged. At debug level,
@@ -287,7 +490,10 @@ could read.
 - Only RS256 tokens are accepted, and only from one issuer.
 - The endpoint does not support dynamic client registration; clients must be
   registered at the issuer in advance.
-- MCP users are never admins, and streams with auth plugins are not readable.
+- MCP users are admins only with `source: token_claims` and `admin: true`.
+  Streams with auth plugins are readable only by such admins.
+- With `token_claims`, realms and roles have the limits listed under
+  [Differences from REST](#differences-from-rest).
 - Replay results are capped at 200 notifications per call.
 
 ## Testing With the Python SDK
