@@ -184,7 +184,6 @@ impl TokenVerifier {
                 "client_id is missing, empty, or too long",
             ));
         }
-        let identity = resolve_identity(&self.identity, &claims.other)?;
         let granted: Vec<&str> = claims
             .scope
             .as_deref()
@@ -197,6 +196,9 @@ impl TokenVerifier {
         {
             return Err(TokenError::InsufficientScope);
         }
+        // After the scope check, so a token without the scope gets 403
+        // and the client asks for the scope instead of a new token.
+        let identity = resolve_identity(&self.identity, &claims.other)?;
         let subject_hash = subject_hash(&claims.sub);
         Ok(VerifiedToken {
             user: User {

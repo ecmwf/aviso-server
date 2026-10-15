@@ -207,6 +207,22 @@ async fn missing_scope_is_insufficient_scope() {
 }
 
 #[tokio::test]
+async fn scope_is_checked_before_the_identity_claims() {
+    let mut bad_roles = with("scope", json!("openid"));
+    bad_roles["roles"] = json!("aviso-mcp");
+    assert!(matches!(
+        check(bad_roles).await,
+        Err(TokenError::InsufficientScope)
+    ));
+    let mut no_identity = with("scope", json!("openid"));
+    no_identity.as_object_mut().unwrap().remove("roles");
+    assert!(matches!(
+        verify_with_token_claims(no_identity).await,
+        Err(TokenError::InsufficientScope)
+    ));
+}
+
+#[tokio::test]
 async fn header_type_and_algorithm_are_enforced() {
     let server = JwksServer::start(vec![jwk(&key_a(), KID_A)]);
     let verifier = verifier(&server, Duration::from_secs(60));
