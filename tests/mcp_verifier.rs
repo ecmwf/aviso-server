@@ -94,34 +94,43 @@ async fn token_claims_source_refuses_tokens_without_usable_claims() {
         claims["roles"] = roles;
         claims
     };
+    let realm = || "realm".to_string();
+    let roles = || "roles".to_string();
     let cases = [
-        (good_claims(), IdentityClaimError::MissingRealm),
+        (good_claims(), IdentityClaimError::MissingRealm(realm())),
         (
             identity(json!("ecmwf"), json!("aviso-mcp")),
-            IdentityClaimError::RolesType,
+            IdentityClaimError::RolesType(roles()),
         ),
-        (identity(json!(1), json!([])), IdentityClaimError::RealmType),
+        (
+            identity(json!(1), json!([])),
+            IdentityClaimError::RealmType(realm()),
+        ),
         (
             identity(json!("a b"), json!([])),
-            IdentityClaimError::RealmFormat,
+            IdentityClaimError::RealmFormat(realm()),
         ),
         (
             identity(json!("ecmwf"), json!(["ok", "bad\u{7}"])),
-            IdentityClaimError::RoleFormat,
+            IdentityClaimError::RoleFormat(roles()),
         ),
     ];
     for (claims, expected) in cases {
         let result = verify_with_token_claims(claims.clone()).await;
         assert!(
-            matches!(result, Err(TokenError::Identity(error)) if error == expected),
+            matches!(&result, Err(TokenError::Identity(error)) if *error == expected),
             "{claims}: {result:?}"
         );
     }
     let mut bare = good_claims();
     bare.as_object_mut().unwrap().remove("roles");
+    let missing = IdentityClaimError::MissingClaims {
+        realm_claim: realm(),
+        roles_claim: roles(),
+    };
     assert!(matches!(
         verify_with_token_claims(bare).await,
-        Err(TokenError::Identity(IdentityClaimError::MissingClaims))
+        Err(TokenError::Identity(error)) if error == missing
     ));
 }
 
@@ -172,15 +181,22 @@ async fn future_iat_and_missing_claims_are_rejected() {
 
 #[tokio::test]
 async fn malformed_roles_claim_is_an_identity_error() {
+    let claim = || "roles".to_string();
     let cases = [
-        (json!(vec!["r"; 257]), IdentityClaimError::TooManyRoles),
-        (json!("aviso-mcp"), IdentityClaimError::RolesType),
-        (json!([" aviso-mcp"]), IdentityClaimError::RoleFormat),
+        (
+            json!(vec!["r"; 257]),
+            IdentityClaimError::TooManyRoles(claim()),
+        ),
+        (json!("aviso-mcp"), IdentityClaimError::RolesType(claim())),
+        (
+            json!([" aviso-mcp"]),
+            IdentityClaimError::RoleFormat(claim()),
+        ),
     ];
     for (roles, expected) in cases {
         let result = check(with("roles", roles.clone())).await;
         assert!(
-            matches!(result, Err(TokenError::Identity(error)) if error == expected),
+            matches!(&result, Err(TokenError::Identity(error)) if *error == expected),
             "{roles}: {result:?}"
         );
     }

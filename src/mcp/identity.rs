@@ -31,42 +31,46 @@ const FIXED_ROLES_CLAIM: &str = "roles";
 
 /// Why the identity claims of a token were refused.
 ///
-/// Messages describe the rule that failed and never echo claim values,
-/// so they are safe to send back to the client.
-#[derive(Debug, Clone, Copy, Error, PartialEq, Eq)]
+/// Messages name the configured claim and the rule that failed, and never
+/// echo claim values, so they are safe to send back to the client.
+#[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[non_exhaustive]
 pub enum IdentityClaimError {
     /// Neither the realm nor the roles claim is present, typically
     /// because the issuer does not add them for this resource.
-    #[error("realm and roles claims are missing")]
-    MissingClaims,
-    /// The roles claim is present without the realm claim.
-    #[error("realm claim is missing")]
-    MissingRealm,
-    /// The realm claim is present without the roles claim.
-    #[error("roles claim is missing")]
-    MissingRoles,
-    /// The realm claim is not a string.
-    #[error("realm claim is not a string")]
-    RealmType,
-    /// The realm is empty, too long, or uses other characters.
+    #[error("realm claim '{realm_claim}' and roles claim '{roles_claim}' are missing")]
+    MissingClaims {
+        realm_claim: String,
+        roles_claim: String,
+    },
+    /// The roles claim is present without this realm claim.
+    #[error("realm claim '{0}' is missing")]
+    MissingRealm(String),
+    /// The realm claim is present without this roles claim.
+    #[error("roles claim '{0}' is missing")]
+    MissingRoles(String),
+    /// This realm claim is not a string.
+    #[error("realm claim '{0}' is not a string")]
+    RealmType(String),
+    /// This realm claim is empty, too long, or uses other characters.
     #[error(
-        "realm claim must be 1 to {MCP_REALM_MAX_CHARS} characters of \
+        "realm claim '{0}' must be 1 to {MCP_REALM_MAX_CHARS} characters of \
          A-Z, a-z, 0-9, '.', '_' or '-'"
     )]
-    RealmFormat,
-    /// The roles claim is not an array of strings.
-    #[error("roles claim is not an array of strings")]
-    RolesType,
-    /// The roles claim has more than [`MAX_ROLES`] entries.
-    #[error("roles claim has more than {MAX_ROLES} entries")]
-    TooManyRoles,
-    /// A role is empty, too long, padded, or has control characters.
+    RealmFormat(String),
+    /// This roles claim is not an array of strings.
+    #[error("roles claim '{0}' is not an array of strings")]
+    RolesType(String),
+    /// This roles claim has more than [`MAX_ROLES`] entries.
+    #[error("roles claim '{0}' has more than {MAX_ROLES} entries")]
+    TooManyRoles(String),
+    /// A role in this claim is empty, too long, padded, or has control
+    /// characters.
     #[error(
-        "roles claim entries must be 1 to {MCP_ROLE_MAX_CHARS} characters \
-         without surrounding whitespace or control characters"
+        "roles claim '{0}' entries must be 1 to {MCP_ROLE_MAX_CHARS} \
+         characters without surrounding whitespace or control characters"
     )]
-    RoleFormat,
+    RoleFormat(String),
 }
 
 /// Realm and roles of one verified token.
@@ -86,7 +90,7 @@ pub fn resolve_identity(
     match settings {
         McpIdentitySettings::Fixed { realm } => {
             let roles = claim(claims, FIXED_ROLES_CLAIM)
-                .map(parse_roles)
+                .map(|value| parse_roles(value, FIXED_ROLES_CLAIM))
                 .transpose()?
                 .unwrap_or_default();
             Ok(TokenIdentity {
@@ -99,12 +103,15 @@ pub fn resolve_identity(
             roles_claim,
             ..
         } => match (claim(claims, realm_claim), claim(claims, roles_claim)) {
-            (None, None) => Err(IdentityClaimError::MissingClaims),
-            (None, Some(_)) => Err(IdentityClaimError::MissingRealm),
-            (Some(_), None) => Err(IdentityClaimError::MissingRoles),
+            (None, None) => Err(IdentityClaimError::MissingClaims {
+                realm_claim: realm_claim.clone(),
+                roles_claim: roles_claim.clone(),
+            }),
+            (None, Some(_)) => Err(IdentityClaimError::MissingRealm(realm_claim.clone())),
+            (Some(_), None) => Err(IdentityClaimError::MissingRoles(roles_claim.clone())),
             (Some(realm), Some(roles)) => Ok(TokenIdentity {
-                realm: parse_realm(realm)?,
-                roles: parse_roles(roles)?,
+                realm: parse_realm(realm, realm_claim)?,
+                roles: parse_roles(roles, roles_claim)?,
             }),
         },
     }
@@ -118,37 +125,38 @@ fn claim<'a>(claims: &'a Map<String, Value>, name: &str) -> Option<&'a Value> {
     claims.get(name).filter(|value| !value.is_null())
 }
 
-/// Parse a realm claim value.
+/// Parse the value of the realm claim named `name`.
 ///
 /// - valid: `"browser-demo"`, `"ecmwf"`
 /// - invalid: `""`, `"demo sso"`, `7`, `["ecmwf"]`
-fn parse_realm(value: &Value) -> Result<String, IdentityClaimError> {
-    let realm = value.as_str().ok_or(IdentityClaimError::RealmType)?;
+fn parse_realm(value: &Value, name: &str) -> Result<String, IdentityClaimError> {
+    let realm = value
+        .as_str()
+        .ok_or_else(|| IdentityClaimError::RealmType(name.to_string()))?;
     if is_valid_realm(realm) {
         Ok(realm.to_string())
     } else {
-        Err(IdentityClaimError::RealmFormat)
+        Err(IdentityClaimError::RealmFormat(name.to_string()))
     }
 }
 
-/// Parse a roles claim value.
+/// Parse the value of the roles claim named `name`.
 ///
 /// - valid: `[]`, `["aviso-mcp", "reader"]`
 /// - invalid: `"reader"`, `[1]`, `[""]`, `[" reader"]`, 257 entries
-fn parse_roles(value: &Value) -> Result<Vec<String>, IdentityClaimError> {
-    let entries = value.as_array().ok_or(IdentityClaimError::RolesType)?;
+fn parse_roles(value: &Value, name: &str) -> Result<Vec<String>, IdentityClaimError> {
+    let entries = value
+        .as_array()
+        .ok_or_else(|| IdentityClaimError::RolesType(name.to_string()))?;
     if entries.len() > MAX_ROLES {
-        return Err(IdentityClaimError::TooManyRoles);
+        return Err(IdentityClaimError::TooManyRoles(name.to_string()));
     }
     entries
         .iter()
-        .map(|entry| {
-            let role = entry.as_str().ok_or(IdentityClaimError::RolesType)?;
-            if is_valid_role(role) {
-                Ok(role.to_string())
-            } else {
-                Err(IdentityClaimError::RoleFormat)
-            }
+        .map(|entry| match entry.as_str() {
+            Some(role) if is_valid_role(role) => Ok(role.to_string()),
+            Some(_) => Err(IdentityClaimError::RoleFormat(name.to_string())),
+            None => Err(IdentityClaimError::RolesType(name.to_string())),
         })
         .collect()
 }
@@ -179,6 +187,18 @@ mod tests {
         match claims {
             Value::Object(map) => resolve_identity(settings, &map),
             other => panic!("claims must be an object, got {other}"),
+        }
+    }
+
+    /// The error of `kind` for the claim named `claim`.
+    fn on(kind: fn(String) -> IdentityClaimError, claim: &str) -> IdentityClaimError {
+        kind(claim.to_string())
+    }
+
+    fn missing_both(realm_claim: &str, roles_claim: &str) -> IdentityClaimError {
+        IdentityClaimError::MissingClaims {
+            realm_claim: realm_claim.to_string(),
+            roles_claim: roles_claim.to_string(),
         }
     }
 
@@ -230,7 +250,20 @@ mod tests {
         let only_defaults = json!({"realm": "ecmwf", "roles": ["reader"]});
         assert_eq!(
             resolve(&settings, only_defaults),
-            Err(IdentityClaimError::MissingClaims)
+            Err(missing_both("aviso_realm", "aviso_roles"))
+        );
+    }
+
+    #[test]
+    fn errors_name_the_configured_claims() {
+        assert_eq!(
+            missing_both("aviso_realm", "aviso_roles").to_string(),
+            "realm claim 'aviso_realm' and roles claim 'aviso_roles' are missing"
+        );
+        let error = on(IdentityClaimError::TooManyRoles, "aviso_roles");
+        assert_eq!(
+            error.to_string(),
+            "roles claim 'aviso_roles' has more than 256 entries"
         );
     }
 
@@ -244,7 +277,7 @@ mod tests {
         let nested = json!({"realm": "ecmwf", "realm_access": {"roles": ["reader"]}});
         assert_eq!(
             resolve(&settings, nested),
-            Err(IdentityClaimError::MissingRoles)
+            Err(on(IdentityClaimError::MissingRoles, "realm_access.roles"))
         );
         let literal = json!({"realm": "ecmwf", "realm_access.roles": ["reader"]});
         assert_eq!(
@@ -256,23 +289,26 @@ mod tests {
     #[test]
     fn token_claims_source_has_no_fallback() {
         for (claims, error) in [
-            (json!({}), IdentityClaimError::MissingClaims),
+            (json!({}), missing_both("realm", "roles")),
             (
                 json!({"realm": null, "roles": null}),
-                IdentityClaimError::MissingClaims,
+                missing_both("realm", "roles"),
             ),
             (
                 json!({"roles": ["reader"]}),
-                IdentityClaimError::MissingRealm,
+                on(IdentityClaimError::MissingRealm, "realm"),
             ),
             (
                 json!({"realm": null, "roles": []}),
-                IdentityClaimError::MissingRealm,
+                on(IdentityClaimError::MissingRealm, "realm"),
             ),
-            (json!({"realm": "ecmwf"}), IdentityClaimError::MissingRoles),
+            (
+                json!({"realm": "ecmwf"}),
+                on(IdentityClaimError::MissingRoles, "roles"),
+            ),
             (
                 json!({"realm": "ecmwf", "roles": null}),
-                IdentityClaimError::MissingRoles,
+                on(IdentityClaimError::MissingRoles, "roles"),
             ),
         ] {
             assert_eq!(
@@ -294,7 +330,7 @@ mod tests {
             let claims = json!({"realm": realm, "roles": []});
             assert_eq!(
                 resolve(&token_claims(), claims),
-                Err(IdentityClaimError::RealmType),
+                Err(on(IdentityClaimError::RealmType, "realm")),
                 "{realm}"
             );
         }
@@ -311,7 +347,7 @@ mod tests {
             let claims = json!({"realm": realm, "roles": []});
             assert_eq!(
                 resolve(&token_claims(), claims),
-                Err(IdentityClaimError::RealmFormat),
+                Err(on(IdentityClaimError::RealmFormat, "realm")),
                 "{realm:?}"
             );
         }
@@ -327,7 +363,7 @@ mod tests {
                 let claims = json!({"realm": "ecmwf", "roles": roles});
                 assert_eq!(
                     resolve(&settings, claims),
-                    Err(IdentityClaimError::RolesType),
+                    Err(on(IdentityClaimError::RolesType, "roles")),
                     "{roles}"
                 );
             }
@@ -340,7 +376,7 @@ mod tests {
         let many = json!(vec!["r"; MAX_ROLES + 1]);
         assert_eq!(
             resolve(&token_claims(), claims(many)),
-            Err(IdentityClaimError::TooManyRoles)
+            Err(on(IdentityClaimError::TooManyRoles, "roles"))
         );
         let at_limit = json!(vec!["r"; MAX_ROLES]);
         assert!(resolve(&token_claims(), claims(at_limit)).is_ok());
@@ -358,7 +394,7 @@ mod tests {
             for settings in [fixed(), token_claims()] {
                 assert_eq!(
                     resolve(&settings, claims(json!([role]))),
-                    Err(IdentityClaimError::RoleFormat),
+                    Err(on(IdentityClaimError::RoleFormat, "roles")),
                     "{role:?}"
                 );
             }

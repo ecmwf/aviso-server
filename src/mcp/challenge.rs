@@ -109,7 +109,8 @@ mod tests {
             "token is invalid: wrong audience"
         );
         assert_eq!(error_description("a\"b\\c\nd\u{e9}"), "a b c d ");
-        let identity = TokenError::Identity(IdentityClaimError::RealmFormat).to_string();
+        let error = IdentityClaimError::RealmFormat("realm".to_string());
+        let identity = TokenError::Identity(error).to_string();
         assert_eq!(error_description(&identity), identity);
     }
 

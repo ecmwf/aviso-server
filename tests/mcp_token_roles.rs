@@ -366,7 +366,7 @@ async fn token_without_identity_claims_is_an_invalid_token() {
     assert!(
         challenge.contains(
             "error=\"invalid_token\", error_description=\"token identity claims are \
-             invalid: realm and roles claims are missing\""
+             invalid: realm claim 'realm' and roles claim 'roles' are missing\""
         ),
         "{challenge}"
     );
