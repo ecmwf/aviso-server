@@ -17,6 +17,7 @@ use crate::auth::User;
 use crate::configuration::{McpIdentitySettings, McpSettings};
 use crate::mcp::identity::{IdentityClaimError, resolve_identity};
 use crate::mcp::jwks::{JwksCache, JwksError, JwksTiming};
+use actix_web::http::StatusCode;
 use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
 use serde::Deserialize;
 use serde_json::{Map, Value};
@@ -69,13 +70,41 @@ pub enum TokenError {
 }
 
 impl TokenError {
-    /// The OAuth error code for the `WWW-Authenticate` header, or `None`
-    /// when the failure is on the server side.
-    pub fn oauth_error(&self) -> Option<&'static str> {
+    /// The OAuth error to report, or `None` when the failure is on the
+    /// server side.
+    pub fn oauth_error(&self) -> Option<OAuthError> {
         match self {
-            Self::InsufficientScope => Some("insufficient_scope"),
+            Self::InsufficientScope => Some(OAuthError::InsufficientScope),
             Self::KeysUnavailable => None,
-            _ => Some("invalid_token"),
+            _ => Some(OAuthError::InvalidToken),
+        }
+    }
+}
+
+/// An RFC 6750 error code together with the status it is sent with.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum OAuthError {
+    /// `invalid_token`, sent with `401`.
+    InvalidToken,
+    /// `insufficient_scope`, sent with `403`.
+    InsufficientScope,
+}
+
+impl OAuthError {
+    /// The error code for the `WWW-Authenticate` header.
+    pub fn code(self) -> &'static str {
+        match self {
+            Self::InvalidToken => "invalid_token",
+            Self::InsufficientScope => "insufficient_scope",
+        }
+    }
+
+    /// The status RFC 6750 section 3.1 gives the code.
+    pub fn status(self) -> StatusCode {
+        match self {
+            Self::InvalidToken => StatusCode::UNAUTHORIZED,
+            Self::InsufficientScope => StatusCode::FORBIDDEN,
         }
     }
 }

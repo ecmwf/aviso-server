@@ -15,8 +15,8 @@
 //! `Content-Type`, protocol version header, then the body itself.
 
 use crate::auth::{User, extract_bearer_token};
-use crate::mcp::auth::{TokenError, VerifiedToken};
-use crate::mcp::challenge::{Challenge, challenge};
+use crate::mcp::auth::VerifiedToken;
+use crate::mcp::challenge::{Challenge, OAuthFault, challenge};
 use crate::mcp::dispatch::{dispatch, methods};
 use crate::mcp::protocol::{
     DEFAULT_PROTOCOL_VERSION, Message, RpcError, codes, failure, is_supported_version,
@@ -219,8 +219,10 @@ async fn authenticate(request: &HttpRequest, state: &McpState) -> Result<Verifie
         .get(header::AUTHORIZATION)
         .and_then(extract_bearer_token);
     let Some(token) = bearer else {
-        let challenge = challenge(state, StatusCode::UNAUTHORIZED, None);
-        return Err(Rejection::challenged(challenge, "unauthenticated"));
+        return Err(Rejection::challenged(
+            challenge(state, None),
+            "unauthenticated",
+        ));
     };
     state.verifier.verify(token).await.map_err(|error| {
         debug!(
@@ -230,19 +232,12 @@ async fn authenticate(request: &HttpRequest, state: &McpState) -> Result<Verifie
             reason = %error,
             "MCP bearer token rejected"
         );
-        match error {
-            TokenError::InsufficientScope => Rejection::challenged(
-                challenge(state, StatusCode::FORBIDDEN, Some("insufficient_scope")),
-                "insufficient_scope",
-            ),
-            TokenError::KeysUnavailable => Rejection::new(
+        match OAuthFault::for_token_error(&error) {
+            Some(fault) => Rejection::challenged(challenge(state, Some(&fault)), fault.code()),
+            None => Rejection::new(
                 StatusCode::SERVICE_UNAVAILABLE,
                 "keys_unavailable",
                 "token verification is temporarily unavailable",
-            ),
-            _ => Rejection::challenged(
-                challenge(state, StatusCode::UNAUTHORIZED, Some("invalid_token")),
-                "invalid_token",
             ),
         }
     })

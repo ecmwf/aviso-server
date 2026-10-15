@@ -146,7 +146,15 @@ async fn invalid_token_and_missing_scope_are_distinguished() {
         .to_request();
     let response = test::call_service(&app, request).await;
     assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
-    assert!(challenge(&response).starts_with("Bearer error=\"invalid_token\", resource_metadata="));
+    assert!(challenge(&response).starts_with(
+        "Bearer error=\"invalid_token\", error_description=\"token is malformed\", \
+         resource_metadata="
+    ));
+    let body: Value = test::read_body_json(response).await;
+    assert_eq!(
+        body,
+        json!({"error": "invalid_token", "error_description": "token is malformed"})
+    );
 
     let mut claims = good_claims();
     claims["scope"] = json!("openid");
@@ -156,7 +164,9 @@ async fn invalid_token_and_missing_scope_are_distinguished() {
         .to_request();
     let response = test::call_service(&app, request).await;
     assert_eq!(response.status(), StatusCode::FORBIDDEN);
-    assert!(challenge(&response).contains("error=\"insufficient_scope\""));
+    assert!(challenge(&response).contains(
+        "error=\"insufficient_scope\", error_description=\"token lacks a required scope\""
+    ));
     assert!(challenge(&response).contains("scope=\"aviso:read\""));
 }
 
