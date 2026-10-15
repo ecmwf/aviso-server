@@ -17,6 +17,8 @@ use serde_json::{Value, json};
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+/// Lenient schema mode: the REST API would accept event types missing
+/// from the schema, but the MCP tools must not.
 fn init_config() {
     static INIT: OnceLock<()> = OnceLock::new();
     INIT.get_or_init(|| {
@@ -38,6 +40,7 @@ fn init_config() {
         let mut config: Settings = serde_json::from_value(json!({
             "application": {"host": "127.0.0.1", "port": 0},
             "notification_backend": {"kind": "in_memory"},
+            "notification_schema_strict": false,
             "notification_schema": {
                 "open": stream("McpOpen", Value::Null),
                 "guarded": stream("McpGuarded",
@@ -313,6 +316,30 @@ async fn replay_respects_stream_read_roles() {
     )
     .await;
     assert_eq!(message, unavailable("guarded"));
+}
+
+#[tokio::test]
+async fn event_types_outside_the_schema_are_unavailable() {
+    let backend = seeded_backend().await;
+    let identifier = json!({"class": "od", "number": 2});
+    let calls = [
+        (
+            "aviso_describe_event_type",
+            json!({"event_type": "missing"}),
+        ),
+        (
+            "aviso_replay_notifications",
+            json!({"event_type": "missing", "identifier": identifier}),
+        ),
+        (
+            "aviso_check_data_available",
+            json!({"event_type": "missing", "identifier": identifier}),
+        ),
+    ];
+    for (name, arguments) in calls {
+        let message = tool_error(&backend, &["aviso-mcp"], name, arguments).await;
+        assert_eq!(message, unavailable("missing"), "{name}");
+    }
 }
 
 #[tokio::test]

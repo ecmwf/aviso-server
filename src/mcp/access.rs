@@ -21,7 +21,7 @@
 
 use crate::auth::User;
 use crate::auth::stream_access::{StreamOperation, check_stream_access, stream_requires_plugins};
-use crate::configuration::McpIdentitySettings;
+use crate::configuration::{McpIdentitySettings, Settings};
 use crate::sse::collect::ReplayAccess;
 use std::collections::HashMap;
 
@@ -48,8 +48,17 @@ impl McpAccess {
         }
     }
 
-    /// Whether `user` may read `event_type`.
+    /// Whether `user` may read `event_type`. Only event types in the
+    /// notification schema are readable over MCP, even when the REST API
+    /// accepts others (`notification_schema_strict: false`), because the
+    /// tools list and describe configured event types only.
     pub fn can_read(&self, user: &User, event_type: &str) -> bool {
+        let configured = Settings::get_global_notification_schema()
+            .as_ref()
+            .is_some_and(|schemas| schemas.contains_key(event_type));
+        if !configured {
+            return false;
+        }
         let allowed = check_stream_access(
             true,
             Some(user),
