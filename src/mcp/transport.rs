@@ -16,6 +16,7 @@
 
 use crate::auth::{User, extract_bearer_token};
 use crate::mcp::auth::{TokenError, VerifiedToken};
+use crate::mcp::challenge::{Challenge, challenge};
 use crate::mcp::dispatch::{dispatch, methods};
 use crate::mcp::protocol::{
     DEFAULT_PROTOCOL_VERSION, Message, RpcError, codes, failure, is_supported_version,
@@ -78,6 +79,15 @@ impl Rejection {
             outcome,
             body,
             challenge: None,
+        }
+    }
+
+    fn challenged(challenge: Challenge, outcome: &'static str) -> Self {
+        Self {
+            status: challenge.status,
+            outcome,
+            body: challenge.body,
+            challenge: Some(challenge.header),
         }
     }
 }
@@ -209,12 +219,8 @@ async fn authenticate(request: &HttpRequest, state: &McpState) -> Result<Verifie
         .get(header::AUTHORIZATION)
         .and_then(extract_bearer_token);
     let Some(token) = bearer else {
-        return Err(challenge(
-            state,
-            StatusCode::UNAUTHORIZED,
-            None,
-            "unauthenticated",
-        ));
+        let challenge = challenge(state, StatusCode::UNAUTHORIZED, None);
+        return Err(Rejection::challenged(challenge, "unauthenticated"));
     };
     state.verifier.verify(token).await.map_err(|error| {
         debug!(
@@ -225,10 +231,8 @@ async fn authenticate(request: &HttpRequest, state: &McpState) -> Result<Verifie
             "MCP bearer token rejected"
         );
         match error {
-            TokenError::InsufficientScope => challenge(
-                state,
-                StatusCode::FORBIDDEN,
-                Some("insufficient_scope"),
+            TokenError::InsufficientScope => Rejection::challenged(
+                challenge(state, StatusCode::FORBIDDEN, Some("insufficient_scope")),
                 "insufficient_scope",
             ),
             TokenError::KeysUnavailable => Rejection::new(
@@ -236,37 +240,12 @@ async fn authenticate(request: &HttpRequest, state: &McpState) -> Result<Verifie
                 "keys_unavailable",
                 "token verification is temporarily unavailable",
             ),
-            _ => challenge(
-                state,
-                StatusCode::UNAUTHORIZED,
-                Some("invalid_token"),
+            _ => Rejection::challenged(
+                challenge(state, StatusCode::UNAUTHORIZED, Some("invalid_token")),
                 "invalid_token",
             ),
         }
     })
-}
-
-/// RFC 6750 and RFC 9728 challenge pointing at the resource metadata.
-///
-/// - no token: `Bearer resource_metadata="...", scope="aviso:read"`
-/// - bad token: `Bearer error="invalid_token", resource_metadata="...", ...`
-fn challenge(
-    state: &McpState,
-    status: StatusCode,
-    error: Option<&str>,
-    outcome: &'static str,
-) -> Rejection {
-    let error_part = error
-        .map(|error| format!("error=\"{error}\", "))
-        .unwrap_or_default();
-    let value = format!(
-        "Bearer {error_part}resource_metadata=\"{}\", scope=\"{}\"",
-        state.metadata_url,
-        state.verifier.required_scope_string()
-    );
-    let mut rejection = Rejection::new(status, outcome, error.unwrap_or("unauthorized"));
-    rejection.challenge = Some(value);
-    rejection
 }
 
 fn check_headers(request: &HttpRequest) -> Result<(), Rejection> {

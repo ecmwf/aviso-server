@@ -11,6 +11,7 @@
 
 pub mod access;
 pub mod auth;
+mod challenge;
 pub mod dispatch;
 pub mod identity;
 pub mod jwks;
