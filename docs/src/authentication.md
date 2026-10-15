@@ -27,7 +27,10 @@ Schema endpoints (`GET /api/v1/schema`, `GET /api/v1/schema/{event_type}`) are
 always publicly accessible, even when auth is enabled.
 
 The optional `/mcp` endpoint does not use this middleware. It verifies OAuth
-access tokens from its own issuer; see [MCP Endpoint](./mcp.md).
+access tokens from its own issuer; see [MCP Endpoint](./mcp.md). With
+`mcp.identity.source: token_claims`, those tokens carry the user's realm and
+roles, and the per-stream read rules below apply to MCP reads as they do here.
+REST admins are admins over MCP only with `mcp.identity.admin: true`.
 
 ## Quick Start (Direct Mode)
 

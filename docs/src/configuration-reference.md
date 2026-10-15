@@ -608,6 +608,9 @@ field is validated at startup and an invalid block stops the server.
 | [`oauth.jwks_cache_ttl_seconds`](#mcp-oauth-jwks-cache-ttl-seconds) | `300` |
 | [`identity.source`](#mcp-identity-source) | `fixed` |
 | [`identity.realm`](#mcp-identity-realm) | `"mcp"` |
+| [`identity.realm_claim`](#mcp-identity-realm-claim) | `"realm"` |
+| [`identity.roles_claim`](#mcp-identity-roles-claim) | `"roles"` |
+| [`identity.admin`](#mcp-identity-admin) | `false` |
 
 </div>
 <details class="setting-panel" id="mcp-enabled">
@@ -707,8 +710,12 @@ this value, and at least one hour.
 </summary>
 
 Where the realm and roles of an MCP user come from. `fixed` gives every user
-`identity.realm`. Required whenever an `identity` block is written; without
-the block the source is `fixed` with realm `mcp`.
+`identity.realm`; nobody is an admin. `token_claims` reads the realm and roles
+from the claims named by `identity.realm_claim` and `identity.roles_claim` and
+refuses tokens without them; startup then also refuses REST realms and roles
+that no token can carry. Required whenever an `identity` block is written;
+without the block the source is `fixed` with realm `mcp`. See
+[MCP Endpoint](./mcp.md#who-can-read-what).
 
 </details>
 <details class="setting-panel" id="mcp-identity-realm">
@@ -720,7 +727,49 @@ the block the source is `fixed` with realm `mcp`.
 Realm given to every MCP user when `identity.source` is `fixed`. Use it as
 the realm key in stream `read_roles`. It must be 1 to 64 characters of
 `A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Startup fails if it is also a key of
-`auth.admin_roles` or of a stream's `write_roles`.
+`auth.admin_roles` or of a stream's `write_roles`. Only valid with
+`source: fixed`.
+
+</details>
+<details class="setting-panel" id="mcp-identity-realm-claim">
+<summary><code>identity.realm_claim</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"realm"</code> ·
+<strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Token claim that holds the user's realm, a string of 1 to 64 characters of
+`A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Only valid with `source: token_claims`.
+The name is a literal top-level key of the token; a dot is part of the name,
+not a path. It is 1 to 128 characters without whitespace, differs from
+`roles_claim`, and is not `iss`, `sub`, `aud`, `exp`, `nbf`, `iat`, `jti`,
+`client_id`, or `scope`.
+
+</details>
+<details class="setting-panel" id="mcp-identity-roles-claim">
+<summary><code>identity.roles_claim</code>
+<span class="setting-meta"><strong>Default:</strong> <code>"roles"</code> ·
+<strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Token claim that holds the user's roles, an array of at most 256 strings of 1
+to 128 characters each, without surrounding whitespace; it may be empty. Only
+valid with `source: token_claims`. The name follows the same rules as
+`realm_claim`.
+
+</details>
+<details class="setting-panel" id="mcp-identity-admin">
+<summary><code>identity.admin</code>
+<span class="setting-meta"><strong>Default:</strong> <code>false</code> ·
+<strong>Type:</strong> <code>bool</code></span>
+</summary>
+
+Apply `auth.admin_roles` to the realms and roles from tokens, so a REST admin
+is an admin over MCP too and reads every stream. While `false`, nobody is an
+admin over MCP. Only valid with `source: token_claims`. Turning it on lets the
+MCP issuer grant admin rights; see [Security](./mcp.md#security). Accepts a
+boolean or the string `"true"` or `"false"`, so
+`AVISOSERVER_MCP__IDENTITY__ADMIN=true` works; other values such as `yes` or
+`1` are refused.
 
 </details>
 </div>
