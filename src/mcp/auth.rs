@@ -10,8 +10,8 @@
 //!
 //! Tokens are RFC 9068 JWT access tokens signed with RS256 by the configured
 //! issuer. A verified token maps to an Aviso [`User`] whose realm and roles
-//! come from the source `mcp.identity` names. The mapping never grants admin
-//! rights: callers check stream access with an empty admin role map.
+//! come from the source `mcp.identity` names. Whether that user counts as an
+//! admin is decided by [`crate::mcp::access::McpAccess`], not here.
 
 use crate::auth::User;
 use crate::configuration::{McpIdentitySettings, McpSettings};
@@ -83,7 +83,7 @@ impl TokenError {
 /// A verified token mapped onto an Aviso user.
 #[derive(Debug, Clone)]
 pub struct VerifiedToken {
-    /// User for stream access checks; never an admin. Its username is
+    /// User for stream access checks. Its username is
     /// [`VerifiedToken::subject_hash`], not the raw `sub`, so anything that
     /// logs or echoes the username shows the same pseudonym as the logs.
     pub user: User,

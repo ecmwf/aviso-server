@@ -49,7 +49,7 @@ fn with(key: &str, value: serde_json::Value) -> serde_json::Value {
 }
 
 #[tokio::test]
-async fn valid_token_maps_to_a_non_admin_mcp_user() {
+async fn valid_token_maps_to_a_user_of_the_fixed_realm() {
     let server = JwksServer::start(vec![jwk(&key_a(), KID_A)]);
     let verified = verifier(&server, Duration::from_secs(60))
         .verify(&good_token())

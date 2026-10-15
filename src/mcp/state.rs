@@ -9,6 +9,7 @@
 //! Shared state for the MCP routes, built once at startup.
 
 use crate::configuration::McpSettings;
+use crate::mcp::access::McpAccess;
 use crate::mcp::auth::TokenVerifier;
 use crate::mcp::jwks::JwksError;
 use reqwest::Url;
@@ -35,6 +36,8 @@ pub struct McpState {
     pub settings: McpSettings,
     /// Bearer token verifier.
     pub verifier: TokenVerifier,
+    /// Stream read rules for verified callers.
+    pub access: McpAccess,
     /// Absolute URL of this resource's metadata document.
     pub metadata_url: String,
 }
@@ -49,6 +52,7 @@ impl McpState {
     pub fn new(settings: &McpSettings, verifier: TokenVerifier) -> Result<Self, McpInitError> {
         Ok(Self {
             metadata_url: metadata_url(&settings.resource_url)?,
+            access: McpAccess::default(),
             settings: settings.clone(),
             verifier,
         })

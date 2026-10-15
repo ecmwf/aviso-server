@@ -17,7 +17,7 @@ pub mod definitions;
 
 use crate::auth::User;
 use crate::configuration::{McpSettings, Settings};
-use crate::mcp::access::{mcp_can_read, mcp_replay_access};
+use crate::mcp::access::McpAccess;
 use crate::notification_backend::NotificationBackend;
 use crate::routes::schema::{event_schema_body, lookup_event_schema};
 use crate::sse::collect::{CollectLimits, CollectReplayError, collect_replay};
@@ -42,8 +42,10 @@ const DEFAULT_REPLAY_WINDOW_HOURS: i64 = 24;
 
 /// Caller and server context for one tool call.
 pub struct ToolContext<'a> {
-    /// The verified caller; never an admin.
+    /// The verified caller.
     pub user: &'a User,
+    /// Stream read rules for the caller.
+    pub access: &'a McpAccess,
     /// The `mcp` settings.
     pub settings: &'a McpSettings,
     /// Notification backend for tools that read history.
@@ -155,7 +157,7 @@ fn list_event_types(context: &ToolContext<'_>) -> Value {
         .map(|schemas| {
             schemas
                 .keys()
-                .filter(|name| mcp_can_read(context.user, name))
+                .filter(|name| context.access.can_read(context.user, name))
                 .collect()
         })
         .unwrap_or_default();
@@ -174,7 +176,7 @@ struct DescribeArguments {
 fn describe_event_type(context: &ToolContext<'_>, arguments: Value) -> Result<Value, String> {
     let arguments: DescribeArguments = parse_arguments(arguments)?;
     let event_type = arguments.event_type;
-    if !mcp_can_read(context.user, &event_type) {
+    if !context.access.can_read(context.user, &event_type) {
         return Err(not_found(&event_type));
     }
     let schema = lookup_event_schema(&event_type).map_err(|_| not_found(&event_type))?;
@@ -279,7 +281,7 @@ async fn run_replay(
 ) -> Result<crate::sse::collect::CollectedReplay, String> {
     let max_results = NonZeroUsize::new(max_results)
         .ok_or_else(|| "max_results must be at least 1".to_string())?;
-    if !mcp_can_read(context.user, event_type) {
+    if !context.access.can_read(context.user, event_type) {
         return Err(not_found(event_type));
     }
     let limits = CollectLimits {
@@ -290,7 +292,7 @@ async fn run_replay(
     let collected = collect_replay(
         body.to_string().as_bytes(),
         context.backend.clone(),
-        mcp_replay_access(context.user),
+        context.access.replay_access(context.user),
         limits,
         &request_id,
     )

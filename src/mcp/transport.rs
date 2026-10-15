@@ -165,6 +165,7 @@ async fn answer(
     };
     let context = ToolContext {
         user,
+        access: &state.access,
         settings: &state.settings,
         backend,
     };

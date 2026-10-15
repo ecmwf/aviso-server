@@ -8,38 +8,66 @@
 
 //! Stream access rules for MCP callers.
 //!
-//! MCP callers always authenticate and are never admins, so every check
-//! runs with authentication on and an empty admin role map. Streams that
-//! need an auth plugin are unreadable, because plugin checks need the REST
-//! request context.
+//! MCP callers always authenticate, so every check runs with
+//! authentication on and uses the same read rule as REST watch and
+//! replay: stream `read_roles` per realm, `"*"` for a whole realm, and an
+//! admin bypass. Streams that need an auth plugin are readable only by
+//! admins, because plugin checks need the REST request context; REST
+//! admins skip those checks too. MCP callers are not admins.
 
 use crate::auth::User;
 use crate::auth::stream_access::{StreamOperation, check_stream_access, stream_requires_plugins};
 use crate::sse::collect::ReplayAccess;
 use std::collections::HashMap;
-use std::sync::LazyLock;
 
-/// Admin role map for MCP callers: nobody is an admin.
-static NO_ADMIN_ROLES: LazyLock<HashMap<String, Vec<String>>> = LazyLock::new(HashMap::new);
+/// Read access decisions for MCP callers.
+#[derive(Debug, Clone, Default)]
+pub struct McpAccess {
+    /// Realm to admin roles. Empty means no admins, see
+    /// [`User::is_admin`].
+    admin_roles: HashMap<String, Vec<String>>,
+}
 
-/// Whether `user` may read `event_type` over MCP.
-pub fn mcp_can_read(user: &User, event_type: &str) -> bool {
-    !stream_requires_plugins(event_type)
-        && check_stream_access(
+impl McpAccess {
+    /// Whether `user` may read `event_type`.
+    pub fn can_read(&self, user: &User, event_type: &str) -> bool {
+        let allowed = check_stream_access(
             true,
             Some(user),
-            Some(&NO_ADMIN_ROLES),
+            Some(&self.admin_roles),
             event_type,
             StreamOperation::Read,
         )
-        .is_ok()
+        .is_ok();
+        allowed && (!stream_requires_plugins(event_type) || self.is_admin(user))
+    }
+
+    /// Replay access for `user` under the same rules.
+    pub fn replay_access<'a>(&'a self, user: &'a User) -> ReplayAccess<'a> {
+        ReplayAccess {
+            auth_enabled: true,
+            user: Some(user),
+            admin_roles: Some(&self.admin_roles),
+        }
+    }
+
+    fn is_admin(&self, user: &User) -> bool {
+        user.is_admin(&self.admin_roles)
+    }
 }
 
-/// Replay access for `user` under the MCP rules.
-pub fn mcp_replay_access(user: &User) -> ReplayAccess<'_> {
-    ReplayAccess {
-        auth_enabled: true,
-        user: Some(user),
-        admin_roles: Some(&NO_ADMIN_ROLES),
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn mcp_callers_are_not_admins() {
+        let user = User {
+            username: "u".to_string(),
+            realm: Some("mcp".to_string()),
+            roles: vec!["admin".to_string()],
+            attributes: HashMap::new(),
+        };
+        assert!(!McpAccess::default().is_admin(&user));
     }
 }

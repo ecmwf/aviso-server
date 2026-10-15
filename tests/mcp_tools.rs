@@ -10,6 +10,7 @@
 
 use aviso_server::auth::User;
 use aviso_server::configuration::{McpSettings, Settings};
+use aviso_server::mcp::access::McpAccess;
 use aviso_server::mcp::tools::{ToolCallError, ToolContext, ToolOutput, call, list};
 use aviso_server::notification_backend::{NotificationBackend, build_backend};
 use serde_json::{Value, json};
@@ -97,8 +98,10 @@ async fn run(
 ) -> Result<ToolOutput, ToolCallError> {
     let caller = user(roles);
     let settings = settings();
+    let access = McpAccess::default();
     let context = ToolContext {
         user: &caller,
+        access: &access,
         settings: &settings,
         backend: backend.clone(),
     };
@@ -338,8 +341,10 @@ async fn unknown_tool_and_malformed_call_are_protocol_errors() {
     );
     let caller = user(&[]);
     let settings = settings();
+    let access = McpAccess::default();
     let context = ToolContext {
         user: &caller,
+        access: &access,
         settings: &settings,
         backend,
     };
