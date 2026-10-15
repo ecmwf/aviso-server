@@ -712,8 +712,9 @@ this value, and at least one hour.
 Where the realm and roles of an MCP user come from. `fixed` gives every user
 `identity.realm`; nobody is an admin. `token_claims` reads the realm and roles
 from the claims named by `identity.realm_claim` and `identity.roles_claim` and
-refuses tokens without them; startup then also refuses REST realms and roles
-that no token can carry. Required whenever an `identity` block is written;
+refuses tokens without them; startup then also refuses realms and roles in
+`read_roles`, and in `auth.admin_roles` with `identity.admin`, that no token
+can carry. Required whenever an `identity` block is written;
 without the block the source is `fixed` with realm `mcp`. See
 [MCP Endpoint](./mcp.md#who-can-read-what).
 

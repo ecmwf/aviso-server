@@ -306,7 +306,7 @@ async fn token_claims_with_a_rest_realm_no_token_can_carry_fails_startup() {
             "issuer": "https://auth.example.int/",
             "jwks_uri": "https://auth.example.int/jwks"
         },
-        "identity": {"source": "token_claims"}
+        "identity": {"source": "token_claims", "admin": true}
     });
     let result = Application::build(load(file, &[]), CancellationToken::new()).await;
     let Err(error) = result else {

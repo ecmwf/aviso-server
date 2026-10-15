@@ -152,14 +152,14 @@ Auth-O-Tron tokens carry no `realm` claim, and their `roles` claim holds only
 the roles the granted scopes require, so `token_claims` refuses them. Enable it
 for the Aviso resource before switching to `token_claims`.
 
-Before switching, also check the REST role maps. With `token_claims`, startup
-fails if a key of `auth.admin_roles`, or of any stream's `read_roles` or
-`write_roles`, is a realm no token can carry, such as `ECMWF staff`. It also
-fails if a role in `read_roles` or `write_roles`, or in `auth.admin_roles` when
-`admin` is `true`, is a role no token can carry, such as one longer than 128
-characters. A rule written with such a realm or role would hold over REST and
-never over MCP. The error names the first such realm or role and where it is
-configured.
+Before switching, also check the REST role maps that MCP users are matched
+against: every stream's `read_roles`, and `auth.admin_roles` when `admin` is
+`true`. With `token_claims`, startup fails if one of their keys is a realm no
+token can carry, such as `ECMWF staff`, or if one of their roles is a role no
+token can carry, such as one longer than 128 characters. A rule written with
+such a realm or role would hold over REST and never over MCP. The error names
+the first such realm or role and where it is configured. `write_roles` are not
+checked, since MCP never writes.
 
 ### Security
 
@@ -235,7 +235,8 @@ beyond the ones the caller can read.
 With `token_claims`, MCP and REST answer the same user the same way, except:
 
 - Realms are limited to 1 to 128 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`,
-  or `-`. Startup refuses REST realms outside that set, as described above.
+  or `-`. Startup refuses other realms in the role maps MCP users are matched
+  against, as described above.
 - A token with more than 256 roles, or with a role longer than 128 characters,
   padded with whitespace, or holding control characters, is refused as a
   whole. Roles are never dropped or shortened. REST has no such limits.
@@ -291,13 +292,13 @@ When `enabled` is `true`, startup fails unless:
   `nbf`, `iat`, `jti`, `client_id`, or `scope`. `admin` is `true` or `false`,
   written as a boolean or as the string `"true"` or `"false"`; values such as
   `yes` or `1` are refused.
-- With `token_claims`, every key of `auth.admin_roles` and of each stream's
-  `read_roles` and `write_roles` is a realm a token can carry: 1 to 128
-  characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Every role of
-  `read_roles` and `write_roles`, and of `auth.admin_roles` when `admin` is
-  `true`, is a role a token can carry: 1 to 128 characters without surrounding
+- With `token_claims`, every key of each stream's `read_roles`, and of
+  `auth.admin_roles` when `admin` is `true`, is a realm a token can carry: 1 to
+  128 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Every role in those
+  maps is a role a token can carry: 1 to 128 characters without surrounding
   whitespace or control characters. The error names the first realm or role
-  that is not, and where it is configured.
+  that is not, and where it is configured. `write_roles` are not checked,
+  since MCP never writes.
 
 With `fixed`, every stream whose `read_roles` names the MCP realm is readable
 by MCP tokens that carry a matching role, or any role when the list is
