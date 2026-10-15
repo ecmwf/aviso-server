@@ -78,9 +78,16 @@ Streams with no `auth` block stay readable by any MCP user. Streams that need
 an auth plugin (for example `ecpds`) are not readable over MCP and do not
 appear in `aviso_list_event_types`.
 
-An event type the caller may not read gets the same answer as one that does
-not exist, `Event type '<name>' not found`, from every tool. The tools never
-reveal which event types exist beyond the ones the caller can read.
+An event type the caller may not read gets the same tool error as one that
+does not exist, from every tool:
+
+```text
+Event type '<name>' not found or not readable with this token;
+aviso_list_event_types lists the readable ones
+```
+
+The message is one line. The tools never reveal which event types exist
+beyond the ones the caller can read.
 
 ## Configuration
 

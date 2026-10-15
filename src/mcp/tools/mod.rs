@@ -177,9 +177,9 @@ fn describe_event_type(context: &ToolContext<'_>, arguments: Value) -> Result<Va
     let arguments: DescribeArguments = parse_arguments(arguments)?;
     let event_type = arguments.event_type;
     if !context.access.can_read(context.user, &event_type) {
-        return Err(not_found(&event_type));
+        return Err(unavailable(&event_type));
     }
-    let schema = lookup_event_schema(&event_type).map_err(|_| not_found(&event_type))?;
+    let schema = lookup_event_schema(&event_type).map_err(|_| unavailable(&event_type))?;
     Ok(event_schema_body(&event_type, &schema))
 }
 
@@ -268,9 +268,13 @@ async fn check_data_available(
 
 /// Answer for an event type that is unknown or that the caller may not
 /// read. Both cases look the same, so the tools do not reveal which
-/// event types exist.
-fn not_found(event_type: &str) -> String {
-    format!("Event type '{event_type}' not found")
+/// event types exist, but the text says that missing read access is one
+/// possible cause.
+fn unavailable(event_type: &str) -> String {
+    format!(
+        "Event type '{event_type}' not found or not readable with this token; \
+         aviso_list_event_types lists the readable ones"
+    )
 }
 
 async fn run_replay(
@@ -282,7 +286,7 @@ async fn run_replay(
     let max_results = NonZeroUsize::new(max_results)
         .ok_or_else(|| "max_results must be at least 1".to_string())?;
     if !context.access.can_read(context.user, event_type) {
-        return Err(not_found(event_type));
+        return Err(unavailable(event_type));
     }
     let limits = CollectLimits {
         max_results,
@@ -319,7 +323,7 @@ fn replay_error(event_type: &str, error: CollectReplayError) -> String {
     match error {
         CollectReplayError::UnknownEventType { .. }
         | CollectReplayError::Access(_)
-        | CollectReplayError::UnsupportedAuthPlugin { .. } => not_found(event_type),
+        | CollectReplayError::UnsupportedAuthPlugin { .. } => unavailable(event_type),
         CollectReplayError::Backend(detail) => {
             warn!(
                 service_name = SERVICE_NAME,

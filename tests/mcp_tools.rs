@@ -136,6 +136,15 @@ async fn tool_error(
         .to_string()
 }
 
+/// The one answer for an unknown event type and for one the caller may
+/// not read.
+fn unavailable(event_type: &str) -> String {
+    format!(
+        "Event type '{event_type}' not found or not readable with this token; \
+         aviso_list_event_types lists the readable ones"
+    )
+}
+
 fn numbers(result: &Value) -> Vec<u64> {
     result["notifications"]
         .as_array()
@@ -206,7 +215,7 @@ async fn describe_matches_the_rest_schema_document() {
         json!({"event_type": "nope"}),
     )
     .await;
-    assert_eq!(message, "Event type 'nope' not found");
+    assert_eq!(message, unavailable("nope"));
 }
 
 #[tokio::test]
@@ -224,7 +233,7 @@ async fn describe_hides_event_types_the_caller_cannot_read() {
             json!({"event_type": event_type}),
         )
         .await;
-        assert_eq!(message, format!("Event type '{event_type}' not found"));
+        assert_eq!(message, unavailable(event_type));
     }
 }
 
@@ -284,7 +293,7 @@ async fn replay_respects_stream_read_roles() {
             arguments(event_type),
         )
         .await;
-        assert_eq!(message, format!("Event type '{event_type}' not found"));
+        assert_eq!(message, unavailable(event_type));
     }
     for event_type in ["plugged", "missing"] {
         let message = tool_error(
@@ -294,7 +303,7 @@ async fn replay_respects_stream_read_roles() {
             arguments(event_type),
         )
         .await;
-        assert_eq!(message, format!("Event type '{event_type}' not found"));
+        assert_eq!(message, unavailable(event_type));
     }
     let message = tool_error(
         &backend,
@@ -303,7 +312,7 @@ async fn replay_respects_stream_read_roles() {
         json!({"event_type": "guarded", "identifier": {"class": "od", "number": 2}}),
     )
     .await;
-    assert_eq!(message, "Event type 'guarded' not found");
+    assert_eq!(message, unavailable("guarded"));
 }
 
 #[tokio::test]
