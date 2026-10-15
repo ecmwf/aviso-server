@@ -12,6 +12,7 @@
 pub mod access;
 pub mod auth;
 pub mod dispatch;
+pub mod identity;
 pub mod jwks;
 pub mod metadata;
 pub mod protocol;

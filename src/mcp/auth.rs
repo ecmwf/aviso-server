@@ -15,9 +15,11 @@
 
 use crate::auth::User;
 use crate::configuration::McpSettings;
+use crate::mcp::identity::{IdentityClaimError, token_roles};
 use crate::mcp::jwks::{JwksCache, JwksError, JwksTiming};
 use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
 use serde::Deserialize;
+use serde_json::{Map, Value};
 use std::collections::HashMap;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::time::Duration;
@@ -27,9 +29,7 @@ use thiserror::Error;
 const LEEWAY_SECONDS: u64 = 30;
 /// Longest bearer token accepted before any parsing.
 const MAX_TOKEN_BYTES: usize = 16 * 1024;
-/// Most roles taken from one token.
-const MAX_ROLES: usize = 64;
-/// Longest role or subject accepted.
+/// Longest `sub`, `jti`, or `client_id` accepted.
 const MAX_CLAIM_CHARS: usize = 256;
 
 /// Why a bearer token was refused.
@@ -57,6 +57,9 @@ pub enum TokenError {
     /// Required claims are missing or out of bounds.
     #[error("token claims are invalid: {0}")]
     Claims(&'static str),
+    /// The claims that make up the user identity are unusable.
+    #[error("token identity claims are invalid: {0}")]
+    Identity(#[from] IdentityClaimError),
     /// The token lacks one of the required scopes.
     #[error("token lacks a required scope")]
     InsufficientScope,
@@ -99,8 +102,9 @@ struct AccessClaims {
     client_id: Option<String>,
     #[serde(default)]
     scope: Option<String>,
-    #[serde(default)]
-    roles: Option<Vec<String>>,
+    /// Every claim not named above, for the identity claims.
+    #[serde(flatten)]
+    other: Map<String, Value>,
 }
 
 /// Verifies bearer tokens against one issuer, audience, and scope set.
@@ -180,10 +184,7 @@ impl TokenVerifier {
                 "client_id is missing, empty, or too long",
             ));
         }
-        let roles = claims.roles.unwrap_or_default();
-        if roles.len() > MAX_ROLES || !roles.iter().all(|role| bounded(role)) {
-            return Err(TokenError::Claims("roles are out of bounds"));
-        }
+        let roles = token_roles(&claims.other)?;
         let granted: Vec<&str> = claims
             .scope
             .as_deref()
@@ -267,9 +268,9 @@ mod tests {
 
     #[test]
     fn claim_values_are_bounded() {
-        assert!(bounded("aviso-mcp"));
+        assert!(bounded("mcp-inspector"));
         assert!(!bounded(" "));
-        assert!(!bounded("role\nwith-newline"));
+        assert!(!bounded("id\nwith-newline"));
         assert!(!bounded(&"r".repeat(257)));
     }
 

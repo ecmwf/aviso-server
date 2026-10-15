@@ -58,7 +58,8 @@ credentials. A verified token becomes an Aviso user:
 - `username` is a short hash of the token `sub`, the same value the debug
   logs show as the subject. The raw `sub` is never kept.
 - `realm` is `mcp.identity.realm` (default `mcp`).
-- `roles` are the token's `roles` claim (at most 64).
+- `roles` are the token's `roles` claim: at most 256 entries, each 1 to 128
+  characters without surrounding whitespace or control characters.
 
 The user is never an admin, whatever its roles. Stream access then follows
 the normal `read_roles` rules. To open a stream to MCP users who hold the

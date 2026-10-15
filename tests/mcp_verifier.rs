@@ -12,6 +12,7 @@
 mod mcp_issuer;
 
 use aviso_server::mcp::auth::{TokenError, TokenVerifier};
+use aviso_server::mcp::identity::IdentityClaimError;
 use aviso_server::mcp::jwks::{JwksCache, JwksTiming};
 use futures_util::future::join_all;
 use jsonwebtoken::{Algorithm, EncodingKey, Header, encode};
@@ -104,11 +105,23 @@ async fn future_iat_and_missing_claims_are_rejected() {
             Err(TokenError::Claims(_))
         ));
     }
-    let too_many_roles = with("roles", json!(vec!["r"; 65]));
-    assert!(matches!(
-        check(too_many_roles).await,
-        Err(TokenError::Claims(_))
-    ));
+}
+
+#[tokio::test]
+async fn malformed_roles_claim_is_an_identity_error() {
+    let cases = [
+        (json!(vec!["r"; 257]), IdentityClaimError::TooManyRoles),
+        (json!("aviso-mcp"), IdentityClaimError::RolesType),
+        (json!([" aviso-mcp"]), IdentityClaimError::RoleFormat),
+    ];
+    for (roles, expected) in cases {
+        let result = check(with("roles", roles.clone())).await;
+        assert!(
+            matches!(result, Err(TokenError::Identity(error)) if error == expected),
+            "{roles}: {result:?}"
+        );
+    }
+    assert!(check(with("roles", json!(null))).await.is_ok());
 }
 
 #[tokio::test]
