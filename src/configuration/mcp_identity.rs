@@ -15,12 +15,36 @@
 //!   source: fixed          # one configured realm for every MCP user
 //!   realm: "mcp"
 //! ```
+//!
+//! ```yaml
+//! identity:
+//!   source: token_claims   # realm and roles from the access token
+//!   realm_claim: "realm"
+//!   roles_claim: "roles"
+//! ```
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-/// Longest realm accepted, in characters.
+/// Longest realm accepted, in characters, from configuration or a token.
 pub const MCP_REALM_MAX_CHARS: usize = 64;
+
+/// Longest identity claim name accepted, in characters.
+const MAX_CLAIM_NAME_CHARS: usize = 128;
+
+/// Claims the token verifier already reads for its own checks. An
+/// identity claim must not reuse one of them.
+const VERIFIER_CLAIMS: [&str; 9] = [
+    "iss",
+    "sub",
+    "aud",
+    "exp",
+    "nbf",
+    "iat",
+    "jti",
+    "client_id",
+    "scope",
+];
 
 /// `mcp.identity`: how a verified token becomes an Aviso user.
 #[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
@@ -36,6 +60,18 @@ pub enum McpIdentitySettings {
         #[serde(default = "default_fixed_realm")]
         realm: String,
     },
+    /// The realm and roles come from claims the issuer adds to the token.
+    /// A token without both claims is refused. Claim names are literal
+    /// top-level keys of the token payload: `realm_access.roles` names a
+    /// key with a dot in it, not the `roles` field inside `realm_access`.
+    TokenClaims {
+        /// Claim holding the realm, a string.
+        #[serde(default = "default_realm_claim")]
+        realm_claim: String,
+        /// Claim holding the roles, an array of strings.
+        #[serde(default = "default_roles_claim")]
+        roles_claim: String,
+    },
 }
 
 impl Default for McpIdentitySettings {
@@ -50,6 +86,14 @@ fn default_fixed_realm() -> String {
     "mcp".to_string()
 }
 
+fn default_realm_claim() -> String {
+    "realm".to_string()
+}
+
+fn default_roles_claim() -> String {
+    "roles".to_string()
+}
+
 /// A rule the `mcp.identity` block violates.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -60,6 +104,22 @@ pub enum McpIdentityError {
          of A-Z, a-z, 0-9, '.', '_' or '-'"
     )]
     Realm,
+    /// A claim name is empty, too long, or has whitespace or control
+    /// characters.
+    #[error(
+        "mcp.identity.{field} must be 1 to {MAX_CLAIM_NAME_CHARS} characters \
+         without whitespace or control characters"
+    )]
+    ClaimName { field: &'static str },
+    /// A claim name is one the verifier already reads.
+    #[error(
+        "mcp.identity.{field} '{claim}' is checked by the token verifier \
+         and cannot carry identity"
+    )]
+    VerifierClaim { field: &'static str, claim: String },
+    /// Both claim names are the same.
+    #[error("mcp.identity.realm_claim and mcp.identity.roles_claim must differ")]
+    SameClaim,
 }
 
 impl McpIdentitySettings {
@@ -68,12 +128,24 @@ impl McpIdentitySettings {
         match self {
             Self::Fixed { realm } if is_valid_realm(realm) => Ok(()),
             Self::Fixed { .. } => Err(McpIdentityError::Realm),
+            Self::TokenClaims {
+                realm_claim,
+                roles_claim,
+            } => {
+                check_claim_name("realm_claim", realm_claim)?;
+                check_claim_name("roles_claim", roles_claim)?;
+                if realm_claim == roles_claim {
+                    return Err(McpIdentityError::SameClaim);
+                }
+                Ok(())
+            }
         }
     }
 }
 
-/// Whether `realm` is a realm name MCP accepts: 1 to
-/// [`MCP_REALM_MAX_CHARS`] ASCII letters, digits, `.`, `_`, or `-`.
+/// Whether `realm` is a realm name MCP accepts, from configuration or
+/// from a token: 1 to [`MCP_REALM_MAX_CHARS`] ASCII letters, digits,
+/// `.`, `_`, or `-`.
 ///
 /// - valid: `mcp`, `browser-demo`, `demo_sso.v2`
 /// - invalid: `` (empty), `demo sso`, `realm/x`, `réalm`, 65 letters
@@ -82,6 +154,26 @@ pub fn is_valid_realm(realm: &str) -> bool {
         && realm
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+/// Accept a JSON object key usable as an identity claim.
+///
+/// - valid: `realm`, `aviso_roles`, `https://aviso.example.int/roles`
+/// - invalid: `` (empty), `aviso roles`, `sub`
+fn check_claim_name(field: &'static str, name: &str) -> Result<(), McpIdentityError> {
+    let well_formed = !name.is_empty()
+        && name.chars().count() <= MAX_CLAIM_NAME_CHARS
+        && !name.chars().any(|c| c.is_whitespace() || c.is_control());
+    if !well_formed {
+        return Err(McpIdentityError::ClaimName { field });
+    }
+    if VERIFIER_CLAIMS.contains(&name) {
+        return Err(McpIdentityError::VerifierClaim {
+            field,
+            claim: name.to_string(),
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

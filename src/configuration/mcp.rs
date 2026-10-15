@@ -163,8 +163,11 @@ impl McpSettings {
     /// a fixed realm never grants admin. Sharing it would let token roles
     /// match rules written for those callers. Stream `read_roles` may
     /// name the realm; that is how streams are opened to MCP users, and
-    /// every stream that names it is readable by MCP tokens. A disabled
-    /// block always passes.
+    /// every stream that names it is readable by MCP tokens.
+    ///
+    /// Realms from token claims are the issuer's own realms, shared with
+    /// REST on purpose, so they are not checked. A disabled block always
+    /// passes.
     pub fn validate_realm_isolation(
         &self,
         admin_roles: &HashMap<String, Vec<String>>,
@@ -173,7 +176,9 @@ impl McpSettings {
         if !self.enabled {
             return Ok(());
         }
-        let McpIdentitySettings::Fixed { realm } = &self.identity;
+        let McpIdentitySettings::Fixed { realm } = &self.identity else {
+            return Ok(());
+        };
         let in_use = |location: String| McpConfigError::RealmInUse {
             realm: realm.clone(),
             location,

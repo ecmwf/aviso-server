@@ -9,13 +9,13 @@
 //! Access token verification for the MCP endpoint.
 //!
 //! Tokens are RFC 9068 JWT access tokens signed with RS256 by the configured
-//! issuer. A verified token maps to an Aviso [`User`] in the configured MCP
-//! realm. The mapping never grants admin rights: callers check stream access
-//! with an empty admin role map.
+//! issuer. A verified token maps to an Aviso [`User`] whose realm and roles
+//! come from the source `mcp.identity` names. The mapping never grants admin
+//! rights: callers check stream access with an empty admin role map.
 
 use crate::auth::User;
 use crate::configuration::{McpIdentitySettings, McpSettings};
-use crate::mcp::identity::{IdentityClaimError, token_roles};
+use crate::mcp::identity::{IdentityClaimError, resolve_identity};
 use crate::mcp::jwks::{JwksCache, JwksError, JwksTiming};
 use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
 use serde::Deserialize;
@@ -112,7 +112,7 @@ pub struct TokenVerifier {
     jwks: JwksCache,
     validation: Validation,
     required_scopes: Vec<String>,
-    realm: String,
+    identity: McpIdentitySettings,
 }
 
 impl TokenVerifier {
@@ -131,12 +131,11 @@ impl TokenVerifier {
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         validation.validate_nbf = true;
         validation.leeway = LEEWAY_SECONDS;
-        let McpIdentitySettings::Fixed { realm: fixed_realm } = &settings.identity;
         Self {
             jwks,
             validation,
             required_scopes: settings.oauth.required_scopes.clone(),
-            realm: fixed_realm.clone(),
+            identity: settings.identity.clone(),
         }
     }
 
@@ -185,7 +184,7 @@ impl TokenVerifier {
                 "client_id is missing, empty, or too long",
             ));
         }
-        let roles = token_roles(&claims.other)?;
+        let identity = resolve_identity(&self.identity, &claims.other)?;
         let granted: Vec<&str> = claims
             .scope
             .as_deref()
@@ -202,8 +201,8 @@ impl TokenVerifier {
         Ok(VerifiedToken {
             user: User {
                 username: subject_hash.clone(),
-                realm: Some(self.realm.clone()),
-                roles,
+                realm: Some(identity.realm),
+                roles: identity.roles,
                 attributes: HashMap::new(),
             },
             subject_hash,

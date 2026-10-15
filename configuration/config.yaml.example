@@ -157,13 +157,20 @@ mcp:
     # jwks_uri: "https://auth.example.int/.well-known/jwks.json"
     required_scopes: ["aviso:read"]
     jwks_cache_ttl_seconds: 300
-  # Where the realm and roles of an MCP user come from.
+  # Where the realm and roles of an MCP user come from. Pick one source.
   identity:
     # fixed: every MCP user gets one realm (default "mcp"); roles come
     # from the token's optional `roles` claim. Use the realm in stream
     # read_roles.
     source: fixed
     # realm: "mcp"
+    # token_claims: the issuer adds the user's realm and roles to each
+    # token. Tokens without both claims are refused. read_roles then apply
+    # per realm as for REST users.
+    # source: token_claims
+    # realm_claim: "realm"
+    # roles_claim: "roles"
+    # Claim names are literal top-level keys of the token, not paths.
 
 metrics:
   # Enable Prometheus metrics on a separate internal port.

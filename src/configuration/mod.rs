@@ -26,7 +26,9 @@ pub use auth::{AuthMode, AuthSettings};
 pub use homepage::HomepageSettings;
 pub use loader::get_configuration;
 pub use mcp::{MCP_MAX_RESULTS_CEILING, MCP_PATH, McpConfigError, McpOAuthSettings, McpSettings};
-pub use mcp_identity::{McpIdentityError, McpIdentitySettings};
+pub use mcp_identity::{
+    MCP_REALM_MAX_CHARS, McpIdentityError, McpIdentitySettings, is_valid_realm,
+};
 pub use topic_validation::validate_topic_schema_settings;
 pub use types::*;
 pub use units::{parse_duration_spec, parse_retention_time_spec, parse_size_spec};
