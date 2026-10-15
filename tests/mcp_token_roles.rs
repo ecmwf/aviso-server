@@ -374,6 +374,28 @@ async fn token_without_identity_claims_is_an_invalid_token() {
 }
 
 #[tokio::test]
+async fn token_without_the_scope_gets_403_before_identity_checks() {
+    let server = Server::start(token_claims(false), admins(&["ecmwf"])).await;
+    let mut claims = good_claims();
+    let fields = claims.as_object_mut().unwrap();
+    fields.remove("scope");
+    fields.remove("roles");
+    let token = mint(&claims, &key_a(), KID_A);
+    let response = server.mcp(&token, "ping", json!({})).await;
+    assert_eq!(response.status(), 403);
+    let challenge = response.headers()["www-authenticate"].to_str().unwrap();
+    assert!(
+        challenge.contains(
+            "error=\"insufficient_scope\", \
+             error_description=\"token lacks a required scope\""
+        ),
+        "{challenge}"
+    );
+    assert!(challenge.contains("scope=\"aviso:read\""), "{challenge}");
+    server.stop().await;
+}
+
+#[tokio::test]
 async fn fixed_source_ignores_identity_claims_and_grants_no_admin() {
     let identity = json!({"source": "fixed", "realm": "mcp"});
     let server = Server::start(identity, admins(&["mcp", "ecmwf"])).await;
