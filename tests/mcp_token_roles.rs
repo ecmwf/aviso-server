@@ -391,3 +391,61 @@ async fn fixed_source_ignores_identity_claims_and_grants_no_admin() {
     assert_eq!(server.listed(&without_claims).await, expected);
     server.stop().await;
 }
+
+#[tokio::test]
+async fn every_tool_follows_the_callers_read_access() {
+    let server = Server::start(token_claims(false), admins(&["ecmwf"])).await;
+    let reader = caller("ecmwf", &["reader"]).mcp;
+    let health = server.tool(&reader, "aviso_health", json!({})).await;
+    assert_eq!(health.unwrap()["status"], "ok");
+    let listed = server.listed(&reader).await;
+    assert_eq!(listed, json!(["authed", "ecmwf_readers", "open"]));
+    for event_type in ["ecmwf_readers", "demo_realm", "plugged", "missing"] {
+        let readable = event_type == "ecmwf_readers";
+        let describe = json!({"event_type": event_type});
+        let described = server
+            .tool(&reader, "aviso_describe_event_type", describe)
+            .await;
+        let check = json!({"event_type": event_type, "identifier": {"class": "od", "number": 1}});
+        let checked = server
+            .tool(&reader, "aviso_check_data_available", check)
+            .await;
+        for result in [described.map(|_| ()), checked.map(|_| ())] {
+            let expected = if readable {
+                Ok(())
+            } else {
+                Err(unavailable(event_type))
+            };
+            assert_eq!(result, expected, "{event_type}");
+        }
+    }
+    server.stop().await;
+}
+
+#[tokio::test]
+async fn rest_admins_are_mcp_admins_only_when_token_claims_opt_in() {
+    let admin = caller("ecmwf", &["admin"]);
+    let other_realm_admin = caller("browser-demo", &["admin"]);
+    for opt_in in [false, true] {
+        let server = Server::start(token_claims(opt_in), admins(&["ecmwf"])).await;
+        let mcp = if opt_in { EVERY_SHARED } else { ANYONE };
+        server.assert_reads(&admin, EVERY_SHARED, mcp).await;
+        let mut listed = mcp.to_vec();
+        if opt_in {
+            listed.push("plugged");
+        }
+        assert_eq!(server.listed(&admin.mcp).await, json!(listed), "{opt_in}");
+        let other = server.listed(&other_realm_admin.mcp).await;
+        assert_eq!(other, json!(["authed", "demo_realm", "open"]), "{opt_in}");
+        server.stop().await;
+    }
+}
+
+#[tokio::test]
+async fn empty_admin_role_map_makes_nobody_an_admin() {
+    let server = Server::start(token_claims(true), HashMap::new()).await;
+    let admin = caller("ecmwf", &["admin"]);
+    server.assert_reads(&admin, ANYONE, ANYONE).await;
+    assert_eq!(server.listed(&admin.mcp).await, json!(ANYONE));
+    server.stop().await;
+}
