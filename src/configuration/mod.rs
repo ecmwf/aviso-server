@@ -17,6 +17,7 @@ mod homepage;
 mod loader;
 mod mcp;
 mod mcp_identity;
+mod mcp_realms;
 mod topic_validation;
 mod types;
 mod units;
