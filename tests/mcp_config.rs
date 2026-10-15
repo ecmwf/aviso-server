@@ -9,7 +9,7 @@
 //! The `mcp` block: loading, environment overrides, startup validation, and
 //! route registration.
 
-use aviso_server::configuration::Settings;
+use aviso_server::configuration::{McpIdentitySettings, Settings};
 use aviso_server::startup::Application;
 use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
@@ -21,7 +21,7 @@ fn base() -> Value {
     })
 }
 
-fn load(file: Value, env: &[(&str, &str)]) -> Settings {
+fn try_load(file: Value, env: &[(&str, &str)]) -> Result<Settings, config::ConfigError> {
     let source = env
         .iter()
         .map(|(key, value)| ((*key).to_string(), (*value).to_string()))
@@ -37,10 +37,12 @@ fn load(file: Value, env: &[(&str, &str)]) -> Settings {
                 .separator("__")
                 .source(Some(source)),
         )
-        .build()
-        .unwrap()
+        .build()?
         .try_deserialize()
-        .unwrap()
+}
+
+fn load(file: Value, env: &[(&str, &str)]) -> Settings {
+    try_load(file, env).unwrap()
 }
 
 #[test]
@@ -54,6 +56,7 @@ fn environment_overrides_the_mcp_block() {
                 "AVISOSERVER_MCP__OAUTH__ISSUER",
                 "https://auth.example.int/",
             ),
+            ("AVISOSERVER_MCP__IDENTITY__SOURCE", "fixed"),
             ("AVISOSERVER_MCP__IDENTITY__REALM", "demo"),
         ],
     );
@@ -61,7 +64,20 @@ fn environment_overrides_the_mcp_block() {
     assert_eq!(settings.mcp.max_results, 50);
     assert_eq!(settings.mcp.oauth.issuer, "https://auth.example.int/");
     assert_eq!(settings.mcp.oauth.required_scopes, vec!["aviso:read"]);
-    assert_eq!(settings.mcp.identity.realm, "demo");
+    assert_eq!(
+        settings.mcp.identity,
+        McpIdentitySettings::Fixed {
+            realm: "demo".to_string()
+        }
+    );
+}
+
+#[test]
+fn identity_block_without_a_source_is_refused() {
+    let mut file = base();
+    file["mcp"] = json!({"identity": {"realm": "mcp"}});
+    let error = try_load(file, &[]).unwrap_err();
+    assert!(error.to_string().contains("source"), "{error}");
 }
 
 #[test]

@@ -12,7 +12,7 @@
 //! checked; [`McpSettings::validate`] enforces every other rule once
 //! `enabled` is true.
 
-use crate::configuration::EventSchema;
+use crate::configuration::{EventSchema, McpIdentityError, McpIdentitySettings};
 use reqwest::Url;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -84,25 +84,6 @@ impl Default for McpOAuthSettings {
     }
 }
 
-/// `mcp.identity`: user mapping for verified tokens.
-#[derive(Deserialize, Serialize, Clone, Debug, PartialEq, Eq)]
-#[serde(default, deny_unknown_fields)]
-pub struct McpIdentitySettings {
-    /// Realm assigned to every MCP user, matched against stream
-    /// `read_roles`. Every stream whose `read_roles` names this realm is
-    /// readable by MCP tokens with a matching role, so pick a realm name
-    /// used for nothing else.
-    pub realm: String,
-}
-
-impl Default for McpIdentitySettings {
-    fn default() -> Self {
-        Self {
-            realm: "mcp".to_string(),
-        }
-    }
-}
-
 /// A rule the enabled `mcp` block violates.
 #[derive(Debug, Clone, Error, PartialEq, Eq)]
 #[non_exhaustive]
@@ -125,10 +106,11 @@ pub enum McpConfigError {
     /// `required_scopes` is empty or has an empty or spaced entry.
     #[error("mcp.oauth.required_scopes must be non-empty scope tokens without spaces")]
     Scopes,
-    /// `identity.realm` is empty or padded with whitespace.
-    #[error("mcp.identity.realm must be non-empty without surrounding whitespace")]
-    Realm,
-    /// `identity.realm` is a realm the REST auth configuration uses.
+    /// The `identity` block is invalid.
+    #[error(transparent)]
+    Identity(#[from] McpIdentityError),
+    /// The fixed `identity.realm` is a realm the REST auth configuration
+    /// uses.
     #[error(
         "mcp.identity.realm '{realm}' is also a key of {location}; \
          pick a realm that no REST user can have"
@@ -169,22 +151,20 @@ impl McpSettings {
         if !scopes_ok {
             return Err(McpConfigError::Scopes);
         }
-        let realm = &self.identity.realm;
-        if realm.is_empty() || realm.trim() != realm {
-            return Err(McpConfigError::Realm);
-        }
+        self.identity.validate()?;
         Ok(())
     }
 }
 
 impl McpSettings {
-    /// Check that MCP users cannot pass for REST users. A realm that keys
-    /// `auth.admin_roles` or any stream's `write_roles` belongs to REST
-    /// callers, since MCP is read-only and never grants admin. Sharing it
-    /// would let token roles match rules written for those callers.
-    /// Stream `read_roles` may name the realm; that is how streams are
-    /// opened to MCP users, and every stream that names it is readable by
-    /// MCP tokens. A disabled block always passes.
+    /// Check that users of the fixed MCP realm cannot pass for REST
+    /// users. A realm that keys `auth.admin_roles` or any stream's
+    /// `write_roles` belongs to REST callers, since MCP is read-only and
+    /// a fixed realm never grants admin. Sharing it would let token roles
+    /// match rules written for those callers. Stream `read_roles` may
+    /// name the realm; that is how streams are opened to MCP users, and
+    /// every stream that names it is readable by MCP tokens. A disabled
+    /// block always passes.
     pub fn validate_realm_isolation(
         &self,
         admin_roles: &HashMap<String, Vec<String>>,
@@ -193,7 +173,7 @@ impl McpSettings {
         if !self.enabled {
             return Ok(());
         }
-        let realm = &self.identity.realm;
+        let McpIdentitySettings::Fixed { realm } = &self.identity;
         let in_use = |location: String| McpConfigError::RealmInUse {
             realm: realm.clone(),
             location,
@@ -275,7 +255,7 @@ mod tests {
         assert!(!settings.enabled);
         assert_eq!(settings.max_results, 100);
         assert_eq!(settings.oauth.required_scopes, vec!["aviso:read"]);
-        assert_eq!(settings.identity.realm, "mcp");
+        assert_eq!(settings.identity, McpIdentitySettings::default());
         assert!(settings.allowed_origins.is_empty());
     }
 
@@ -395,7 +375,7 @@ mod tests {
     }
 
     #[test]
-    fn scopes_and_realm_are_checked() {
+    fn scopes_and_identity_are_checked() {
         let mut settings = enabled();
         settings.oauth.required_scopes = vec!["aviso read".to_string()];
         assert_eq!(settings.validate(), Err(McpConfigError::Scopes));
@@ -403,7 +383,12 @@ mod tests {
         settings.oauth.required_scopes.clear();
         assert_eq!(settings.validate(), Err(McpConfigError::Scopes));
         let mut settings = enabled();
-        settings.identity.realm = " mcp".to_string();
-        assert_eq!(settings.validate(), Err(McpConfigError::Realm));
+        settings.identity = McpIdentitySettings::Fixed {
+            realm: " mcp".to_string(),
+        };
+        assert_eq!(
+            settings.validate(),
+            Err(McpConfigError::Identity(McpIdentityError::Realm))
+        );
     }
 }

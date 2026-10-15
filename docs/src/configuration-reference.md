@@ -606,6 +606,7 @@ field is validated at startup and an invalid block stops the server.
 | [`oauth.jwks_uri`](#mcp-oauth-jwks-uri) | `""` |
 | [`oauth.required_scopes`](#mcp-oauth-required-scopes) | `["aviso:read"]` |
 | [`oauth.jwks_cache_ttl_seconds`](#mcp-oauth-jwks-cache-ttl-seconds) | `300` |
+| [`identity.source`](#mcp-identity-source) | `fixed` |
 | [`identity.realm`](#mcp-identity-realm) | `"mcp"` |
 
 </div>
@@ -699,15 +700,27 @@ When refreshing fails, the cached set stays in use for up to twelve times
 this value, and at least one hour.
 
 </details>
+<details class="setting-panel" id="mcp-identity-source">
+<summary><code>identity.source</code>
+<span class="setting-meta"><strong>Default:</strong> <code>fixed</code> ·
+<strong>Type:</strong> <code>string</code></span>
+</summary>
+
+Where the realm and roles of an MCP user come from. `fixed` gives every user
+`identity.realm`. Required whenever an `identity` block is written; without
+the block the source is `fixed` with realm `mcp`.
+
+</details>
 <details class="setting-panel" id="mcp-identity-realm">
 <summary><code>identity.realm</code>
 <span class="setting-meta"><strong>Default:</strong> <code>"mcp"</code> ·
 <strong>Type:</strong> <code>string</code></span>
 </summary>
 
-Realm given to every MCP user. Use it as the realm key in stream
-`read_roles`. Startup fails if it is also a key of `auth.admin_roles` or of a
-stream's `write_roles`.
+Realm given to every MCP user when `identity.source` is `fixed`. Use it as
+the realm key in stream `read_roles`. It must be 1 to 64 characters of
+`A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Startup fails if it is also a key of
+`auth.admin_roles` or of a stream's `write_roles`.
 
 </details>
 </div>

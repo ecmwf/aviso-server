@@ -97,6 +97,7 @@ mcp:
     required_scopes: ["aviso:read"]
     jwks_cache_ttl_seconds: 300
   identity:
+    source: fixed
     realm: "mcp"
 ```
 
@@ -108,6 +109,10 @@ When `enabled` is `true`, startup fails unless:
 - Each `allowed_origins` entry is a bare origin such as
   `https://app.example.int` (no trailing slash, no path).
 - `max_results` is between 1 and 200, and the timeouts are above zero.
+- An `identity` block names its `source`. Leaving out the whole block means
+  `source: fixed` with realm `mcp`.
+- `identity.realm` is 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, or
+  `-`.
 - `identity.realm` is not a key of `auth.admin_roles` or of any stream's
   `write_roles`. Those realms belong to REST users, and sharing one would let
   token roles match rules written for them. Naming the realm in `read_roles`

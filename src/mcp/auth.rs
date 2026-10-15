@@ -14,7 +14,7 @@
 //! with an empty admin role map.
 
 use crate::auth::User;
-use crate::configuration::McpSettings;
+use crate::configuration::{McpIdentitySettings, McpSettings};
 use crate::mcp::identity::{IdentityClaimError, token_roles};
 use crate::mcp::jwks::{JwksCache, JwksError, JwksTiming};
 use jsonwebtoken::{Algorithm, Validation, decode, decode_header};
@@ -131,11 +131,12 @@ impl TokenVerifier {
         validation.set_required_spec_claims(&["exp", "iss", "aud", "sub"]);
         validation.validate_nbf = true;
         validation.leeway = LEEWAY_SECONDS;
+        let McpIdentitySettings::Fixed { realm: fixed_realm } = &settings.identity;
         Self {
             jwks,
             validation,
             required_scopes: settings.oauth.required_scopes.clone(),
-            realm: settings.identity.realm.clone(),
+            realm: fixed_realm.clone(),
         }
     }
 
