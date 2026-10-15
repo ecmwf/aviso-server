@@ -102,8 +102,9 @@ mcp:
 Every token must carry both claims:
 
 - `realm`: a string, the issuer realm the user signed in through, such as
-  `ecmwf` or `browser-demo`. It is 1 to 64 characters of `A-Z`, `a-z`, `0-9`,
-  `.`, `_`, or `-`. Realms are compared exactly, so `ECMWF` is not `ecmwf`.
+  `ecmwf` or `browser-demo`. It is 1 to 128 characters of `A-Z`, `a-z`,
+  `0-9`, `.`, `_`, or `-`. Realms are compared exactly, so `ECMWF` is not
+  `ecmwf`.
 - `roles`: an array of strings, possibly empty. It has at most 256 entries;
   each is 1 to 128 characters without surrounding whitespace or control
   characters.
@@ -233,7 +234,7 @@ beyond the ones the caller can read.
 
 With `token_claims`, MCP and REST answer the same user the same way, except:
 
-- Realms are limited to 1 to 64 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`,
+- Realms are limited to 1 to 128 characters of `A-Z`, `a-z`, `0-9`, `.`, `_`,
   or `-`. Startup refuses REST realms outside that set, as described above.
 - A token with more than 256 roles, or with a role longer than 128 characters,
   padded with whitespace, or holding control characters, is refused as a
@@ -278,8 +279,8 @@ When `enabled` is `true`, startup fails unless:
 - An `identity` block names its `source`, `fixed` or `token_claims`, and holds
   only the fields of that source. Leaving out the whole block means
   `source: fixed` with realm `mcp`.
-- With `fixed`, `identity.realm` is 1 to 64 characters of `A-Z`, `a-z`, `0-9`,
-  `.`, `_`, or `-`.
+- With `fixed`, `identity.realm` is 1 to 128 characters of `A-Z`, `a-z`,
+  `0-9`, `.`, `_`, or `-`.
 - With `fixed`, `identity.realm` is not a key of `auth.admin_roles` or of any
   stream's `write_roles`. Those realms belong to REST users, and sharing one
   would let token roles match rules written for them. Naming the realm in
@@ -291,7 +292,7 @@ When `enabled` is `true`, startup fails unless:
   written as a boolean or as the string `"true"` or `"false"`; values such as
   `yes` or `1` are refused.
 - With `token_claims`, every key of `auth.admin_roles` and of each stream's
-  `read_roles` and `write_roles` is a realm a token can carry: 1 to 64
+  `read_roles` and `write_roles` is a realm a token can carry: 1 to 128
   characters of `A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Every role of
   `read_roles` and `write_roles`, and of `auth.admin_roles` when `admin` is
   `true`, is a role a token can carry: 1 to 128 characters without surrounding

@@ -725,7 +725,7 @@ without the block the source is `fixed` with realm `mcp`. See
 </summary>
 
 Realm given to every MCP user when `identity.source` is `fixed`. Use it as
-the realm key in stream `read_roles`. It must be 1 to 64 characters of
+the realm key in stream `read_roles`. It must be 1 to 128 characters of
 `A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Startup fails if it is also a key of
 `auth.admin_roles` or of a stream's `write_roles`. Only valid with
 `source: fixed`.
@@ -737,7 +737,7 @@ the realm key in stream `read_roles`. It must be 1 to 64 characters of
 <strong>Type:</strong> <code>string</code></span>
 </summary>
 
-Token claim that holds the user's realm, a string of 1 to 64 characters of
+Token claim that holds the user's realm, a string of 1 to 128 characters of
 `A-Z`, `a-z`, `0-9`, `.`, `_`, or `-`. Only valid with `source: token_claims`.
 The name is a literal top-level key of the token; a dot is part of the name,
 not a path. It is 1 to 128 characters without whitespace, differs from

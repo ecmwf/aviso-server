@@ -29,7 +29,7 @@ use std::fmt;
 use thiserror::Error;
 
 /// Longest realm accepted, in characters, from configuration or a token.
-pub const MCP_REALM_MAX_CHARS: usize = 64;
+pub const MCP_REALM_MAX_CHARS: usize = 128;
 
 /// Longest role accepted from a token, in characters.
 pub const MCP_ROLE_MAX_CHARS: usize = 128;
@@ -206,7 +206,7 @@ impl McpIdentitySettings {
 /// `.`, `_`, or `-`.
 ///
 /// - valid: `mcp`, `browser-demo`, `demo_sso.v2`
-/// - invalid: `` (empty), `demo sso`, `realm/x`, `réalm`, 65 letters
+/// - invalid: `` (empty), `demo sso`, `realm/x`, `réalm`, 129 letters
 pub fn is_valid_realm(realm: &str) -> bool {
     (1..=MCP_REALM_MAX_CHARS).contains(&realm.len())
         && realm
@@ -356,14 +356,24 @@ mod tests {
     }
 
     #[test]
+    fn realms_follow_the_auth_o_tron_realm_rule() {
+        // Auth-O-Tron realm names are up to 128 bytes of the same
+        // characters, so every realm it can put in a token passes.
+        assert!(is_valid_realm(&"r".repeat(128)));
+        assert!(!is_valid_realm(&"r".repeat(129)));
+    }
+
+    #[test]
     fn fixed_realm_must_be_a_safe_name() {
-        for realm in ["mcp", "browser-demo", "demo_sso.v2", &"r".repeat(64)] {
+        let longest = "r".repeat(MCP_REALM_MAX_CHARS);
+        for realm in ["mcp", "browser-demo", "demo_sso.v2", &longest] {
             let settings = McpIdentitySettings::Fixed {
                 realm: realm.to_string(),
             };
             assert_eq!(settings.validate(), Ok(()), "{realm}");
         }
-        for realm in ["", " mcp", "demo sso", "realm/x", "réalm", &"r".repeat(65)] {
+        let long = "r".repeat(MCP_REALM_MAX_CHARS + 1);
+        for realm in ["", " mcp", "demo sso", "realm/x", "réalm", &long] {
             let settings = McpIdentitySettings::Fixed {
                 realm: realm.to_string(),
             };

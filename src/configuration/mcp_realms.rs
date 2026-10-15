@@ -140,6 +140,7 @@ fn rest_realms<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::configuration::MCP_REALM_MAX_CHARS;
     use serde_json::json;
 
     fn enabled() -> McpSettings {
@@ -228,7 +229,7 @@ mod tests {
                 "{message}"
             );
         }
-        let long = "r".repeat(65);
+        let long = "r".repeat(MCP_REALM_MAX_CHARS + 1);
         let readers = schemas(json!({"required": true, "read_roles": {long: ["r"]}}));
         assert!(matches!(
             settings.validate_rest_realms(&HashMap::new(), Some(&readers)),
