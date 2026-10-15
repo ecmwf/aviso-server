@@ -73,6 +73,47 @@ fn environment_overrides_the_mcp_block() {
 }
 
 #[test]
+fn environment_selects_the_token_claims_identity() {
+    let settings = load(
+        base(),
+        &[
+            ("AVISOSERVER_MCP__IDENTITY__SOURCE", "token_claims"),
+            ("AVISOSERVER_MCP__IDENTITY__ROLES_CLAIM", "aviso_roles"),
+        ],
+    );
+    assert_eq!(
+        settings.mcp.identity,
+        McpIdentitySettings::TokenClaims {
+            realm_claim: "realm".to_string(),
+            roles_claim: "aviso_roles".to_string()
+        }
+    );
+}
+
+#[test]
+fn environment_switches_the_source_of_a_file_without_source_fields() {
+    let mut file = base();
+    file["mcp"] = json!({"identity": {"source": "fixed"}});
+    let env = [("AVISOSERVER_MCP__IDENTITY__SOURCE", "token_claims")];
+    let settings = load(file, &env);
+    assert_eq!(
+        settings.mcp.identity,
+        McpIdentitySettings::TokenClaims {
+            realm_claim: "realm".to_string(),
+            roles_claim: "roles".to_string()
+        }
+    );
+
+    let mut file = base();
+    file["mcp"] = json!({"identity": {"source": "fixed", "realm": "mcp"}});
+    let error = try_load(file, &env).unwrap_err();
+    assert!(
+        error.to_string().contains("unknown field `realm`"),
+        "{error}"
+    );
+}
+
+#[test]
 fn identity_block_without_a_source_is_refused() {
     let mut file = base();
     file["mcp"] = json!({"identity": {"realm": "mcp"}});
@@ -183,4 +224,26 @@ async fn realm_shared_with_rest_admins_fails_startup() {
     };
     assert!(error.to_string().contains("mcp.identity.realm"), "{error}");
     assert!(error.to_string().contains("auth.admin_roles"), "{error}");
+}
+
+#[tokio::test]
+async fn token_claims_identity_with_a_verifier_claim_fails_startup() {
+    let mut file = base();
+    file["mcp"] = json!({
+        "enabled": true,
+        "resource_url": "https://aviso.example.int/mcp",
+        "oauth": {
+            "issuer": "https://auth.example.int/",
+            "jwks_uri": "https://auth.example.int/jwks"
+        },
+        "identity": {"source": "token_claims", "roles_claim": "scope"}
+    });
+    let result = Application::build(load(file, &[]), CancellationToken::new()).await;
+    let Err(error) = result else {
+        panic!("startup must fail");
+    };
+    assert!(
+        error.to_string().contains("mcp.identity.roles_claim"),
+        "{error}"
+    );
 }

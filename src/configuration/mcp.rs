@@ -380,6 +380,18 @@ mod tests {
     }
 
     #[test]
+    fn token_claim_realms_may_be_rest_realms() {
+        let mut settings = enabled();
+        settings.identity = serde_json::from_value(json!({"source": "token_claims"})).unwrap();
+        let admins = HashMap::from([("ecmwf".to_string(), vec!["admin".to_string()])]);
+        let writers = schemas(json!({"required": true, "write_roles": {"ecmwf": ["w"]}}));
+        assert_eq!(
+            settings.validate_realm_isolation(&admins, Some(&writers)),
+            Ok(())
+        );
+    }
+
+    #[test]
     fn scopes_and_identity_are_checked() {
         let mut settings = enabled();
         settings.oauth.required_scopes = vec!["aviso read".to_string()];
@@ -395,5 +407,11 @@ mod tests {
             settings.validate(),
             Err(McpConfigError::Identity(McpIdentityError::Realm))
         );
+        let mut settings = enabled();
+        settings.identity =
+            serde_json::from_value(json!({"source": "token_claims", "realm_claim": "sub"}))
+                .unwrap();
+        let error = settings.validate().unwrap_err();
+        assert!(error.to_string().contains("realm_claim 'sub'"), "{error}");
     }
 }

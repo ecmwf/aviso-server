@@ -185,6 +185,13 @@ mod tests {
         serde_json::from_value(value)
     }
 
+    fn token_claims(realm_claim: &str, roles_claim: &str) -> McpIdentitySettings {
+        McpIdentitySettings::TokenClaims {
+            realm_claim: realm_claim.to_string(),
+            roles_claim: roles_claim.to_string(),
+        }
+    }
+
     #[test]
     fn default_is_the_fixed_mcp_realm() {
         let expected = McpIdentitySettings::Fixed {
@@ -192,11 +199,28 @@ mod tests {
         };
         assert_eq!(McpIdentitySettings::default(), expected);
         assert_eq!(parse(json!({"source": "fixed"})).unwrap(), expected);
+    }
+
+    #[test]
+    fn both_sources_parse() {
         assert_eq!(
             parse(json!({"source": "fixed", "realm": "demo"})).unwrap(),
             McpIdentitySettings::Fixed {
                 realm: "demo".to_string()
             }
+        );
+        assert_eq!(
+            parse(json!({"source": "token_claims"})).unwrap(),
+            token_claims("realm", "roles")
+        );
+        let custom = json!({
+            "source": "token_claims",
+            "realm_claim": "aviso_realm",
+            "roles_claim": "aviso_roles"
+        });
+        assert_eq!(
+            parse(custom).unwrap(),
+            token_claims("aviso_realm", "aviso_roles")
         );
     }
 
@@ -213,9 +237,14 @@ mod tests {
     }
 
     #[test]
-    fn unknown_fields_are_rejected() {
-        let value = json!({"source": "fixed", "realm_claim": "realm"});
-        assert!(parse(value).is_err());
+    fn fields_of_the_other_source_are_rejected() {
+        for value in [
+            json!({"source": "fixed", "realm_claim": "realm"}),
+            json!({"source": "token_claims", "realm": "mcp"}),
+            json!({"source": "token_claims", "role_claim": "roles"}),
+        ] {
+            assert!(parse(value.clone()).is_err(), "{value}");
+        }
     }
 
     #[test]
@@ -232,5 +261,51 @@ mod tests {
             };
             assert_eq!(settings.validate(), Err(McpIdentityError::Realm), "{realm}");
         }
+    }
+
+    #[test]
+    fn claim_names_are_checked() {
+        assert_eq!(token_claims("realm", "roles").validate(), Ok(()));
+        assert_eq!(
+            token_claims("https://aviso.example.int/realm", "aviso_roles").validate(),
+            Ok(())
+        );
+        for (realm_claim, roles_claim, field) in [
+            ("", "roles", "realm_claim"),
+            ("realm", "aviso roles", "roles_claim"),
+            ("realm", "roles\n", "roles_claim"),
+            (&"r".repeat(129), "roles", "realm_claim"),
+        ] {
+            assert_eq!(
+                token_claims(realm_claim, roles_claim).validate(),
+                Err(McpIdentityError::ClaimName { field }),
+                "{realm_claim:?} {roles_claim:?}"
+            );
+        }
+        assert_eq!(
+            token_claims("roles", "roles").validate(),
+            Err(McpIdentityError::SameClaim)
+        );
+    }
+
+    #[test]
+    fn verifier_claims_cannot_carry_identity() {
+        for claim in VERIFIER_CLAIMS {
+            let error = token_claims(claim, "roles").validate().unwrap_err();
+            assert_eq!(
+                error,
+                McpIdentityError::VerifierClaim {
+                    field: "realm_claim",
+                    claim: claim.to_string()
+                }
+            );
+        }
+        assert!(matches!(
+            token_claims("realm", "scope").validate(),
+            Err(McpIdentityError::VerifierClaim {
+                field: "roles_claim",
+                ..
+            })
+        ));
     }
 }

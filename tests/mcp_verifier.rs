@@ -62,6 +62,69 @@ async fn valid_token_maps_to_a_non_admin_mcp_user() {
     server.stop().await;
 }
 
+async fn verify_with_token_claims(
+    claims: serde_json::Value,
+) -> Result<aviso_server::auth::User, TokenError> {
+    let server = JwksServer::start(vec![jwk(&key_a(), KID_A)]);
+    let jwks = JwksCache::new(&server.uri, JwksTiming::with_ttl(Duration::from_secs(300))).unwrap();
+    let mut settings = settings(&server.uri);
+    settings.identity = serde_json::from_value(json!({"source": "token_claims"})).unwrap();
+    let result = TokenVerifier::new(jwks, &settings)
+        .verify(&mint(&claims, &key_a(), KID_A))
+        .await
+        .map(|verified| verified.user);
+    server.stop().await;
+    result
+}
+
+#[tokio::test]
+async fn token_claims_source_maps_realm_and_roles_from_the_token() {
+    let mut claims = with("realm", json!("browser-demo"));
+    claims["roles"] = json!(["reader", "aviso-mcp"]);
+    let user = verify_with_token_claims(claims).await.unwrap();
+    assert_eq!(user.realm.as_deref(), Some("browser-demo"));
+    assert_eq!(user.roles, vec!["reader", "aviso-mcp"]);
+    assert!(!user.username.contains("f00dbabe"));
+}
+
+#[tokio::test]
+async fn token_claims_source_refuses_tokens_without_usable_claims() {
+    let identity = |realm: serde_json::Value, roles: serde_json::Value| {
+        let mut claims = with("realm", realm);
+        claims["roles"] = roles;
+        claims
+    };
+    let cases = [
+        (good_claims(), IdentityClaimError::MissingRealm),
+        (
+            identity(json!("ecmwf"), json!("aviso-mcp")),
+            IdentityClaimError::RolesType,
+        ),
+        (identity(json!(1), json!([])), IdentityClaimError::RealmType),
+        (
+            identity(json!("a b"), json!([])),
+            IdentityClaimError::RealmFormat,
+        ),
+        (
+            identity(json!("ecmwf"), json!(["ok", "bad\u{7}"])),
+            IdentityClaimError::RoleFormat,
+        ),
+    ];
+    for (claims, expected) in cases {
+        let result = verify_with_token_claims(claims.clone()).await;
+        assert!(
+            matches!(result, Err(TokenError::Identity(error)) if error == expected),
+            "{claims}: {result:?}"
+        );
+    }
+    let mut bare = good_claims();
+    bare.as_object_mut().unwrap().remove("roles");
+    assert!(matches!(
+        verify_with_token_claims(bare).await,
+        Err(TokenError::Identity(IdentityClaimError::MissingClaims))
+    ));
+}
+
 #[tokio::test]
 async fn audience_may_be_an_array_containing_the_resource() {
     let claims = with("aud", json!(["https://other.example.int", RESOURCE]));
