@@ -195,6 +195,8 @@ impl Application {
                         event_name = "startup.mcp.enabled",
                         resource_url = %configuration.mcp.resource_url,
                         issuer = %configuration.mcp.oauth.issuer,
+                        identity_source = configuration.mcp.identity.source_name(),
+                        identity_admin = configuration.mcp.identity.grants_admin(),
                         "MCP endpoint enabled"
                     );
                     Some(web::Data::new(state))

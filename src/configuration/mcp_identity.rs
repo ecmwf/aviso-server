@@ -163,6 +163,14 @@ fn strict_bool<'de, D: Deserializer<'de>>(deserializer: D) -> Result<bool, D::Er
 }
 
 impl McpIdentitySettings {
+    /// The `source` value, for logs.
+    pub fn source_name(&self) -> &'static str {
+        match self {
+            Self::Fixed { .. } => "fixed",
+            Self::TokenClaims { .. } => "token_claims",
+        }
+    }
+
     /// Whether the REST `auth.admin_roles` apply to MCP users. Only token
     /// claim identities with `admin: true` opt in.
     pub fn grants_admin(&self) -> bool {
@@ -270,6 +278,14 @@ mod tests {
             parse(custom).unwrap(),
             token_claims("aviso_realm", "aviso_roles")
         );
+    }
+
+    #[test]
+    fn source_names_match_the_configuration_values() {
+        for source in ["fixed", "token_claims"] {
+            let settings = parse(json!({"source": source})).unwrap();
+            assert_eq!(settings.source_name(), source);
+        }
     }
 
     #[test]
