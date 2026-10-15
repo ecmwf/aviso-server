@@ -28,7 +28,8 @@ pub use homepage::HomepageSettings;
 pub use loader::get_configuration;
 pub use mcp::{MCP_MAX_RESULTS_CEILING, MCP_PATH, McpConfigError, McpOAuthSettings, McpSettings};
 pub use mcp_identity::{
-    MCP_REALM_MAX_CHARS, McpIdentityError, McpIdentitySettings, is_valid_realm,
+    MCP_REALM_MAX_CHARS, MCP_ROLE_MAX_CHARS, McpIdentityError, McpIdentitySettings, is_valid_realm,
+    is_valid_role,
 };
 pub use topic_validation::validate_topic_schema_settings;
 pub use types::*;

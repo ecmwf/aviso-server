@@ -31,6 +31,9 @@ use thiserror::Error;
 /// Longest realm accepted, in characters, from configuration or a token.
 pub const MCP_REALM_MAX_CHARS: usize = 64;
 
+/// Longest role accepted from a token, in characters.
+pub const MCP_ROLE_MAX_CHARS: usize = 128;
+
 /// Longest identity claim name accepted, in characters.
 const MAX_CLAIM_NAME_CHARS: usize = 128;
 
@@ -209,6 +212,20 @@ pub fn is_valid_realm(realm: &str) -> bool {
         && realm
             .bytes()
             .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'-'))
+}
+
+/// Whether `role` is a role a token may carry: 1 to
+/// [`MCP_ROLE_MAX_CHARS`] characters without surrounding whitespace or
+/// control characters. Roles are matched exactly against the configured
+/// role lists, so padding would never match.
+///
+/// - valid: `reader`, `aviso-mcp`, `data team`, `*`
+/// - invalid: `` (empty), ` `, ` reader`, `reader `, `a\nb`, 129 letters
+pub fn is_valid_role(role: &str) -> bool {
+    !role.is_empty()
+        && role.trim() == role
+        && role.chars().count() <= MCP_ROLE_MAX_CHARS
+        && !role.chars().any(char::is_control)
 }
 
 /// Accept a JSON object key usable as an identity claim.

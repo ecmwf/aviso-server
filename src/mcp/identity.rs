@@ -17,15 +17,15 @@
 //! Claim names are literal top-level keys of the token payload. A claim
 //! whose value is `null` counts as absent.
 
-use crate::configuration::{MCP_REALM_MAX_CHARS, McpIdentitySettings, is_valid_realm};
+use crate::configuration::{
+    MCP_REALM_MAX_CHARS, MCP_ROLE_MAX_CHARS, McpIdentitySettings, is_valid_realm, is_valid_role,
+};
 use serde_json::{Map, Value};
 use thiserror::Error;
 
 /// Most roles taken from one token. Tokens are capped at 16 KiB, so this
 /// mainly guards against a claim padded with tiny entries.
 pub const MAX_ROLES: usize = 256;
-/// Longest role accepted, in characters.
-pub const MAX_ROLE_CHARS: usize = 128;
 /// Claim that carries the roles under the `fixed` source.
 const FIXED_ROLES_CLAIM: &str = "roles";
 
@@ -63,7 +63,7 @@ pub enum IdentityClaimError {
     TooManyRoles,
     /// A role is empty, too long, padded, or has control characters.
     #[error(
-        "roles claim entries must be 1 to {MAX_ROLE_CHARS} characters \
+        "roles claim entries must be 1 to {MCP_ROLE_MAX_CHARS} characters \
          without surrounding whitespace or control characters"
     )]
     RoleFormat,
@@ -151,18 +151,6 @@ fn parse_roles(value: &Value) -> Result<Vec<String>, IdentityClaimError> {
             }
         })
         .collect()
-}
-
-/// Whether one role entry is usable. Roles are matched exactly against
-/// the configured role lists, which have no surrounding whitespace.
-///
-/// - valid: `reader`, `aviso-mcp`, `data team`, `*`
-/// - invalid: `` (empty), ` `, ` reader`, `reader `, `a\nb`, 129 letters
-fn is_valid_role(role: &str) -> bool {
-    !role.is_empty()
-        && role.trim() == role
-        && role.chars().count() <= MAX_ROLE_CHARS
-        && !role.chars().any(char::is_control)
 }
 
 #[cfg(test)]
@@ -356,7 +344,7 @@ mod tests {
         );
         let at_limit = json!(vec!["r"; MAX_ROLES]);
         assert!(resolve(&token_claims(), claims(at_limit)).is_ok());
-        let long = "r".repeat(MAX_ROLE_CHARS + 1);
+        let long = "r".repeat(MCP_ROLE_MAX_CHARS + 1);
         for role in [
             "",
             " ",
@@ -375,7 +363,7 @@ mod tests {
                 );
             }
         }
-        let longest = "r".repeat(MAX_ROLE_CHARS);
+        let longest = "r".repeat(MCP_ROLE_MAX_CHARS);
         let inner_space = claims(json!([longest, "data team", "*"]));
         assert!(resolve(&token_claims(), inner_space).is_ok());
     }
