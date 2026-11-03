@@ -86,6 +86,14 @@ pub(crate) fn register_otlp_metrics(registry: &Registry) {
 pub enum OtlpInitError {
     #[error("logging.otlp.enabled=true requires logging.otlp.endpoint")]
     MissingEndpoint,
+    #[error(
+        "{variable}={value:?} is not supported: the server exports OTLP logs \
+         without compression, so unset {variable} or set it to \"none\""
+    )]
+    UnsupportedCompression {
+        variable: &'static str,
+        value: String,
+    },
     #[error("failed to build OTLP log exporter for endpoint {endpoint:?}: {source}")]
     ExporterBuild {
         endpoint: String,
@@ -112,6 +120,7 @@ where
         .filter(|endpoint| !endpoint.is_empty())
         .ok_or(OtlpInitError::MissingEndpoint)?;
     let endpoint = normalize_endpoint(endpoint, settings.protocol);
+    super::otlp_env::check_compression(|name| std::env::var_os(name))?;
 
     let exporter = match settings.protocol {
         OtlpProtocol::Grpc => opentelemetry_otlp::LogExporter::builder()
