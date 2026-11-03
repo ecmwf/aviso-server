@@ -267,6 +267,11 @@ Operational behavior:
 - Exported records carry the same resource identity as stdout records
   (`service.name`, `service.version`, and `k8s.namespace.name` /
   `k8s.pod.name` when the corresponding environment variables are set).
+- Export is not compressed. When it is enabled, the server refuses to
+  start if `OTEL_EXPORTER_OTLP_LOGS_COMPRESSION` or
+  `OTEL_EXPORTER_OTLP_COMPRESSION` is set to anything other than an empty
+  value or `none`, instead of exporting uncompressed without notice. The
+  logs-specific variable takes precedence when it is not empty.
 - Redaction on the export path is stricter than stdout: record bodies get
   the same pattern redaction, but a record carrying a sensitive attribute
   key (`password`, `secret`, `token`, `authorization`, `api_key`) or a

@@ -7,6 +7,7 @@
 // does it submit to any jurisdiction.
 
 mod otlp;
+mod otlp_env;
 mod span_context;
 mod unique_attributes;
 

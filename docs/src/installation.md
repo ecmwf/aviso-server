@@ -9,7 +9,7 @@ using Docker, or deploying to Kubernetes with Helm.
 
 ### Rust toolchain
 
-Aviso requires **Rust 1.88 or newer**. Each published crate declares this
+Aviso requires **Rust 1.89 or newer**. Each published crate declares this
 minimum supported Rust version in its package metadata. CI also builds with the
 repository's newer pinned toolchain.
 
@@ -23,7 +23,7 @@ Verify your version:
 
 ```bash
 rustc --version
-# rustc 1.88.0 (... ) or newer
+# rustc 1.89.0 (... ) or newer
 ```
 
 ### System dependencies
