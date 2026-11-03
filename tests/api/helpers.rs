@@ -147,6 +147,36 @@ pub fn test_jwt_with_secret_and_exp(
     .expect("token must encode")
 }
 
+/// Runtime for the servers that tests share through the statics above.
+///
+/// Each `#[tokio::test]` runs on its own runtime, which is dropped when that
+/// test ends. actix-server shuts a server down when its future is dropped, so
+/// a shared server spawned on the runtime of the test that first needed it
+/// would stop serving every later test. Shared servers therefore run on this
+/// runtime, which lives as long as the test process. Servers that a single
+/// test owns stay on that test's runtime.
+static SHARED_SERVER_RUNTIME: LazyLock<tokio::runtime::Runtime> = LazyLock::new(|| {
+    tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(2)
+        .thread_name("shared-test-servers")
+        .enable_all()
+        .build()
+        .expect("shared test server runtime must start")
+});
+
+/// Runs `future` on [`SHARED_SERVER_RUNTIME`], so that any task it spawns
+/// outlives the calling test, and returns its output.
+async fn on_shared_server_runtime<F>(future: F) -> F::Output
+where
+    F: std::future::Future + Send + 'static,
+    F::Output: Send + 'static,
+{
+    SHARED_SERVER_RUNTIME
+        .spawn(future)
+        .await
+        .expect("shared test server setup must not panic")
+}
+
 struct RunningServer {
     address: String,
     _shutdown_token: CancellationToken,
@@ -1026,12 +1056,22 @@ async fn spawn_server(
     }
 }
 
+/// Like [`spawn_server`], for a server shared through a static: it is built
+/// and run on [`SHARED_SERVER_RUNTIME`] so it keeps serving after the test
+/// that created it has finished.
+async fn spawn_shared_server(
+    configuration: Settings,
+    auth_server_handle: Option<JoinHandle<std::io::Result<()>>>,
+) -> RunningServer {
+    on_shared_server_runtime(spawn_server(configuration, auth_server_handle)).await
+}
+
 pub async fn spawn_app() -> TestApp {
     let running = DEFAULT_SERVER
         .get_or_init(|| async {
             let mut configuration = base_test_settings();
             ensure_test_notification_schema(&mut configuration, false);
-            spawn_server(configuration, None).await
+            spawn_shared_server(configuration, None).await
         })
         .await;
 
@@ -1043,9 +1083,8 @@ pub async fn spawn_app() -> TestApp {
 /// Streaming-schema app on a private server instance. Stream-level
 /// destructive tests (admin wipe) use this instead of
 /// `spawn_streaming_test_app`: the shared server would leak the wipe into
-/// sibling tests that publish to the same streams. Dropping the returned
-/// server handle leaves the task running for the rest of the process, the
-/// same lifetime the shared apps have.
+/// sibling tests that publish to the same streams. The server is spawned on
+/// the calling test's runtime, and only that test uses it.
 pub async fn spawn_isolated_streaming_test_app() -> TestApp {
     let mut configuration = base_test_settings();
     set_streaming_test_notification_schema(&mut configuration);
@@ -1061,7 +1100,7 @@ pub async fn spawn_streaming_test_app() -> TestApp {
             let mut configuration = base_test_settings();
             set_streaming_test_notification_schema(&mut configuration);
 
-            spawn_server(configuration, None).await
+            spawn_shared_server(configuration, None).await
         })
         .await;
 
@@ -1093,7 +1132,7 @@ pub async fn spawn_streaming_test_app_with_auth() -> TestApp {
                     ensure_ecpds_test_schemas(schema);
                 }
             }
-            spawn_server(configuration, Some(auth_server_handle)).await
+            spawn_shared_server(configuration, Some(auth_server_handle)).await
         })
         .await;
 
@@ -1135,7 +1174,7 @@ pub async fn spawn_streaming_test_app_with_auth_partial_outage() -> TestApp {
             if let Some(schema) = configuration.notification_schema.as_mut() {
                 ensure_ecpds_test_schemas(schema);
             }
-            spawn_server(configuration, Some(auth_server_handle)).await
+            spawn_shared_server(configuration, Some(auth_server_handle)).await
         })
         .await;
 
@@ -1157,7 +1196,7 @@ pub async fn spawn_streaming_test_app_with_trusted_proxy_auth() -> TestApp {
                 timeout_ms: 5_000,
                 ..AuthSettings::default()
             };
-            spawn_server(configuration, None).await
+            spawn_shared_server(configuration, None).await
         })
         .await;
 
@@ -1254,17 +1293,21 @@ async fn mock_authenticate(req: HttpRequest) -> HttpResponse {
 
 async fn start_mock_auth_o_tron_server()
 -> std::io::Result<(String, JoinHandle<std::io::Result<()>>)> {
-    // Runtime-local ephemeral server to keep auth integration tests deterministic
-    // and independent from external auth-o-tron availability.
-    let listener = TcpListener::bind("127.0.0.1:0")?;
-    let address = listener.local_addr()?;
-    let server =
-        HttpServer::new(|| App::new().route("/authenticate", web::get().to(mock_authenticate)))
-            .disable_signals()
-            .listen(listener)?
-            .run();
-    let server_handle = tokio::spawn(server);
-    Ok((format!("http://{}", address), server_handle))
+    // Local mock to keep auth integration tests deterministic and independent
+    // from external auth-o-tron availability. Only shared servers use it, so
+    // it runs on the shared server runtime too.
+    on_shared_server_runtime(async {
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let address = listener.local_addr()?;
+        let server =
+            HttpServer::new(|| App::new().route("/authenticate", web::get().to(mock_authenticate)))
+                .disable_signals()
+                .listen(listener)?
+                .run();
+        let server_handle = tokio::spawn(server);
+        Ok((format!("http://{}", address), server_handle))
+    })
+    .await
 }
 
 pub async fn spawn_jetstream_test_app_with_backend_defaults(
