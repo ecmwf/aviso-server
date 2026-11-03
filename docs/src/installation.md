@@ -141,6 +141,25 @@ docker run --rm \
 | `release` | `distroless/cc`        | minimal | Production      |
 | `debug`   | `debian:bookworm-slim` | larger  | Troubleshooting |
 
+### Trusted certificates
+
+The server verifies its outgoing HTTPS connections, to auth-o-tron, ECPDS
+and an OpenTelemetry collector over HTTP, against the image's CA bundle at
+`/etc/ssl/certs/ca-certificates.crt`. OTLP export over gRPC does not use
+TLS.
+
+Both images take this bundle from Debian's `ca-certificates` package rather
+than from the base image. A build with a new `VERSION` build argument, as in
+every release, fetches the package again; a local build may reuse a cached
+bundle, so add `--no-cache` to refresh it.
+
+The build fails if the bundle still contains a root that signed the
+compromised eMudhra intermediate certificates (CVE-2026-111943). The server
+also rejects those intermediates itself, whatever the bundle contains.
+
+To trust a private CA, mount a bundle that contains it, together with the
+public roots you still need, over `/etc/ssl/certs/ca-certificates.crt`.
+
 ---
 
 ## Local JetStream (Docker)
