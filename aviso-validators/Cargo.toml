@@ -2,7 +2,7 @@
 name = "aviso-validators"
 version = "0.13.2"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 description = "Validation primitives used by aviso-server for identifier and payload checks."
 license = "Apache-2.0"
 readme = "README.md"

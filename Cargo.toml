@@ -2,7 +2,7 @@
 name = "aviso-server"
 version = "0.13.2"
 edition = "2024"
-rust-version = "1.88"
+rust-version = "1.89"
 authors = ["Samet Demir <samet.demir@ecmwf.int>",
            "James Hawkes <james.hawkes@ecmwf.int>"]
 description = "Notification service for data-driven workflows with live and replay APIs."
